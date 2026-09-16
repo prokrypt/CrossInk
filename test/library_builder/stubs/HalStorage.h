@@ -21,6 +21,7 @@ inline int failWrite = -1;
 inline int failRename = -1;
 inline int failAlloc = -1;
 inline bool failDirectorySeek = false;
+inline std::string failDirectoryIterationPath;
 inline std::string failClosePath;
 inline std::string failWritePath;
 inline unsigned parses = 0;
@@ -50,6 +51,7 @@ inline void reset() {
   failRename = -1;
   failAlloc = -1;
   failDirectorySeek = false;
+  failDirectoryIterationPath.clear();
   failClosePath.clear();
   failWritePath.clear();
   parses = 0;
@@ -94,6 +96,7 @@ class HalFile {
   std::shared_ptr<fake::Node> node;
   std::string path;
   size_t pos = 0;
+  bool iterationFailed_ = false;
 
   explicit operator bool() const { return bool(node); }
   bool isOpen() const { return bool(node); }
@@ -108,6 +111,8 @@ class HalFile {
   }
   bool isDirectory() const { return node && node->directory; }
   void rewindDirectory() { pos = 0; }
+  bool allocationFailed() const { return false; }
+  bool iterationFailed() const { return iterationFailed_; }
   HalFile openNextFile() {
     std::vector<std::string> children;
     for (const auto& [name, value] : fake::files) {
@@ -119,7 +124,14 @@ class HalFile {
     if (extras != fake::extraDirectoryEntries.end()) {
       children.insert(children.end(), extras->second.begin(), extras->second.end());
     }
-    if (pos >= children.size()) return {};
+    if (pos >= children.size()) {
+      if (!fake::failDirectoryIterationPath.empty() && path == fake::failDirectoryIterationPath) {
+        iterationFailed_ = true;
+        fake::failDirectoryIterationPath.clear();
+        fake::failureTriggered = true;
+      }
+      return {};
+    }
     HalFile file;
     file.path = children[pos++];
     file.node = fake::files[file.path];

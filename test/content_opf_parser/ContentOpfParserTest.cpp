@@ -35,6 +35,21 @@ TEST(ContentOpfParserMetadata, ClampsOversizedMetadataTextInsteadOfGrowingUnboun
   EXPECT_EQ(parser.title[0], 'A');
 }
 
+TEST(ContentOpfParserMetadata, ClampNeverOvershootsAtAMultiCreatorSeparatorBoundary) {
+  // First creator fills the field to exactly one byte under the cap, so the
+  // second creator's leading ", " separator is the thing that would push the
+  // total past 512 if the clamp checked only the next character.
+  const std::string firstAuthor(511, 'A');
+  const std::string xml = "<package xmlns:dc=\"urn:dc\"><metadata><dc:creator>" + firstAuthor +
+                          "</dc:creator><dc:creator>B</dc:creator></metadata></package>";
+  ContentOpfParser parser("", "", xml.size(), nullptr);
+
+  parse(parser, xml);
+
+  EXPECT_LE(parser.author.size(), 512u);
+  EXPECT_EQ(parser.author, firstAuthor);
+}
+
 TEST(ContentOpfParserMetadata, SeparatesCreatorElementsAndCollapsesXmlWhitespace) {
   const std::string xml = R"(<package xmlns:dc="urn:dc"><metadata>
     <dc:title>  The

@@ -55,15 +55,21 @@ void appendMetadataText(std::string& out, const XML_Char* text, const int len, b
       continue;
     }
 
-    if (out.size() >= MAX_METADATA_TEXT) {
+    // Check capacity against the WHOLE unit about to be appended (separator
+    // or space, plus the character), not just the character: checking the
+    // character alone let a pending ", " or ' ' push `out` a byte or two past
+    // the cap right at a multi-<dc:creator> boundary.
+    const bool useSeparator = separatorPending != nullptr && *separatorPending;
+    const bool useSpace = !useSeparator && spacePending && !out.empty();
+    const size_t prefixLen = useSeparator ? 2 : (useSpace ? 1 : 0);
+    if (out.size() + prefixLen + 1 > MAX_METADATA_TEXT) {
       LOG_DBG("COF", "Metadata text exceeds %u bytes; truncating", static_cast<unsigned>(MAX_METADATA_TEXT));
       return;
     }
-    if (separatorPending != nullptr && *separatorPending) {
+    if (useSeparator) {
       out.append(", ");
       *separatorPending = false;
-      spacePending = false;
-    } else if (spacePending && !out.empty()) {
+    } else if (useSpace) {
       out.push_back(' ');
     }
     spacePending = false;

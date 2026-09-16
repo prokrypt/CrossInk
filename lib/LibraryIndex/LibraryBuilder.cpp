@@ -529,6 +529,15 @@ void walk(WalkState& st, const std::string& path, const int depth) {
     }
     if (!stageRecord(st, name, size, myFolderId, joinLibraryPath(path, name), modificationTime)) break;
   }
+  // openNextFile() returning falsy is ambiguous between "reached the end of
+  // the directory" and an SdFat allocation/iteration error partway through.
+  // Left unchecked, a card glitch mid-listing looks identical to a folder
+  // that was fully scanned: books after the failure point silently never
+  // reach the index, with nothing to force a retry on the next rebuild.
+  if (!st.failed && FsHelpers::directoryIterationFailed(dir)) {
+    LOG_ERR("LIBIDX", "directory listing failed before EOF: %s", path.c_str());
+    st.failed = true;
+  }
   dir.close();
 }
 
