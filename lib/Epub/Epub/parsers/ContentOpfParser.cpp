@@ -33,6 +33,44 @@ bool startsWithImageMediaType(const std::string& mediaType) {
   return true;
 }
 
+bool isXmlWhitespace(const char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+
+// Metadata text comes straight from the (untrusted) OPF; unbounded growth on a
+// maliciously large title would exhaust the heap. Downstream consumers
+// truncate far below this anyway, so overflow is clamped, not fatal.
+constexpr size_t MAX_METADATA_TEXT = 512;
+
+// Appends one characterData() chunk to a metadata field, collapsing XML
+// whitespace runs to a single space and (for multi-author dc:creator) joining
+// entries with ", " — done here rather than per-callback because expat can
+// split one text node into several write() calls, notably around entity
+// references, and title/author must read the same either way.
+void appendMetadataText(std::string& out, const XML_Char* text, const int len, bool& spacePending,
+                        bool* separatorPending = nullptr) {
+  if (out.size() >= MAX_METADATA_TEXT) return;  // already clamped and logged
+  for (int i = 0; i < len; i++) {
+    const char c = text[i];
+    if (isXmlWhitespace(c)) {
+      spacePending = true;
+      continue;
+    }
+
+    if (out.size() >= MAX_METADATA_TEXT) {
+      LOG_DBG("COF", "Metadata text exceeds %u bytes; truncating", static_cast<unsigned>(MAX_METADATA_TEXT));
+      return;
+    }
+    if (separatorPending != nullptr && *separatorPending) {
+      out.append(", ");
+      *separatorPending = false;
+      spacePending = false;
+    } else if (spacePending && !out.empty()) {
+      out.push_back(' ');
+    }
+    spacePending = false;
+    out.push_back(c);
+  }
+}
+
 bool readItemIdMatches(HalFile& file, const std::string& targetId, bool& matches) {
   uint32_t storedLength = 0;
   if (!serialization::tryReadPod(file, storedLength)) {
@@ -160,6 +198,11 @@ bool ContentOpfParser::setup() {
 
 ContentOpfParser::~ContentOpfParser() {
   destroyXmlParser(parser);
+  // metadataOnly stops before <manifest>/<spine>/<guide> ever open the item
+  // cache file, so there is nothing below to close or remove.
+  if (metadataOnly) {
+    return;
+  }
   if (tempItemStore) {
     tempItemStore.close();
   }
@@ -203,6 +246,16 @@ size_t ContentOpfParser::write(const uint8_t* buffer, const size_t size) {
     currentBufferPos += toRead;
     remainingInBuffer -= toRead;
     remainingSize -= toRead;
+
+    if (metadataOnly && metadataComplete) {
+      // Signal the caller to stop feeding bytes (Epub::readItemContentsToStream's
+      // allowEarlyStop) with a short count. `size - remainingInBuffer` is how
+      // much of THIS call was actually consumed; if that happens to equal the
+      // full `size` (metadata ended exactly on a chunk boundary), report one
+      // byte short instead so the return value is unambiguously "not all of it".
+      const size_t processed = size - remainingInBuffer;
+      return processed < size ? processed : size - 1;
+    }
   }
 
   return size;
@@ -211,6 +264,20 @@ size_t ContentOpfParser::write(const uint8_t* buffer, const size_t size) {
 void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name, const XML_Char** atts) {
   auto* self = static_cast<ContentOpfParser*>(userData);
   (void)atts;
+
+  if (self->metadataOnly && self->metadataComplete) {
+    return;
+  }
+  // A metadata-only read is done the moment any of these open: well-formed
+  // EPUB2/3 already closed </metadata> first (handled in endElement below),
+  // but a malformed package that jumps straight to the manifest must not open
+  // the item-cache file just to have this same check discard it a level down.
+  if (self->metadataOnly &&
+      (strcmp(name, "manifest") == 0 || strcmp(name, "opf:manifest") == 0 || strcmp(name, "spine") == 0 ||
+       strcmp(name, "opf:spine") == 0 || strcmp(name, "guide") == 0 || strcmp(name, "opf:guide") == 0)) {
+    self->metadataComplete = true;
+    return;
+  }
 
   if (self->state == START && (strcmp(name, "package") == 0 || strcmp(name, "opf:package") == 0)) {
     self->state = IN_PACKAGE;
@@ -226,17 +293,21 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     // Only capture the first dc:title element; subsequent ones are subtitles
     if (self->title.empty()) {
       self->state = IN_BOOK_TITLE;
+      self->metadataSpacePending = false;
     }
     return;
   }
 
   if (self->state == IN_METADATA && strcmp(name, "dc:creator") == 0) {
     self->state = IN_BOOK_AUTHOR;
+    self->metadataSpacePending = false;
+    self->authorSeparatorPending = !self->author.empty();
     return;
   }
 
   if (self->state == IN_METADATA && strcmp(name, "dc:language") == 0) {
     self->state = IN_BOOK_LANGUAGE;
+    self->metadataSpacePending = false;
     return;
   }
 
@@ -421,21 +492,22 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
 void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, const int len) {
   auto* self = static_cast<ContentOpfParser*>(userData);
 
+  if (self->metadataOnly && self->metadataComplete) {
+    return;
+  }
+
   if (self->state == IN_BOOK_TITLE) {
-    self->title.append(s, len);
+    appendMetadataText(self->title, s, len, self->metadataSpacePending);
     return;
   }
 
   if (self->state == IN_BOOK_AUTHOR) {
-    if (!self->author.empty()) {
-      self->author.append(", ");  // Add separator for multiple authors
-    }
-    self->author.append(s, len);
+    appendMetadataText(self->author, s, len, self->metadataSpacePending, &self->authorSeparatorPending);
     return;
   }
 
   if (self->state == IN_BOOK_LANGUAGE) {
-    self->language.append(s, len);
+    appendMetadataText(self->language, s, len, self->metadataSpacePending);
     return;
   }
 }
@@ -443,6 +515,10 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
 void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) {
   auto* self = static_cast<ContentOpfParser*>(userData);
   (void)name;
+
+  if (self->metadataOnly && self->metadataComplete) {
+    return;
+  }
 
   if (self->state == IN_SPINE && (strcmp(name, "spine") == 0 || strcmp(name, "opf:spine") == 0)) {
     self->state = IN_PACKAGE;
@@ -479,6 +555,9 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
 
   if (self->state == IN_METADATA && (strcmp(name, "metadata") == 0 || strcmp(name, "opf:metadata") == 0)) {
     self->state = IN_PACKAGE;
+    if (self->metadataOnly) {
+      self->metadataComplete = true;
+    }
     return;
   }
 
