@@ -28,6 +28,7 @@
 - Saved clipping highlights now retain Focus Reading's custom-font glyphs instead of showing replacement characters.
 - EPUB dictionary lookup can select an individual part of a hyphenated word.
 - Short Power-button frontlight and touchscreen shortcuts in EPUB books no longer run the configured long-press action.
+- Rapid queued EPUB page turns skip rendering intermediate pages until the final destination.
 - Silent restarts now preserve the frontlight state instead of applying wake or schedule settings.
 - The Home button now returns from Customize Status Bar to the previous menu instead of leaving the reader.
 - OPDS book downloads can follow secure redirects without sharing catalog credentials with the download host.

@@ -91,6 +91,11 @@ class QueuedTurnRenderingState {
 
   bool cancelDeferred() { return state.exchange(IDLE, std::memory_order_acq_rel) == DEFERRED; }
 
+  bool markDeferred() {
+    uint8_t expected = IDLE;
+    return state.compare_exchange_strong(expected, DEFERRED, std::memory_order_acq_rel);
+  }
+
   void clear() { state.store(IDLE, std::memory_order_release); }
 
  private:

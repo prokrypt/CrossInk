@@ -87,6 +87,18 @@ TEST(ManualPageTurnQueue, OppositeDirectionCancelsAQueuedSuccessorWhileItRenders
   EXPECT_FALSE(queue.hasDispatched());
 }
 
+TEST(ManualPageTurnQueue, TracksWhenTheDispatchedTurnOpposesANewDirection) {
+  ManualPageTurnQueue queue;
+  queue.markDispatched(next());
+
+  EXPECT_TRUE(queue.hasDispatched());
+  EXPECT_TRUE(queue.dispatchedIsForward());
+  EXPECT_TRUE(queue.dispatchedDirectionMatches(true));
+  EXPECT_FALSE(queue.dispatchedDirectionMatches(false));
+  EXPECT_TRUE(queue.dispatchedDirectionOpposes(false));
+  EXPECT_FALSE(queue.dispatchedDirectionOpposes(true));
+}
+
 TEST(QueuedTurnRenderingState, CancellationDuringDecisionKeepsTheCurrentRenderAtFullQuality) {
   QueuedTurnRenderingState state;
   state.beginDecision();

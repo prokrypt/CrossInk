@@ -5322,14 +5322,24 @@ void EpubReaderActivity::setAutoPageTurnIntervalSeconds(uint16_t seconds) {
 
 void EpubReaderActivity::requestManualPageTurn(const bool isForwardTurn, const char* source) {
   finishManualPageTurnBrakeIfReady();
+  if (pendingManualPageTurns.hasDispatched() && pendingManualPageTurns.dispatchedDirectionOpposes(isForwardTurn)) {
+    // A fast opposite input should undo the last dispatched page turn instead
+    // of silently leaving the page one step too far forward.
+    const bool dispatchedIsForward = pendingManualPageTurns.dispatchedIsForward();
+    pendingManualPageTurns.clear();
+    queuedTurnRendering.cancelDeferred();
+    pageTurn(!dispatchedIsForward, source);
+    return;
+  }
+
   const ManualPageTurnRequest request{isForwardTurn, source};
   const auto enqueueManualTurn = [this, request]() {
     if (pendingManualPageTurns.enqueue(request) == ManualPageTurnQueue::EnqueueResult::Cancelled) {
-      // A reversal needs a redraw only if the render task already committed to
-      // deferring quality work for the page that has now become final again.
-      if (queuedTurnRendering.cancelDeferred()) {
-        requestUpdate();
-      }
+      // A reversal consumes the queued turn. Always redraw the page that is
+      // still current: it may have been skipped or had its quality pass
+      // cancelled before the reversal reached the input loop.
+      queuedTurnRendering.cancelDeferred();
+      requestUpdate();
     }
   };
   if (pendingManualPageTurns.hasPending()) {
@@ -5356,7 +5366,7 @@ bool EpubReaderActivity::drainPendingManualPageTurn() {
   if (!pendingManualPageTurns.takeNext(request)) return false;
   if (!section ||
       (!activeFootnotePreview && !request.isForward && currentSpineIndex == 0 && section->currentPage == 0)) {
-    clearPendingManualPageTurns();
+    clearPendingManualPageTurns(/*requestRecoveryRedraw=*/true);
     return false;
   }
 
@@ -6128,6 +6138,16 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     refreshChapterGroupEstimate(viewportWidth, viewportHeight);
   }
 
+  // A queued successor makes this page transient. Leave the existing
+  // framebuffer untouched and let the next queued turn render the final page.
+  // This check must precede clearScreen so the differential baseline remains
+  // the page currently held by the panel.
+  if (pendingManualPageTurns.hasPending()) {
+    queuedTurnRendering.markDeferred();
+    pageShownAtMs = 0UL;
+    return;
+  }
+
   renderer.clearScreen(ReaderUtils::readerBackgroundColor());
 
   if (section->pageCount == 0) {
@@ -6788,7 +6808,7 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       queuedTurnRendering.clear();
     }
   }
-  const bool deferImageLoading = deferQueuedTurnRendering && pageHasImages;
+  bool deferImageLoading = deferQueuedTurnRendering && pageHasImages;
   if (deferQueuedTurnRendering) {
     needsTextGrayscale = false;
   }
@@ -6842,6 +6862,18 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
     loan.end();
     renderer.clearScreen(ReaderUtils::readerBackgroundColor());
   }
+  // Image loading must be decided before composition, while text AA can wait
+  // until the last point before choosing a grayscale base. This also catches a
+  // successor tap that arrived while the page was preparing its image caches.
+  if (!deferQueuedTurnRendering && pendingManualPageTurns.hasPending()) {
+    queuedTurnRendering.beginDecision();
+    if (queuedTurnRendering.finishDecision(pendingManualPageTurns.hasPending())) {
+      deferQueuedTurnRendering = true;
+      deferImageLoading = pageHasImages;
+      needsTextGrayscale = false;
+      needsImageGrayscale = false;
+    }
+  }
   composePageBuffer();
   renderStatusBar();
   if (pendingBookmarkFeedback) {
@@ -6876,6 +6908,24 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   }
   if (!updatePanel) {
     return true;
+  }
+  // The page buffer may have been composed before the input loop observed a
+  // successor. Do not submit that transient buffer to the panel; the next
+  // queued turn will either be skipped or display the final destination.
+  if (pendingManualPageTurns.hasPending()) {
+    queuedTurnRendering.markDeferred();
+    pageShownAtMs = 0UL;
+    return true;
+  }
+  // Input can arrive while the page and status bar are being composed. Make
+  // one final decision immediately before selecting the grayscale path so a
+  // queued successor never starts an AA pass for this transient page.
+  if (!deferQueuedTurnRendering && pendingManualPageTurns.hasPending()) {
+    queuedTurnRendering.beginDecision();
+    if (queuedTurnRendering.finishDecision(pendingManualPageTurns.hasPending())) {
+      needsTextGrayscale = false;
+      needsImageGrayscale = false;
+    }
   }
   const bool needsAnyGrayscale = needsTextGrayscale || needsImageGrayscale;
   const bool tiledGrayscale = needsAnyGrayscale && renderer.supportsStripGrayscale();
@@ -6943,31 +6993,62 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   }
   if (EpubGrayscale::runTiledGrayscalePass(renderer, *page, fontId, orientedMarginLeft, orientedMarginTop,
                                            foregroundBlack, needsTextGrayscale, needsImageGrayscale,
-                                           grayscaleStripScratch.get(), grayscaleStripScratchSize, overlapRefresh)) {
+                                           grayscaleStripScratch.get(), grayscaleStripScratchSize, overlapRefresh,
+                                           [](void* context) {
+                                             return static_cast<EpubReaderActivity*>(context)
+                                                 ->pendingManualPageTurns.hasPending();
+                                           },
+                                           this)) {
     return true;
   }
 
   // Save bw buffer to reset buffer state after grayscale data sync
   const bool storedBwBuffer = needsAnyGrayscale && renderer.storeBwBuffer();
   const bool canApplyGrayscale = needsAnyGrayscale && storedBwBuffer;
+  const auto queuedTurnArrived = [this]() { return pendingManualPageTurns.hasPending(); };
   if (needsAnyGrayscale && !storedBwBuffer) {
     LOG_ERR("ERS", "Skipping grayscale enhancement: failed to store BW backup");
   }
 
   // grayscale rendering
   if (canApplyGrayscale) {
+    if (queuedTurnArrived()) {
+      renderer.setRenderMode(GfxRenderer::BW);
+      renderer.restoreBwBuffer();
+      return true;
+    }
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
     composeGrayscaleBuffer();
+    if (queuedTurnArrived()) {
+      renderer.setRenderMode(GfxRenderer::BW);
+      renderer.restoreBwBuffer();
+      return true;
+    }
     renderer.copyGrayscaleLsbBuffers();
 
     // Render and copy to MSB buffer
+    if (queuedTurnArrived()) {
+      renderer.setRenderMode(GfxRenderer::BW);
+      renderer.restoreBwBuffer();
+      return true;
+    }
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
     composeGrayscaleBuffer();
+    if (queuedTurnArrived()) {
+      renderer.setRenderMode(GfxRenderer::BW);
+      renderer.restoreBwBuffer();
+      return true;
+    }
     renderer.copyGrayscaleMsbBuffers();
 
     // display grayscale part
+    if (queuedTurnArrived()) {
+      renderer.setRenderMode(GfxRenderer::BW);
+      renderer.restoreBwBuffer();
+      return true;
+    }
     renderer.displayGrayBuffer();
     renderer.setRenderMode(GfxRenderer::BW);
     // restore the bw data
