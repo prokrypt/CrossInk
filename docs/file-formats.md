@@ -47,6 +47,85 @@ struct ImageFolderIndexRecord {
 };
 ```
 
+## `/.crosspoint/library.idx`
+
+### Version 1
+
+`LibraryIndexFile` (`lib/LibraryIndex/LibraryIndexFile.{h,cpp}`) reads the
+`CLX1` on-disk index that backs the Library screen: one sorted, searchable
+snapshot of every book on the card, built by `LibraryBuilder` so paging,
+sorting, and searching the shelf cost a handful of seeks instead of a
+directory walk per screen. The format itself (`lib/LibraryIndex/LibraryFormat.h`)
+is free of `HalStorage` and Arduino so its layout and validation rules are
+host-testable (`test/library_format`, `test/library_index_file`).
+
+Every section starts on a 512-byte boundary. Records are a fixed 128 bytes
+each, so record `k` always lives at `recordStart + 128*k` with no offset table
+to load first, and 32 records exactly fill a 4096-byte scan buffer. Two
+`uint16_t` permutation arrays (author order, then arrival order) let the
+Author and Recent tabs page in sorted order without re-sorting on every open;
+Title order needs no permutation because the record section is already
+title-sorted.
+
+The index is disposable: a bad magic, an unknown format/fold version, a size
+mismatch (a build interrupted by power loss cannot pass, since `selfSize` is
+checked against the real file size), or an inconsistent section layout all
+cause a full rebuild rather than a crash or silently wrong output. A fold
+version bump alone (the text-normalisation rules changed) can be handled by
+reconciliation instead: `openForReconciliation()` accepts stale sort/search
+keys so each book's `firstSeen` arrival order survives across the rebuild
+even though its fold and permutations are regenerated.
+
+This port starts CrossInk's own format/fold version numbering at `1`; there is
+no prior on-disk `CLX1` layout to migrate from, unlike upstream CrossPoint
+Reader's `2`/`3` (an artifact of their own pre-release iteration).
+
+```c++
+struct ClixHeader {            // 64 bytes, padded to the first 512-byte sector
+    char magic[4];              // "CLX1"
+    u8 formatVersion;           // 1
+    u8 foldVersion;             // 1
+    u8 flags;                   // bit0: ranks degraded, bit1: dedup degraded
+    u8 metadataEnabled;         // 0 or 1
+    u16 bookCount;
+    u16 folderCount;
+    u16 nextFirstSeen;
+    u16 padding1;
+    u32 folderStart;
+    u32 folderLen;
+    u32 recordStart;
+    u32 permStart;
+    u32 nameStart;
+    u32 nameLen;
+    u32 selfSize;                // expected total file size; truncation guard
+    u8 reserved[20];
+};
+
+struct ClixRecord {             // exactly 128 bytes; record k @ recordStart + 128*k
+    u32 nameOff;                 // offset into the name blob, from nameStart
+    u32 fileSize;                // captured while the dirent was open
+    u16 firstSeen;
+    u16 folderId;                // index into the folder table
+    u8 nameLen;
+    u8 foldLen;
+    u8 authorKeyLen;
+    u8 metadataStatus;           // 0 not attempted, 1 extracted, 2 failed
+    char fold[96];               // folded sort/search key
+    char authorKey[12];          // order-insensitive author identity
+    u32 modificationTime;        // packed FAT date/time, or 0 if unavailable
+};
+
+struct ClixFolderHeader {        // one per indexed folder, back to back
+    u8 pathLen;                  // 1..255; path bytes follow, no trailing '/'
+};
+```
+
+The name blob for each record (found via `nameOff` into the `names` section)
+holds, back to back: an 8-byte FNV-1a path hash of the book's complete path
+(the identity used by rebuild reconciliation and by "is this book already in
+the index" lookups), the filename, then three length-prefixed fields —
+display author, title, and the pre-spelling-harmonisation source author.
+
 ## `book.bin`
 
 ### Version 9
