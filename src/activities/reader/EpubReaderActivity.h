@@ -326,21 +326,15 @@ class EpubReaderActivity final : public Activity {
   // Interactive builds stop as soon as the requested page is ready and give the
   // main loop a chance to observe input between pages.
   static constexpr int INTERACTIVE_BUILD_PAGES_PER_CHUNK = 1;
+  // Ticking one page at a time (checked against RenderLock::peek() and the input-yield flag
+  // before every tick) is what keeps the background build responsive: the build is allowed to
+  // keep running in the background without a hard lookahead cap, and page turns still win when
+  // input arrives. The reader resumes partial extensions immediately, and instant reopen still
+  // comes from Section::suspendBuild() persisting laid-out pages as a partial file on exit/sleep.
   static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 1;
-  // How many pages to keep laid out ahead of the reader for a still-building section. A page
-  // turn is ~1s on e-ink and a page builds in ~30ms, so the reader can't out-click the builder
-  // -- a tiny buffer is enough. The background build stops once the watermark is this far
-  // ahead and resumes as the reader advances; building unbounded instead locked up input by
-  // monopolizing the RenderLock. A giant single-spine book therefore never finalizes its .bin
-  // in one sitting -- instant reopen comes from Section::suspendBuild() persisting the pages
-  // already laid out as a partial file on exit/sleep.
-  static constexpr int BUILD_WINDOW_AHEAD = 5;
-  // Reopening a partial does not immediately restart its whole-chapter extension build.
-  // Start it only when the reader is close enough to need pages past the watermark.
-  static constexpr int PARTIAL_REBUILD_START_MARGIN = 15;
   // Show the indexing popup when an initial build must lay out more than this many pages up front
   // (a deep resume/jump into a not-yet-built section), so it isn't a silent wait. Kept independent
-  // of the small look-ahead window so ordinary landings stay popup-free.
+  // of the background build so ordinary landings stay popup-free.
   static constexpr int BUILD_POPUP_PAGE_THRESHOLD = 20;
   // Also show the popup when first building a spine larger than this (uncompressed bytes): its
   // whole HTML must be inflated before page 1 can lay out (the giant single-spine case), which is
@@ -484,15 +478,9 @@ class EpubReaderActivity final : public Activity {
     return true;
   }
   bool preventAutoSleep() override { return automaticPageTurnActive; }
-  // Hold the loop hot only while the build has work this loop would do: a kept-alive
-  // build sitting outside the lookahead window is dormant, and reporting it here would
-  // pin the CPU at full clock (no power saving, yield-only loop) for the whole read.
-  // Mirrors the tick condition in loop(): catch-up phase, or watermark inside the window.
-  bool sectionBuildWantsTick() const {
-    return section && section->isBuilding() &&
-           (!section->activeBuildHasCaughtReadablePages() ||
-            static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD);
-  }
+  // Hold the loop hot for as long as an in-progress build has more pages left to lay out,
+  // so it runs to completion in the background instead of pausing part way through.
+  bool sectionBuildWantsTick() const { return section && section->isBuilding(); }
   bool backgroundSectionBuildHasHeap();
   void idlePrewarmNextPage();
   bool skipLoopDelay() override {

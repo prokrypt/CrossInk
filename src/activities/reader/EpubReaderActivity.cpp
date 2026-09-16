@@ -2648,12 +2648,12 @@ void EpubReaderActivity::loop() {
   }
 #endif
 
-  // Lazily resume a partial's extension build once the reader nears its watermark. Far from it the
-  // rebuild is all cost (whole-chapter re-layout from page 0) and no benefit this session.
+  // Resume a reopened partial's extension build right away rather than waiting for the reader
+  // to approach its watermark: incremental indexing now always runs to completion in the
+  // background instead of stopping some distance ahead.
   if (!backgroundBuildYieldForInput.load(std::memory_order_relaxed) && section && !section->isBuilding() &&
       section->isPartial() && !RenderLock::peek() && buildViewportWidth > 0 && !partialRebuildStartFailed &&
-      !partialRebuildAbortedForLowMemory &&
-      section->currentPage + PARTIAL_REBUILD_START_MARGIN >= static_cast<int>(section->pageCount)) {
+      !partialRebuildAbortedForLowMemory) {
     RenderLock lock(*this);
     releaseGrayscaleStripScratch();
     if (section && !section->isBuilding() && section->isPartial() && backgroundSectionBuildHasHeap()) {
@@ -2664,33 +2664,23 @@ void EpubReaderActivity::loop() {
         partialRebuildStartFailed = true;
         LOG_ERR("ERS", "Failed to start deferred partial extension build");
       } else {
-        LOG_DBG("ERS", "Reader near partial watermark (%d/%d), resuming extension build", section->currentPage,
-                section->pageCount);
+        LOG_DBG("ERS", "Resuming partial extension build (%d/%d)", section->currentPage, section->pageCount);
       }
     }
   }
 
-  // Drive any in-progress incremental section build forward, off the page-turn critical path,
-  // but only within a small window ahead of the reader: an unbounded build monopolized the
-  // RenderLock and locked out page turns. The build follows the reader instead, and instant
-  // reopen comes from suspendBuild() persisting the laid-out pages as a partial on exit.
-  // Skip while the render mutex is busy so we never delay a pending render; re-check
-  // isBuilding() under the lock since render() may have just finished it.
-  // While extending a partial, pageCount is pinned at the partial watermark until the rebuild
-  // catches up, so keep ticking it even before activeBuildHasCaughtReadablePages() turns true;
-  // the window check below would compare against the pinned watermark and stall the catch-up.
-  // Once the extension has caught up, the window applies again: without that, a resumed partial
-  // rebuilt its whole chapter in one hot-loop burst instead of following the reader.
-  // sectionBuildWantsTick() holds the catch-up/window logic and is shared with
-  // skipLoopDelay(), so the loop only runs hot while a tick can actually happen.
-  if (!backgroundBuildYieldForInput.load(std::memory_order_relaxed) && sectionBuildWantsTick() && !RenderLock::peek() &&
-      (section->isPartial() || section->activeBuildHasCaughtReadablePages())) {
+  // Drive any in-progress incremental section build forward, off the page-turn critical path, until
+  // it completes. Responsiveness comes from ticking one page at a time (BACKGROUND_BUILD_PAGES_PER_TICK),
+  // skipping while the render mutex is busy so we never delay a pending render, and yielding whenever
+  // input is pending (backgroundBuildYieldForInput) -- not from capping how far ahead the build may get.
+  // Re-check isBuilding() under the lock since render() may have just finished it.
+  if (!backgroundBuildYieldForInput.load(std::memory_order_relaxed) && sectionBuildWantsTick() &&
+      !RenderLock::peek()) {
     RenderLock lock(*this);
     releaseGrayscaleStripScratch();
     // Re-check under the lock: render() may have finalized the build between the outer
     // isBuilding() check and acquiring the lock here.
-    if (section && section->isBuilding() && (section->isPartial() || section->activeBuildHasCaughtReadablePages()) &&
-        backgroundSectionBuildHasHeap()) {
+    if (section && section->isBuilding() && backgroundSectionBuildHasHeap()) {
       if (!section->buildSomeMore(BACKGROUND_BUILD_PAGES_PER_TICK)) {
         LOG_ERR("ERS", "Background section build failed");
         if (section->lastBuildLayoutAbortedForLowMemory() && section->pageCount > 0) {
@@ -2704,9 +2694,8 @@ void EpubReaderActivity::loop() {
       }
       if (section->isBuildComplete()) {
         const bool repositioned = applyDeferredReposition();
-        if (repositioned || progressSaveRequiredAfterRelayout) {
-          requestUpdate();
-        }
+        (void)repositioned;
+        requestUpdate();
       }
     }
   }
@@ -2959,6 +2948,7 @@ void EpubReaderActivity::loop() {
         sideLongPressSkipsChapter ? (sidePrevReleased || sideNextReleased) : (topReleased || bottomReleased);
     if (sideButtonLongPressHandled && sideLongPressReleased) {
       sideButtonLongPressHandled = false;
+      backgroundBuildYieldForInput.store(false, std::memory_order_relaxed);
       return;
     }
 
@@ -3034,6 +3024,7 @@ void EpubReaderActivity::loop() {
     const bool rightReleased = mappedInput.wasReleased(MappedInputManager::Button::Right);
     if (frontButtonLongPressHandled && (leftReleased || rightReleased)) {
       frontButtonLongPressHandled = false;
+      backgroundBuildYieldForInput.store(false, std::memory_order_relaxed);
       return;
     }
 
@@ -5715,38 +5706,30 @@ void EpubReaderActivity::render(RenderLock&& lock) {
             return page.has_value() &&
                    (static_cast<int>(*page) < static_cast<int>(section->pageCount) || section->isBuildComplete());
           };
-          const bool deferPartialBuild =
-              section->isPartial() &&
-              (anchorJump ? anchorPageReady()
-                          : target + PARTIAL_REBUILD_START_MARGIN < static_cast<int>(section->pageCount));
-          if (deferPartialBuild) {
-            LOG_DBG("ERS", "Partial covers target %d of %d; deferring extension build", target, section->pageCount);
-            buildSucceeded = true;
+          bool showPopup = false;
+          if (anchorJump) {
+            showPopup = !anchorPageReady() && spineBytes > BUILD_POPUP_BYTE_THRESHOLD;
           } else {
-            bool showPopup = false;
-            if (anchorJump) {
-              showPopup = !anchorPageReady() && spineBytes > BUILD_POPUP_BYTE_THRESHOLD;
-            } else {
-              const bool targetAvailable = target < static_cast<int>(section->pageCount);
-              showPopup = !targetAvailable && ((spineBytes > BUILD_POPUP_BYTE_THRESHOLD && willInflate) ||
-                                               target > BUILD_POPUP_PAGE_THRESHOLD);
-            }
-            if (showPopup) {
-              showIndexingPopup();
-            }
-            buildPopupPending = !showPopup;
-            const unsigned long buildStartMs = millis();
-            bool started;
-            {
-              GfxRenderer::FrameBufferLoan loan(renderer);
-              started = section->startBuild(spec, buildOptions, [this] { showBuildPopup(); });
-            }
-            if (started) {
-              bool buildFailed = false;
-              while (!section->isBuildComplete() &&
-                     (anchorJump                  ? !anchorPageReady()
-                      : pendingRelayoutReposition ? !isRelayoutCatchUpComplete()
-                                                  : static_cast<int>(section->pageCount) <= target)) {
+            const bool targetAvailable = target < static_cast<int>(section->pageCount);
+            showPopup = !targetAvailable && ((spineBytes > BUILD_POPUP_BYTE_THRESHOLD && willInflate) ||
+                                             target > BUILD_POPUP_PAGE_THRESHOLD);
+          }
+          if (showPopup) {
+            showIndexingPopup();
+          }
+          buildPopupPending = !showPopup;
+          const unsigned long buildStartMs = millis();
+          bool started;
+          {
+            GfxRenderer::FrameBufferLoan loan(renderer);
+            started = section->startBuild(spec, buildOptions, [this] { showBuildPopup(); });
+          }
+          if (started) {
+            bool buildFailed = false;
+            while (!section->isBuildComplete() &&
+                   (anchorJump                  ? !anchorPageReady()
+                    : pendingRelayoutReposition ? !isRelayoutCatchUpComplete()
+                                                : static_cast<int>(section->pageCount) <= target)) {
                 if (cancelBuildForBack()) {
                   break;
                 }
@@ -5784,7 +5767,6 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                   attemptLayoutAbortedForLowMemory || section->lastBuildLayoutAbortedForLowMemory();
             }
             buildPopupPending = false;
-          }
         }
         layoutAbortedForLowMemory = attemptLayoutAbortedForLowMemory;
         if (buildSucceeded) {
