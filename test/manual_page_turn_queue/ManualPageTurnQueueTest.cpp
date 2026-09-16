@@ -99,6 +99,15 @@ TEST(ManualPageTurnQueue, TracksWhenTheDispatchedTurnOpposesANewDirection) {
   EXPECT_FALSE(queue.dispatchedDirectionOpposes(true));
 }
 
+TEST(ManualPageTurnQueue, ReverseOfForwardDispatchedTurnMatchesPreviousDirection) {
+  ManualPageTurnQueue queue;
+  queue.markDispatched(next());
+
+  EXPECT_TRUE(queue.dispatchedIsForward());
+  EXPECT_FALSE(queue.dispatchedDirectionMatches(false));
+  EXPECT_TRUE(queue.dispatchedDirectionOpposes(false));
+}
+
 TEST(QueuedTurnRenderingState, CancellationDuringDecisionKeepsTheCurrentRenderAtFullQuality) {
   QueuedTurnRenderingState state;
   state.beginDecision();

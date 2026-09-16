@@ -5315,7 +5315,9 @@ void EpubReaderActivity::requestManualPageTurn(const bool isForwardTurn, const c
   finishManualPageTurnBrakeIfReady();
   if (pendingManualPageTurns.hasDispatched() && pendingManualPageTurns.dispatchedDirectionOpposes(isForwardTurn)) {
     // A fast opposite input should undo the last dispatched page turn instead
-    // of silently leaving the page one step too far forward.
+    // of silently leaving the page one step too far forward. Capture the
+    // already-dispatched direction before clearing the queue so the reversal is
+    // based on the actual prior movement, not the newly arrived input.
     const bool dispatchedIsForward = pendingManualPageTurns.dispatchedIsForward();
     pendingManualPageTurns.clear();
     queuedTurnRendering.cancelDeferred();
