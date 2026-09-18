@@ -22,6 +22,7 @@ inline int failRename = -1;
 inline int failAlloc = -1;
 inline bool failDirectorySeek = false;
 inline std::string failDirectoryIterationPath;
+inline std::string failOpenPath;
 inline std::string failClosePath;
 inline std::string failWritePath;
 inline unsigned parses = 0;
@@ -52,6 +53,7 @@ inline void reset() {
   failAlloc = -1;
   failDirectorySeek = false;
   failDirectoryIterationPath.clear();
+  failOpenPath.clear();
   failClosePath.clear();
   failWritePath.clear();
   parses = 0;
@@ -200,6 +202,11 @@ class HalStorage {
   }
   HalFile open(const char* path) {
     HalFile file;
+    if (!fake::failOpenPath.empty() && fake::failOpenPath == path) {
+      fake::failOpenPath.clear();
+      fake::failureTriggered = true;
+      return file;
+    }
     const auto found = fake::files.find(path);
     if (found != fake::files.end()) {
       file.node = found->second;

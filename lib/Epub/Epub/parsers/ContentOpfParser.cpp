@@ -3,6 +3,7 @@
 #include <FsHelpers.h>
 #include <Logging.h>
 #include <Serialization.h>
+#include <Utf8.h>
 #include <XmlParserUtils.h>
 
 #include <cctype>
@@ -45,9 +46,14 @@ constexpr size_t MAX_METADATA_TEXT = 512;
 // entries with ", " — done here rather than per-callback because expat can
 // split one text node into several write() calls, notably around entity
 // references, and title/author must read the same either way.
-void appendMetadataText(std::string& out, const XML_Char* text, const int len, bool& spacePending,
+void appendMetadataText(std::string& out, const XML_Char* text, const int len, bool& spacePending, bool& truncated,
                         bool* separatorPending = nullptr) {
-  if (out.size() >= MAX_METADATA_TEXT) return;  // already clamped and logged
+  if (truncated) return;
+  if (out.size() >= MAX_METADATA_TEXT) {
+    out.resize(static_cast<size_t>(utf8SafeTruncateBuffer(out.data(), static_cast<int>(out.size()))));
+    truncated = true;
+    return;
+  }
   for (int i = 0; i < len; i++) {
     const char c = text[i];
     if (isXmlWhitespace(c)) {
@@ -64,6 +70,8 @@ void appendMetadataText(std::string& out, const XML_Char* text, const int len, b
     const size_t prefixLen = useSeparator ? 2 : (useSpace ? 1 : 0);
     if (out.size() + prefixLen + 1 > MAX_METADATA_TEXT) {
       LOG_DBG("COF", "Metadata text exceeds %u bytes; truncating", static_cast<unsigned>(MAX_METADATA_TEXT));
+      out.resize(static_cast<size_t>(utf8SafeTruncateBuffer(out.data(), static_cast<int>(out.size()))));
+      truncated = true;
       return;
     }
     if (useSeparator) {
@@ -503,17 +511,18 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
   }
 
   if (self->state == IN_BOOK_TITLE) {
-    appendMetadataText(self->title, s, len, self->metadataSpacePending);
+    appendMetadataText(self->title, s, len, self->metadataSpacePending, self->titleTruncated);
     return;
   }
 
   if (self->state == IN_BOOK_AUTHOR) {
-    appendMetadataText(self->author, s, len, self->metadataSpacePending, &self->authorSeparatorPending);
+    appendMetadataText(self->author, s, len, self->metadataSpacePending, self->authorTruncated,
+                       &self->authorSeparatorPending);
     return;
   }
 
   if (self->state == IN_BOOK_LANGUAGE) {
-    appendMetadataText(self->language, s, len, self->metadataSpacePending);
+    appendMetadataText(self->language, s, len, self->metadataSpacePending, self->languageTruncated);
     return;
   }
 }

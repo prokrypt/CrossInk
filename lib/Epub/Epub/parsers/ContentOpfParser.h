@@ -42,6 +42,9 @@ class ContentOpfParser final : public Print {
   // collapses whitespace and separators correctly.
   bool metadataSpacePending = false;
   bool authorSeparatorPending = false;
+  bool titleTruncated = false;
+  bool authorTruncated = false;
+  bool languageTruncated = false;
   bool hasExplicitStartReference = false;
   bool collectCssFiles = true;
 

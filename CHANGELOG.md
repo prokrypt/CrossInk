@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Fixed
+
+- Library indexing now preserves the previous shelf after SD-card directory errors and refreshes metadata when books are replaced.
+
 ## [v1.6.0] - 2026-09-21
 
 ### Added

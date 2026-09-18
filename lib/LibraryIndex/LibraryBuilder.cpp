@@ -334,7 +334,10 @@ int findPrior(WalkState& st, const uint64_t pathHash) {
     st.stats->parsed++;
     Epub epub(fullPath, CACHE_DIR);
     std::string bookTitle;
-    if (epub.loadMetadata(bookTitle, author)) {
+    const bool sourceChanged = priorIndex >= 0 && (st.prior[priorIndex].fileSize != fileSize ||
+                                                   (modificationTime != 0 && priorRecord.modificationTime != 0 &&
+                                                    priorRecord.modificationTime != modificationTime));
+    if (epub.loadMetadata(bookTitle, author, !sourceChanged)) {
       entry.record.metadataStatus = CLIX_METADATA_EXTRACTED;
       if (!bookTitle.empty()) {
         title = std::move(bookTitle);
@@ -384,7 +387,8 @@ int findPrior(WalkState& st, const uint64_t pathHash) {
   // Only stored when the book actually told us something; otherwise the row falls
   // back to the filename and nothing is duplicated.
   const std::string& shownTitle = titleFromBook ? title : kNoTitle;
-  entry.titleLen = static_cast<uint8_t>(std::min<size_t>(shownTitle.size(), STAGE_NAME_BYTES));
+  entry.titleLen = static_cast<uint8_t>(utf8SafeTruncateBuffer(
+      shownTitle.data(), static_cast<int>(std::min<size_t>(shownTitle.size(), STAGE_NAME_BYTES))));
   if (entry.titleLen > 0) memcpy(entry.title, shownTitle.data(), entry.titleLen);
   if (!reuseMetadata) {
     const size_t foldBytes = std::min(folded.size(), CLIX_FOLD_BYTES);
@@ -396,7 +400,8 @@ int findPrior(WalkState& st, const uint64_t pathHash) {
   memcpy(entry.name, name.data(), entry.record.nameLen);
 
   const std::string displayAuthor = cleanPersonName(author);
-  entry.authorLen = static_cast<uint8_t>(std::min(displayAuthor.size(), STAGE_AUTHOR_BYTES));
+  entry.authorLen = static_cast<uint8_t>(utf8SafeTruncateBuffer(
+      displayAuthor.data(), static_cast<int>(std::min(displayAuthor.size(), STAGE_AUTHOR_BYTES))));
   memcpy(entry.author, displayAuthor.data(), entry.authorLen);
 
   st.stageOut->write(&entry, STAGE_STRIDE);
@@ -418,7 +423,9 @@ void walk(WalkState& st, const std::string& path, const int depth) {
 
   HalFile dir = Storage.open(path.c_str());
   if (!dir || !dir.isDirectory()) {
+    LOG_ERR("LIBIDX", "cannot open library directory %s", path.c_str());
     if (dir) dir.close();
+    st.failed = true;
     return;
   }
   dir.rewindDirectory();
@@ -1157,7 +1164,8 @@ bool buildLibraryIndex(const char* rootPath, BuildStats& stats, const bool readM
   stats.enriched = st.enriched;
 
   if (previous.isOpen() && st.books == priorCount && st.reused == priorCount && stats.metadataReused == priorCount &&
-      st.unreadableSkipped == 0) {
+      st.unreadableSkipped == 0 && !st.dedupDegraded &&
+      (previous.header().flags & (CLIX_FLAG_RANKS_DEGRADED | CLIX_FLAG_DEDUP_DEGRADED)) == 0) {
     previous.close();
     Storage.remove(STAGE_PATH);
     Storage.remove(folderStagePath.c_str());

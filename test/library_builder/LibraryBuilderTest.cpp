@@ -32,6 +32,19 @@ std::string pathAt(LibraryIndexFile& index, const SortOrder order, const uint16_
   return index.readPath(record, path) ? path : std::string();
 }
 
+bool recordAtPath(LibraryIndexFile& index, const std::string& path, ClixRecord& out) {
+  for (uint16_t ordinal = 0; ordinal < index.bookCount(); ordinal++) {
+    ClixRecord record{};
+    std::string storedPath;
+    if (!index.readRecord(ordinal, record) || !index.readPath(record, storedPath)) return false;
+    if (storedPath == path) {
+      out = record;
+      return true;
+    }
+  }
+  return false;
+}
+
 class LibraryBuilderTest : public ::testing::Test {
  protected:
   BuildStats stats;
@@ -39,6 +52,7 @@ class LibraryBuilderTest : public ::testing::Test {
   void SetUp() override {
     fake::reset();
     bookMetadata.clear();
+    metadataCacheUse.clear();
     fake::add("/a.epub");
     fake::add("/b.epub");
   }
@@ -123,6 +137,16 @@ TEST_F(LibraryBuilderTest, DirectoryIterationFailureRetainsPreviousIndex) {
   EXPECT_EQ(fake::files[INDEX]->bytes, old);
 }
 
+TEST_F(LibraryBuilderTest, DirectoryOpenFailureRetainsPreviousIndex) {
+  initial();
+  const auto old = fake::files[INDEX]->bytes;
+  fake::failOpenPath = "/";
+
+  EXPECT_FALSE(buildLibraryIndex("/", stats, false));
+  EXPECT_TRUE(fake::failureTriggered);
+  EXPECT_EQ(fake::files[INDEX]->bytes, old);
+}
+
 TEST_F(LibraryBuilderTest, StagingAndIndexWritesAreBatched) {
   fake::reset();
   for (unsigned i = 0; i < 128; i++) fake::add("/book" + numbered("", i) + ".txt");
@@ -156,6 +180,59 @@ TEST_F(LibraryBuilderTest, TimestampAndSizeChangesParseOnlyTheChangedBook) {
   ASSERT_TRUE(buildLibraryIndex("/", stats, true));
   EXPECT_EQ(fake::parses, 1u);
   EXPECT_EQ(stats.metadataReused, 1);
+}
+
+TEST_F(LibraryBuilderTest, MetadataCacheIsBypassedOnlyForChangedSources) {
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+  ASSERT_EQ(metadataCacheUse.size(), 2u);
+  EXPECT_TRUE(metadataCacheUse[0]);
+  EXPECT_TRUE(metadataCacheUse[1]);
+
+  metadataCacheUse.clear();
+  fake::files["/a.epub"]->time++;
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+  ASSERT_EQ(metadataCacheUse.size(), 1u);
+  EXPECT_FALSE(metadataCacheUse[0]);
+
+  metadataCacheUse.clear();
+  fake::files["/b.epub"]->bytes.push_back('x');
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+  ASSERT_EQ(metadataCacheUse.size(), 1u);
+  EXPECT_FALSE(metadataCacheUse[0]);
+
+  metadataCacheUse.clear();
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+  EXPECT_TRUE(metadataCacheUse.empty());
+}
+
+TEST_F(LibraryBuilderTest, MetadataStagingTruncatesAtUtf8Boundaries) {
+  const std::string title(254, 'T');
+  const std::string author(127, 'A');
+  const std::string emojiTitle(252, 'E');
+  const std::string emojiAuthor(125, 'B');
+  bookMetadata["/a.epub"].title = title + "\xC3\xA9";
+  bookMetadata["/a.epub"].author = author + "\xC3\xA9";
+  bookMetadata["/b.epub"].title = emojiTitle + "\xF0\x9F\x98\x80";
+  bookMetadata["/b.epub"].author = emojiAuthor + "\xF0\x9F\x98\x80";
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  ClixRecord aRecord{};
+  ASSERT_TRUE(recordAtPath(index, "/a.epub", aRecord));
+  std::string storedTitle;
+  std::string storedAuthor;
+  ASSERT_TRUE(index.readTitle(aRecord, storedTitle));
+  ASSERT_TRUE(index.readSourceAuthor(aRecord, storedAuthor));
+  EXPECT_EQ(storedTitle, title);
+  EXPECT_EQ(storedAuthor, author);
+
+  ClixRecord bRecord{};
+  ASSERT_TRUE(recordAtPath(index, "/b.epub", bRecord));
+  ASSERT_TRUE(index.readTitle(bRecord, storedTitle));
+  ASSERT_TRUE(index.readSourceAuthor(bRecord, storedAuthor));
+  EXPECT_EQ(storedTitle, emojiTitle);
+  EXPECT_EQ(storedAuthor, emojiAuthor);
 }
 
 TEST_F(LibraryBuilderTest, ZeroTimestampAndFailedExtractionAreNeverFresh) {
@@ -374,14 +451,16 @@ TEST_F(LibraryBuilderTest, LibrariesPastOldGateAndAtFormatCeilingKeepAllOrders) 
     EXPECT_FALSE(stats.ranksDegraded);
 
     if (count == CLIX_MAX_RECORDS) {
-      const auto old = fake::files[INDEX]->bytes;
       fake::parses = 0;
       fake::resetIoCounters();
       ASSERT_TRUE(buildLibraryIndex("/", stats, true));
       EXPECT_EQ(fake::parses, 0u);
       EXPECT_EQ(stats.metadataReused, CLIX_MAX_RECORDS);
-      EXPECT_FALSE(stats.indexReplaced);
-      EXPECT_EQ(fake::files[INDEX]->bytes, old);
+      // The fixed-size per-directory duplicate tracker is deliberately bounded
+      // below the maximum library size, so this index remains degraded. It must
+      // rebuild rather than silently preserve an old degraded header.
+      EXPECT_TRUE(stats.indexReplaced);
+      EXPECT_TRUE(stats.dedupDegraded);
       EXPECT_LT(fake::delays, 10000u);
     }
 
@@ -413,4 +492,28 @@ TEST_F(LibraryBuilderTest, SortAllocationFailureProducesValidDegradedIndex) {
   LibraryIndexFile index;
   ASSERT_TRUE(index.open(INDEX));
   EXPECT_EQ(index.bookCount(), 513);
+  EXPECT_NE(index.header().flags & CLIX_FLAG_RANKS_DEGRADED, 0);
+  index.close();
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, false));
+  EXPECT_TRUE(stats.indexReplaced);
+  EXPECT_FALSE(stats.ranksDegraded);
+  ASSERT_TRUE(index.open(INDEX));
+  EXPECT_EQ(index.header().flags & CLIX_FLAG_RANKS_DEGRADED, 0);
+  EXPECT_EQ(pathAt(index, SortOrder::TitleAsc, 0), "/book0000.txt");
+}
+
+TEST_F(LibraryBuilderTest, PriorDedupDegradationForcesReplacement) {
+  initial();
+  auto& bytes = fake::files[INDEX]->bytes;
+  ClixHeader header{};
+  std::memcpy(&header, bytes.data(), sizeof(header));
+  header.flags |= CLIX_FLAG_DEDUP_DEGRADED;
+  std::memcpy(bytes.data(), &header, sizeof(header));
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+  EXPECT_TRUE(stats.indexReplaced);
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  EXPECT_EQ(index.header().flags & CLIX_FLAG_DEDUP_DEGRADED, 0);
 }

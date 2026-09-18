@@ -1110,7 +1110,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
   return true;
 }
 
-bool Epub::loadMetadata(std::string& title, std::string& author) {
+bool Epub::loadMetadata(std::string& title, std::string& author, const bool allowCachedMetadata) {
   title.clear();
   author.clear();
 
@@ -1119,16 +1119,20 @@ bool Epub::loadMetadata(std::string& title, std::string& author) {
   // re-parsing the zip. Deliberately a LOCAL reader, not this->bookMetadataCache:
   // that member is tied to the full load()/spine lifecycle and must not be
   // partially populated by a metadata-only read.
-  auto metadataCache = makeUniqueNoThrow<BookMetadataCache>(cachePath);
-  if (metadataCache && metadataCache->load()) {
-    title = metadataCache->coreMetadata.title;
-    author = metadataCache->coreMetadata.author;
-    return true;
+  if (allowCachedMetadata) {
+    auto metadataCache = makeUniqueNoThrow<BookMetadataCache>(cachePath);
+    if (metadataCache && metadataCache->load()) {
+      title = metadataCache->coreMetadata.title;
+      author = metadataCache->coreMetadata.author;
+      return true;
+    }
+    if (!metadataCache) {
+      LOG_ERR("EBP", "Could not allocate metadata cache reader");
+    }
+  } else if (!clearCache()) {
+    LOG_ERR("EBP", "Could not invalidate stale metadata cache");
+    return false;
   }
-  if (!metadataCache) {
-    LOG_ERR("EBP", "Could not allocate metadata cache reader");
-  }
-  metadataCache.reset();
 
   BookMetadataCache::BookMetadata metadata;
   const bool loaded =

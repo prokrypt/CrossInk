@@ -35,6 +35,17 @@ TEST(ContentOpfParserMetadata, ClampsOversizedMetadataTextInsteadOfGrowingUnboun
   EXPECT_EQ(parser.title[0], 'A');
 }
 
+TEST(ContentOpfParserMetadata, ClampDoesNotSplitUtf8Codepoints) {
+  const std::string prefix(511, 'A');
+  const std::string xml = "<package xmlns:dc=\"urn:dc\"><metadata><dc:title>" + prefix +
+                          "\xC3\xA9&amp;tail</dc:title></metadata></package>";
+  ContentOpfParser parser("", "", xml.size(), nullptr);
+
+  parse(parser, xml);
+
+  EXPECT_EQ(parser.title, prefix);
+}
+
 TEST(ContentOpfParserMetadata, ClampNeverOvershootsAtAMultiCreatorSeparatorBoundary) {
   // First creator fills the field to exactly one byte under the cap, so the
   // second creator's leading ", " separator is the thing that would push the

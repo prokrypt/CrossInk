@@ -123,11 +123,12 @@ class Epub {
   bool load(bool buildIfMissing = true, bool skipLoadingCss = false,
             XLocationLoadMode xLocationLoadMode = XLocationLoadMode::Immediate, bool cacheCumulativeSpineSizes = false);
   // Title and author only, without building the spine/TOC/CSS/cover caches
-  // load() does. Reuses an existing metadata cache when there is one;
-  // otherwise stops the OPF parse at </metadata>, before the manifest. Used by
-  // the Library index builder, which reads every EPUB on the card and cannot
+  // load() does. Reuses an existing metadata cache when there is one unless
+  // allowCachedMetadata is false; that path invalidates a stale full cache and
+  // stops the OPF parse at </metadata>, before the manifest. Used by the
+  // Library index builder, which reads every EPUB on the card and cannot
   // afford a full load() per book.
-  bool loadMetadata(std::string& title, std::string& author);
+  bool loadMetadata(std::string& title, std::string& author, bool allowCachedMetadata = true);
   // Loads optional stable-page and source-spine metadata after a Skip-mode open.
   // Failure leaves normal size-based progress available.
   bool loadXLocations();
