@@ -2648,12 +2648,13 @@ void EpubReaderActivity::loop() {
   }
 #endif
 
-  // Resume a reopened partial's extension build right away rather than waiting for the reader
-  // to approach its watermark: incremental indexing now always runs to completion in the
-  // background instead of stopping some distance ahead.
+  // Incremental resumes a reopened partial immediately; IncreMENTAL waits until the reader is
+  // close enough to its watermark to avoid rebuilding far ahead of the current session.
   if (!backgroundBuildYieldForInput.load(std::memory_order_relaxed) && section && !section->isBuilding() &&
       section->isPartial() && !RenderLock::peek() && buildViewportWidth > 0 && !partialRebuildStartFailed &&
-      !partialRebuildAbortedForLowMemory) {
+      !partialRebuildAbortedForLowMemory &&
+      (SETTINGS.indexingMethod != CrossPointSettings::INDEXING_INCREMENTAL ||
+       section->currentPage + PARTIAL_REBUILD_START_MARGIN >= static_cast<int>(section->pageCount))) {
     RenderLock lock(*this);
     releaseGrayscaleStripScratch();
     if (section && !section->isBuilding() && section->isPartial() && backgroundSectionBuildHasHeap()) {
@@ -2674,13 +2675,15 @@ void EpubReaderActivity::loop() {
   // skipping while the render mutex is busy so we never delay a pending render, and yielding whenever
   // input is pending (backgroundBuildYieldForInput) -- not from capping how far ahead the build may get.
   // Re-check isBuilding() under the lock since render() may have just finished it.
-  if (!backgroundBuildYieldForInput.load(std::memory_order_relaxed) && sectionBuildWantsTick() &&
-      !RenderLock::peek()) {
+  if (!backgroundBuildYieldForInput.load(std::memory_order_relaxed) && !RenderLock::peek()) {
     RenderLock lock(*this);
     releaseGrayscaleStripScratch();
     // Re-check under the lock: render() may have finalized the build between the outer
     // isBuilding() check and acquiring the lock here.
-    if (section && section->isBuilding() && backgroundSectionBuildHasHeap()) {
+    const bool boundedBuildCanTick =
+        SETTINGS.indexingMethod != CrossPointSettings::INDEXING_INCREMENTAL ||
+        (section && (section->isPartial() || section->activeBuildHasCaughtReadablePages()));
+    if (section && sectionBuildWantsTick() && backgroundSectionBuildHasHeap() && boundedBuildCanTick) {
       if (!section->buildSomeMore(BACKGROUND_BUILD_PAGES_PER_TICK)) {
         LOG_ERR("ERS", "Background section build failed");
         if (section->lastBuildLayoutAbortedForLowMemory() && section->pageCount > 0) {
@@ -5599,6 +5602,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     const int readerFontId = SETTINGS.getReaderFontId();
     const EpubRenderMode selectedRenderMode = normalizeRenderMode(SETTINGS.epubRenderMode);
     const bool fullSectionIndexing = SETTINGS.indexingMethod == CrossPointSettings::INDEXING_FULL_SECTION;
+    const bool boundedIncrementalIndexing = SETTINGS.indexingMethod == CrossPointSettings::INDEXING_INCREMENTAL;
     EpubRenderMode usedRenderMode = selectedRenderMode;
     const bool buildingFootnotePreview = !pendingFootnotePreviewAnchor.empty();
     bool loadedSection = false;
@@ -5708,6 +5712,16 @@ void EpubReaderActivity::render(RenderLock&& lock) {
             return page.has_value() &&
                    (static_cast<int>(*page) < static_cast<int>(section->pageCount) || section->isBuildComplete());
           };
+          const bool deferPartialBuild =
+              boundedIncrementalIndexing && section->isPartial() &&
+              (anchorJump ? anchorPageReady()
+                          : target + PARTIAL_REBUILD_START_MARGIN < static_cast<int>(section->pageCount));
+          if (deferPartialBuild) {
+            LOG_DBG("ERS", "Partial covers target %d of %d; deferring Incremental extension build", target,
+                    section->pageCount);
+            buildSucceeded = true;
+            return buildSucceeded;
+          }
           bool showPopup = false;
           if (anchorJump) {
             showPopup = !anchorPageReady() && spineBytes > BUILD_POPUP_BYTE_THRESHOLD;

@@ -327,11 +327,11 @@ class EpubReaderActivity final : public Activity {
   // main loop a chance to observe input between pages.
   static constexpr int INTERACTIVE_BUILD_PAGES_PER_CHUNK = 1;
   // Ticking one page at a time (checked against RenderLock::peek() and the input-yield flag
-  // before every tick) is what keeps the background build responsive: the build is allowed to
-  // keep running in the background without a hard lookahead cap, and page turns still win when
-  // input arrives. The reader resumes partial extensions immediately, and instant reopen still
-  // comes from Section::suspendBuild() persisting laid-out pages as a partial file on exit/sleep.
+  // before every tick) keeps the background build responsive. Incremental limits the build to
+  // a small lookahead window, while IncreMENTAL keeps working to completion.
   static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 1;
+  static constexpr int BUILD_WINDOW_AHEAD = 5;
+  static constexpr int PARTIAL_REBUILD_START_MARGIN = 15;
   // Show the indexing popup when an initial build must lay out more than this many pages up front
   // (a deep resume/jump into a not-yet-built section), so it isn't a silent wait. Kept independent
   // of the background build so ordinary landings stay popup-free.
@@ -478,9 +478,16 @@ class EpubReaderActivity final : public Activity {
     return true;
   }
   bool preventAutoSleep() override { return automaticPageTurnActive; }
-  // Hold the loop hot for as long as an in-progress build has more pages left to lay out,
-  // so it runs to completion in the background instead of pausing part way through.
-  bool sectionBuildWantsTick() const { return section && section->isBuilding(); }
+  bool sectionBuildWantsTick() const {
+    if (!section || !section->isBuilding()) {
+      return false;
+    }
+    if (SETTINGS.indexingMethod != CrossPointSettings::INDEXING_INCREMENTAL) {
+      return true;
+    }
+    return !section->activeBuildHasCaughtReadablePages() ||
+           static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD;
+  }
   bool backgroundSectionBuildHasHeap();
   void idlePrewarmNextPage();
   bool skipLoopDelay() override {

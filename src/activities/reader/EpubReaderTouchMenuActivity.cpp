@@ -1141,7 +1141,8 @@ void EpubReaderTouchMenuActivity::activateRow(const RowId row) {
       showEnumOptions(row);
       return;
     case RowId::IndexingMethod:
-      draft.indexingMethod = draft.indexingMethod == 0 ? 1 : 0;
+      draft.indexingMethod =
+          static_cast<uint8_t>((draft.indexingMethod + 1) % CrossPointSettings::INDEXING_METHOD_COUNT);
       markSettingChanged(ReaderSettingsChangeMask::Relayout);
       requestUpdate();
       return;
@@ -1947,7 +1948,17 @@ const char* EpubReaderTouchMenuActivity::rowValue(const RowId row, char* buffer,
       return I18N.get(labels[std::min<size_t>(draft.epubRenderMode, labels.size() - 1)]);
     }
     case RowId::IndexingMethod:
-      return draft.indexingMethod == 0 ? tr(STR_INDEXING_INCREMENTAL) : tr(STR_INDEXING_FULL_SECTION);
+      switch (draft.indexingMethod) {
+        case CrossPointSettings::INDEXING_INCREMENTAL:
+          return tr(STR_INDEXING_INCREMENTAL);
+        case CrossPointSettings::INDEXING_FULL_SECTION:
+          return tr(STR_INDEXING_FULL_SECTION);
+        case CrossPointSettings::INDEXING_INCREMENTAL_MENTAL:
+          return tr(STR_INDEXING_INCREMENTAL_MENTAL);
+        case CrossPointSettings::INDEXING_METHOD_COUNT:
+          break;
+      }
+      return tr(STR_INDEXING_FULL_SECTION);
     case RowId::BookDictionary:
       if (bookDictionaryPath.empty()) return tr(STR_DICT_USE_GLOBAL);
       for (size_t i = 1; i < dictionaryPaths.size(); ++i) {
