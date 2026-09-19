@@ -565,7 +565,8 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
     // --- Display ---
     add(buildSleepScreenSetting());
     add(SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
-                          {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY));
+                          {StrId::STR_FIT, StrId::STR_CROP, StrId::STR_EXTEND}, "sleepScreenCoverMode",
+                          StrId::STR_CAT_DISPLAY));
     add(SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
                           {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED},
                           "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY));

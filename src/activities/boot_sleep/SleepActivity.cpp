@@ -50,6 +50,33 @@ bool sleepCoverFilterInvertsGeneratedScreen() {
   return SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE;
 }
 
+// Fills the letterbox/pillarbox margins left by a centered image with clamped
+// copies of its nearest edge pixel, instead of leaving them blank/white.
+void extendBitmapEdges(const GfxRenderer& renderer, int drawX, int drawY, int drawWidth, int drawHeight,
+                       int pageWidth, int pageHeight) {
+  if (drawWidth <= 0 || drawHeight <= 0) return;
+  const int left = std::clamp(drawX, 0, pageWidth);
+  const int top = std::clamp(drawY, 0, pageHeight);
+  const int right = std::clamp(drawX + drawWidth, 0, pageWidth);
+  const int bottom = std::clamp(drawY + drawHeight, 0, pageHeight);
+  if (left >= right || top >= bottom) return;
+
+  const auto edgeStateAt = [&](int col, int row) {
+    const int srcX = std::clamp(col, left, right - 1);
+    const int srcY = std::clamp(row, top, bottom - 1);
+    return renderer.isPixelBlack(srcX, srcY);
+  };
+
+  for (int row = 0; row < top; ++row)
+    for (int col = 0; col < pageWidth; ++col) renderer.drawPixel(col, row, edgeStateAt(col, row));
+  for (int row = bottom; row < pageHeight; ++row)
+    for (int col = 0; col < pageWidth; ++col) renderer.drawPixel(col, row, edgeStateAt(col, row));
+  for (int row = top; row < bottom; ++row) {
+    for (int col = 0; col < left; ++col) renderer.drawPixel(col, row, edgeStateAt(col, row));
+    for (int col = right; col < pageWidth; ++col) renderer.drawPixel(col, row, edgeStateAt(col, row));
+  }
+}
+
 void hideOverlayBatteryStrip(const GfxRenderer& renderer) {
   if (!SETTINGS.statusBarBattery) {
     return;
@@ -669,10 +696,11 @@ bool SleepActivity::renderBitmapSleepScreen(Bitmap& bitmap) const {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
   float cropX = 0, cropY = 0;
+  const bool extendEdges = SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::EXTEND;
 
   // Keep error diffusion on the screen-sized grid. Resampling an already
   // dithered source makes the source pattern alias into regular seams.
-  if (SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::FIT &&
+  if ((SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::FIT || extendEdges) &&
       (bitmap.getWidth() > pageWidth || bitmap.getHeight() > pageHeight)) {
     const float scale = std::min(static_cast<float>(pageWidth) / bitmap.getWidth(),
                                  static_cast<float>(pageHeight) / bitmap.getHeight());
@@ -716,6 +744,10 @@ bool SleepActivity::renderBitmapSleepScreen(Bitmap& bitmap) const {
 
   if (!renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY)) return false;
 
+  if (extendEdges) {
+    extendBitmapEdges(renderer, x, y, bitmap.getWidth(), bitmap.getHeight(), pageWidth, pageHeight);
+  }
+
   if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
     renderer.invertScreen();
   }
@@ -750,6 +782,9 @@ bool SleepActivity::renderBitmapSleepScreen(Bitmap& bitmap) const {
     if (!renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY)) {
       renderer.setRenderMode(GfxRenderer::BW);
       return false;
+    }
+    if (extendEdges) {
+      extendBitmapEdges(renderer, x, y, bitmap.getWidth(), bitmap.getHeight(), pageWidth, pageHeight);
     }
     if (mode == GfxRenderer::GRAYSCALE_LSB)
       renderer.copyGrayscaleLsbBuffers();
