@@ -7,6 +7,7 @@
 - Choose whole numbers, one decimal, or two decimals for the book progress percentage in status bar settings.
 - Two-finger Screen Rotation can be turned off in Settings > Controls > Taps & Gestures on multi-touch devices.
 - A new **Extend** sleep screen cover mode fills the empty margins around a cover that doesn't match the screen's aspect ratio by repeating its edge pixels instead of leaving them blank.
+- A new **Extend Mirror** sleep screen cover mode fills those same margins by reflecting the cover's edge content instead of repeating a single edge pixel.
 
 ### Changed
 

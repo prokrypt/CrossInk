@@ -50,6 +50,34 @@ bool sleepCoverFilterInvertsGeneratedScreen() {
   return SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE;
 }
 
+// Fills the letterbox/pillarbox margins left by a centered image at [left,right)x[top,bottom)
+// by sampling `sourceStateAt(col, row)` for each margin pixel, skipping the drawn image area.
+template <typename SourceStateFn>
+void fillMargins(const GfxRenderer& renderer, int left, int top, int right, int bottom, int pageWidth,
+                 int pageHeight, SourceStateFn sourceStateAt) {
+  if (left >= right || top >= bottom) return;
+
+  for (int row = 0; row < top; ++row)
+    for (int col = 0; col < pageWidth; ++col) renderer.drawPixel(col, row, sourceStateAt(col, row));
+  for (int row = bottom; row < pageHeight; ++row)
+    for (int col = 0; col < pageWidth; ++col) renderer.drawPixel(col, row, sourceStateAt(col, row));
+  for (int row = top; row < bottom; ++row) {
+    for (int col = 0; col < left; ++col) renderer.drawPixel(col, row, sourceStateAt(col, row));
+    for (int col = right; col < pageWidth; ++col) renderer.drawPixel(col, row, sourceStateAt(col, row));
+  }
+}
+
+// Reflects `c` back and forth across [lo, hi) so an offset arbitrarily far outside the
+// range still maps to a valid in-range coordinate (mirror-repeat, like GL_MIRRORED_REPEAT).
+int mirrorCoordinate(int c, int lo, int hi) {
+  const int n = hi - lo;
+  if (n <= 1) return lo;
+  const int period = 2 * n;
+  int d = (c - lo) % period;
+  if (d < 0) d += period;
+  return d < n ? lo + d : lo + (period - 1 - d);
+}
+
 // Fills the letterbox/pillarbox margins left by a centered image with clamped
 // copies of its nearest edge pixel, instead of leaving them blank/white.
 void extendBitmapEdges(const GfxRenderer& renderer, int drawX, int drawY, int drawWidth, int drawHeight,
@@ -59,22 +87,29 @@ void extendBitmapEdges(const GfxRenderer& renderer, int drawX, int drawY, int dr
   const int top = std::clamp(drawY, 0, pageHeight);
   const int right = std::clamp(drawX + drawWidth, 0, pageWidth);
   const int bottom = std::clamp(drawY + drawHeight, 0, pageHeight);
-  if (left >= right || top >= bottom) return;
 
-  const auto edgeStateAt = [&](int col, int row) {
+  fillMargins(renderer, left, top, right, bottom, pageWidth, pageHeight, [&](int col, int row) {
     const int srcX = std::clamp(col, left, right - 1);
     const int srcY = std::clamp(row, top, bottom - 1);
     return renderer.isPixelBlack(srcX, srcY);
-  };
+  });
+}
 
-  for (int row = 0; row < top; ++row)
-    for (int col = 0; col < pageWidth; ++col) renderer.drawPixel(col, row, edgeStateAt(col, row));
-  for (int row = bottom; row < pageHeight; ++row)
-    for (int col = 0; col < pageWidth; ++col) renderer.drawPixel(col, row, edgeStateAt(col, row));
-  for (int row = top; row < bottom; ++row) {
-    for (int col = 0; col < left; ++col) renderer.drawPixel(col, row, edgeStateAt(col, row));
-    for (int col = right; col < pageWidth; ++col) renderer.drawPixel(col, row, edgeStateAt(col, row));
-  }
+// Same as extendBitmapEdges, but reflects the drawn image outward into the margins
+// instead of repeating a single edge pixel, so the fill keeps the cover's texture.
+void mirrorBitmapEdges(const GfxRenderer& renderer, int drawX, int drawY, int drawWidth, int drawHeight,
+                       int pageWidth, int pageHeight) {
+  if (drawWidth <= 0 || drawHeight <= 0) return;
+  const int left = std::clamp(drawX, 0, pageWidth);
+  const int top = std::clamp(drawY, 0, pageHeight);
+  const int right = std::clamp(drawX + drawWidth, 0, pageWidth);
+  const int bottom = std::clamp(drawY + drawHeight, 0, pageHeight);
+
+  fillMargins(renderer, left, top, right, bottom, pageWidth, pageHeight, [&](int col, int row) {
+    const int srcX = mirrorCoordinate(col, left, right);
+    const int srcY = mirrorCoordinate(row, top, bottom);
+    return renderer.isPixelBlack(srcX, srcY);
+  });
 }
 
 void hideOverlayBatteryStrip(const GfxRenderer& renderer) {
@@ -697,10 +732,12 @@ bool SleepActivity::renderBitmapSleepScreen(Bitmap& bitmap) const {
   const auto pageHeight = renderer.getScreenHeight();
   float cropX = 0, cropY = 0;
   const bool extendEdges = SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::EXTEND;
+  const bool mirrorEdges = SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::EXTEND_MIRROR;
 
   // Keep error diffusion on the screen-sized grid. Resampling an already
   // dithered source makes the source pattern alias into regular seams.
-  if ((SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::FIT || extendEdges) &&
+  if ((SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::FIT || extendEdges ||
+       mirrorEdges) &&
       (bitmap.getWidth() > pageWidth || bitmap.getHeight() > pageHeight)) {
     const float scale = std::min(static_cast<float>(pageWidth) / bitmap.getWidth(),
                                  static_cast<float>(pageHeight) / bitmap.getHeight());
@@ -746,6 +783,8 @@ bool SleepActivity::renderBitmapSleepScreen(Bitmap& bitmap) const {
 
   if (extendEdges) {
     extendBitmapEdges(renderer, x, y, bitmap.getWidth(), bitmap.getHeight(), pageWidth, pageHeight);
+  } else if (mirrorEdges) {
+    mirrorBitmapEdges(renderer, x, y, bitmap.getWidth(), bitmap.getHeight(), pageWidth, pageHeight);
   }
 
   if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
@@ -785,6 +824,8 @@ bool SleepActivity::renderBitmapSleepScreen(Bitmap& bitmap) const {
     }
     if (extendEdges) {
       extendBitmapEdges(renderer, x, y, bitmap.getWidth(), bitmap.getHeight(), pageWidth, pageHeight);
+    } else if (mirrorEdges) {
+      mirrorBitmapEdges(renderer, x, y, bitmap.getWidth(), bitmap.getHeight(), pageWidth, pageHeight);
     }
     if (mode == GfxRenderer::GRAYSCALE_LSB)
       renderer.copyGrayscaleLsbBuffers();
