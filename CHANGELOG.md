@@ -26,6 +26,7 @@
 
 ### Fixed
 
+- Periodic memory telemetry now reports only when free heap or PSRAM changes, while checking for changes every 2 seconds.
 - OPDS Wi-Fi selection and search entry stay awake while the user is actively choosing or typing.
 - USB Drive exits cleanly when a connected host is unplugged without ejecting first.
 - EPUB ordered lists show numbers, respect marker-free styles, and retain their container indentation.

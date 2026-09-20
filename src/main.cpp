@@ -319,13 +319,40 @@ const char* wakeupRouteName(const HalGPIO::WakeupReason reason) {
   }
 }
 
-void logMemoryStats(const char* phase) {
+void logMemoryStats(const char* phase, const bool onlyIfChanged = false) {
+  static bool hasPreviousPeriodicStats = false;
+  static uint32_t previousFreeHeap = 0;
+#if defined(BOARD_HAS_PSRAM)
+  static uint32_t previousFreePsram = 0;
+#endif
+
+  const uint32_t freeHeap = ESP.getFreeHeap();
+#if defined(BOARD_HAS_PSRAM)
+  const uint32_t freePsram = ESP.getFreePsram();
+#endif
+
+  if (onlyIfChanged && hasPreviousPeriodicStats && freeHeap == previousFreeHeap
+#if defined(BOARD_HAS_PSRAM)
+      && freePsram == previousFreePsram
+#endif
+  ) {
+    return;
+  }
+
+  if (onlyIfChanged) {
+    hasPreviousPeriodicStats = true;
+    previousFreeHeap = freeHeap;
+#if defined(BOARD_HAS_PSRAM)
+    previousFreePsram = freePsram;
+#endif
+  }
+
 #if defined(BOARD_HAS_PSRAM)
   LOG_INF("MEM", "%s: heap free=%u total=%u min=%u maxAlloc=%u psram free=%u total=%u min=%u maxAlloc=%u", phase,
-          ESP.getFreeHeap(), ESP.getHeapSize(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(), ESP.getFreePsram(),
-          ESP.getPsramSize(), ESP.getMinFreePsram(), ESP.getMaxAllocPsram());
+          freeHeap, ESP.getHeapSize(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(), freePsram, ESP.getPsramSize(),
+          ESP.getMinFreePsram(), ESP.getMaxAllocPsram());
 #else
-  LOG_INF("MEM", "%s: heap free=%u total=%u min=%u maxAlloc=%u", phase, ESP.getFreeHeap(), ESP.getHeapSize(),
+  LOG_INF("MEM", "%s: heap free=%u total=%u min=%u maxAlloc=%u", phase, freeHeap, ESP.getHeapSize(),
           ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
 #endif
 }
@@ -1603,8 +1630,8 @@ void loop() {
 
   renderer.setFadingFix(SETTINGS.fadingFix);
 
-  if (Serial && millis() - lastMemPrint >= 10000) {
-    logMemoryStats("Periodic");
+  if (Serial && millis() - lastMemPrint >= 2000) {
+    logMemoryStats("Periodic", true);
     lastMemPrint = millis();
   }
 
