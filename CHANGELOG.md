@@ -37,6 +37,7 @@
 - EPUB dictionary lookup can select an individual part of a hyphenated word.
 - Short Power-button frontlight and touchscreen shortcuts in EPUB books no longer run the configured long-press action.
 - Incremental EPUB indexing resumes after skipping chapters and refreshes the status bar when indexing completes.
+- Incremental EPUB indexing now updates in-progress total-page estimates at each build chunk, so "page X of ~Y" stays closer to the final count while background indexing runs.
 - Rapid queued EPUB page turns skip rendering intermediate pages until the final destination.
 - Silent restarts now preserve the frontlight state instead of applying wake or schedule settings.
 - Devices with only Up/Down navigation buttons (e.g. X4 Pro) can now reach every book in the Recent Books grid view, with Up/Down walking left-to-right, line by line, instead of only moving between rows.
