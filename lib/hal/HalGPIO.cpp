@@ -298,6 +298,11 @@ bool HalGPIO::hasEdgeSideButtons() const {
          BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX4Classic;
 }
 
+bool HalGPIO::hasLeftRightButtons() const {
+  return BoardConfig::ACTIVE.input.left != BoardConfig::PIN_UNASSIGNED &&
+         BoardConfig::ACTIVE.input.right != BoardConfig::PIN_UNASSIGNED;
+}
+
 bool HalGPIO::verifyPowerButtonWakeup(const bool shortPressWakes) {
   // M5Paper v1.1 reaches setup after a normal wheel click has already been
   // released. Its hardware pull-ups make this ghost-wake debounce unnecessary.

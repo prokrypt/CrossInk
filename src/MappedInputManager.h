@@ -89,6 +89,9 @@ class MappedInputManager {
   // when a destination activity must consume the release of the button that
   // opened it.
   bool isPhysicalPressed(Button button) const;
+  // False on boards whose only nav keys are Up/Down (e.g. X4 Pro), so grid/list
+  // views can fall back to reading-order navigation with those two buttons.
+  bool hasLeftRightButtons() const { return hasLeftRightButtonsHardware(); }
   const GfxRenderer& getRenderer() const { return renderer; }
   enum class RowTouch : uint8_t { None, Down, Tap };
 #if CROSSINK_APP_CAP_TOUCH
@@ -295,6 +298,7 @@ class MappedInputManager {
   uint8_t mappedFrontButtonFor(Button button) const;
   bool shouldUsePowerAsConfirmFallback() const;
   bool shouldMirrorPowerAsConfirmHold() const;
+  bool hasLeftRightButtonsHardware() const;
 #if CROSSINK_APP_CAP_TOUCH
   bool touchInputEnabled() const;
   bool hasHomeKeyHardware() const;

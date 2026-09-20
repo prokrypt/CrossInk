@@ -642,6 +642,18 @@ bool MappedInputManager::hasHomeKeyHardware() const {
 #endif
 }
 
+bool MappedInputManager::hasLeftRightButtonsHardware() const {
+#ifdef SIMULATOR
+#ifdef SIMULATOR_DEVICE_X4_PRO
+  return false;
+#else
+  return true;
+#endif
+#else
+  return gpio.hasLeftRightButtons();
+#endif
+}
+
 bool MappedInputManager::wasTopEdgeDownSwipe() const {
   // Downward swipe starting at the top edge (mirror of the bottom-edge swipe).
   int sx = 0;
