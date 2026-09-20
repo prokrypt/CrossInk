@@ -109,7 +109,7 @@ jobs:
 
           Download individual files or use **Settings > System > Manage Fonts** on the device.
 
-          See [SD Card Fonts documentation](https://github.com/${{ github.repository }}/blob/main/docs/sd-card-fonts.md) for details."
+          See [SD Card Fonts documentation](https://github.com/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/docs/sd-card-fonts.md) for details."
 
       - name: Update stable tag for device downloads
         env:
