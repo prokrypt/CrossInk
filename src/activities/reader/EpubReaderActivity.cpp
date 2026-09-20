@@ -5821,43 +5821,43 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                    (anchorJump                  ? !anchorPageReady()
                     : pendingRelayoutReposition ? !isRelayoutCatchUpComplete()
                                                 : static_cast<int>(section->pageCount) <= target)) {
-                if (cancelBuildForBack()) {
-                  break;
-                }
-                if (buildPopupPending && millis() - buildStartMs >= BUILD_POPUP_DEADLINE_MS) {
-                  showBuildPopup();
-                }
-                if (!section->buildSomeMore(INTERACTIVE_BUILD_PAGES_PER_CHUNK)) {
-                  LOG_ERR("ERS", "Failed during incremental section build");
-                  buildFailed = true;
-                  break;
-                }
+              if (cancelBuildForBack()) {
+                break;
               }
-              if (!buildFailed && pendingRelayoutReposition && section->isBuilding() && isRelayoutCatchUpComplete()) {
-                LOG_DBG("ERS", "Incremental relayout reached prior watermark: pages=%u target=%d", section->pageCount,
-                        cachedChapterPageWatermark);
+              if (buildPopupPending && millis() - buildStartMs >= BUILD_POPUP_DEADLINE_MS) {
+                showBuildPopup();
               }
-              attemptLayoutAbortedForLowMemory =
-                  attemptLayoutAbortedForLowMemory || section->lastBuildLayoutAbortedForLowMemory();
-              const bool requestedPageAvailable = anchorJump ? anchorPageReady()
-                                                  : pendingRelayoutReposition
-                                                      ? isRelayoutCatchUpComplete()
-                                                      : target >= 0 && target < static_cast<int>(section->pageCount);
-              if (buildCancelledForBack) {
-                buildFailed = false;
+              if (!section->buildSomeMore(INTERACTIVE_BUILD_PAGES_PER_CHUNK)) {
+                LOG_ERR("ERS", "Failed during incremental section build");
+                buildFailed = true;
+                break;
               }
-              if (buildFailed && attemptLayoutAbortedForLowMemory && requestedPageAvailable) {
-                LOG_ERR("ERS", "Incremental section build paused for low heap after reaching requested page");
-                attemptLayoutAbortedForLowMemory = false;
-                buildFailed = false;
-              }
-              buildSucceeded =
-                  buildCancelledForBack || (!buildFailed && (section->pageCount > 0 || section->isBuildComplete()));
-            } else {
-              attemptLayoutAbortedForLowMemory =
-                  attemptLayoutAbortedForLowMemory || section->lastBuildLayoutAbortedForLowMemory();
             }
-            buildPopupPending = false;
+            if (!buildFailed && pendingRelayoutReposition && section->isBuilding() && isRelayoutCatchUpComplete()) {
+              LOG_DBG("ERS", "Incremental relayout reached prior watermark: pages=%u target=%d", section->pageCount,
+                      cachedChapterPageWatermark);
+            }
+            attemptLayoutAbortedForLowMemory =
+                attemptLayoutAbortedForLowMemory || section->lastBuildLayoutAbortedForLowMemory();
+            const bool requestedPageAvailable = anchorJump ? anchorPageReady()
+                                                : pendingRelayoutReposition
+                                                    ? isRelayoutCatchUpComplete()
+                                                    : target >= 0 && target < static_cast<int>(section->pageCount);
+            if (buildCancelledForBack) {
+              buildFailed = false;
+            }
+            if (buildFailed && attemptLayoutAbortedForLowMemory && requestedPageAvailable) {
+              LOG_ERR("ERS", "Incremental section build paused for low heap after reaching requested page");
+              attemptLayoutAbortedForLowMemory = false;
+              buildFailed = false;
+            }
+            buildSucceeded =
+                buildCancelledForBack || (!buildFailed && (section->pageCount > 0 || section->isBuildComplete()));
+          } else {
+            attemptLayoutAbortedForLowMemory =
+                attemptLayoutAbortedForLowMemory || section->lastBuildLayoutAbortedForLowMemory();
+          }
+          buildPopupPending = false;
         }
         layoutAbortedForLowMemory = attemptLayoutAbortedForLowMemory;
         if (buildSucceeded) {
@@ -7070,14 +7070,11 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   if (needsAnyGrayscale) {
     ensureGrayscaleStripScratch();
   }
-  if (EpubGrayscale::runTiledGrayscalePass(renderer, *page, fontId, orientedMarginLeft, orientedMarginTop,
-                                           foregroundBlack, needsTextGrayscale, needsImageGrayscale,
-                                           grayscaleStripScratch.get(), grayscaleStripScratchSize, overlapRefresh,
-                                           [](void* context) {
-                                             return static_cast<EpubReaderActivity*>(context)
-                                                 ->pendingManualPageTurns.hasPending();
-                                           },
-                                           this)) {
+  if (EpubGrayscale::runTiledGrayscalePass(
+          renderer, *page, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack, needsTextGrayscale,
+          needsImageGrayscale, grayscaleStripScratch.get(), grayscaleStripScratchSize, overlapRefresh,
+          [](void* context) { return static_cast<EpubReaderActivity*>(context)->pendingManualPageTurns.hasPending(); },
+          this)) {
     return true;
   }
 

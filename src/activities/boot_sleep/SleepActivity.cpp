@@ -53,8 +53,8 @@ bool sleepCoverFilterInvertsGeneratedScreen() {
 // Fills the letterbox/pillarbox margins left by a centered image at [left,right)x[top,bottom)
 // by sampling `sourceStateAt(col, row)` for each margin pixel, skipping the drawn image area.
 template <typename SourceStateFn>
-void fillMargins(const GfxRenderer& renderer, int left, int top, int right, int bottom, int pageWidth,
-                 int pageHeight, SourceStateFn sourceStateAt) {
+void fillMargins(const GfxRenderer& renderer, int left, int top, int right, int bottom, int pageWidth, int pageHeight,
+                 SourceStateFn sourceStateAt) {
   if (left >= right || top >= bottom) return;
 
   for (int row = 0; row < top; ++row)
@@ -80,8 +80,8 @@ int mirrorCoordinate(int c, int lo, int hi) {
 
 // Fills the letterbox/pillarbox margins left by a centered image with clamped
 // copies of its nearest edge pixel, instead of leaving them blank/white.
-void extendBitmapEdges(const GfxRenderer& renderer, int drawX, int drawY, int drawWidth, int drawHeight,
-                       int pageWidth, int pageHeight) {
+void extendBitmapEdges(const GfxRenderer& renderer, int drawX, int drawY, int drawWidth, int drawHeight, int pageWidth,
+                       int pageHeight) {
   if (drawWidth <= 0 || drawHeight <= 0) return;
   const int left = std::clamp(drawX, 0, pageWidth);
   const int top = std::clamp(drawY, 0, pageHeight);
@@ -97,8 +97,8 @@ void extendBitmapEdges(const GfxRenderer& renderer, int drawX, int drawY, int dr
 
 // Same as extendBitmapEdges, but reflects the drawn image outward into the margins
 // instead of repeating a single edge pixel, so the fill keeps the cover's texture.
-void mirrorBitmapEdges(const GfxRenderer& renderer, int drawX, int drawY, int drawWidth, int drawHeight,
-                       int pageWidth, int pageHeight) {
+void mirrorBitmapEdges(const GfxRenderer& renderer, int drawX, int drawY, int drawWidth, int drawHeight, int pageWidth,
+                       int pageHeight) {
   if (drawWidth <= 0 || drawHeight <= 0) return;
   const int left = std::clamp(drawX, 0, pageWidth);
   const int top = std::clamp(drawY, 0, pageHeight);
