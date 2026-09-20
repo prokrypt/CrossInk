@@ -241,6 +241,9 @@ size_t wsLastProgressSent = 0;
 String wsLastCompleteName;
 size_t wsLastCompleteSize = 0;
 unsigned long wsLastCompleteAt = 0;
+// Keeps the WiFi modem awake for the duration of a WS upload; STA-mode power
+// save otherwise adds beacon-interval latency to every small write round trip
+std::unique_ptr<WifiPowerSaveGuard> wsUploadPowerSaveGuard;
 
 String normalizeWebPath(const String& inputPath) {
   if (inputPath.isEmpty() || inputPath == "/") {
@@ -434,6 +437,7 @@ void CrossPointWebServer::abortWsUpload(const char* tag) {
   wsUploadInProgress = false;
   wsUploadClientNum = 255;
   wsLastProgressSent = 0;
+  wsUploadPowerSaveGuard.reset();
 }
 
 void CrossPointWebServer::stop() {
@@ -950,6 +954,8 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       return;
     }
 
+    state.powerSaveGuard = makeUniqueNoThrow<WifiPowerSaveGuard>();
+
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (state.file && state.error.isEmpty()) {
       // Buffer incoming data and flush when buffer is full
@@ -979,6 +985,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       state.size += upload.currentSize;
     }
   } else if (upload.status == UPLOAD_FILE_END) {
+    state.powerSaveGuard.reset();
     if (state.file) {
       // Flush any remaining buffered data
       if (!flushUploadBuffer(state)) {
@@ -1002,6 +1009,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       }
     }
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
+    state.powerSaveGuard.reset();
     state.bufferPos = 0;  // Discard buffered data
     if (state.file) {
       state.file.close();
@@ -1988,6 +1996,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
 
           wsUploadClientNum = num;
           wsUploadInProgress = true;
+          wsUploadPowerSaveGuard = makeUniqueNoThrow<WifiPowerSaveGuard>();
           wsServer->sendTXT(num, "READY");
         } else {
           wsServer->sendTXT(num, "ERROR:Invalid START format");
@@ -2036,6 +2045,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         wsLastCompleteName = wsUploadFileName;
         wsLastCompleteSize = wsUploadSize;
         wsLastCompleteAt = millis();
+        wsUploadPowerSaveGuard.reset();
 
         unsigned long elapsed = millis() - wsUploadStartTime;
         float kbps = (elapsed > 0) ? (wsUploadSize / 1024.0) / (elapsed / 1000.0) : 0;
