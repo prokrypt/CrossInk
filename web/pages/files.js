@@ -1444,6 +1444,10 @@ let currentUploadXhr = null; // Active XHR reference for external abort
 const HTTP_PORT = Number(window.location.port || 80);
 const WS_PORT = HTTP_PORT + 1;
 const WS_CHUNK_SIZE = 4096; // 4KB chunks - smaller for ESP32 stability
+// Max bytes allowed in flight before pausing sends. Throughput is capped at
+// roughly WS_MAX_BUFFERED / RTT, so a small window starves high-latency links
+// (e.g. a phone's WiFi) much more than low-latency ones (e.g. Ethernet).
+const WS_MAX_BUFFERED = WS_CHUNK_SIZE * 16;
 
 // ============================================================================
 // EPUB Image Conversion Functions (from Baseline JPEG Converter)
@@ -4932,8 +4936,8 @@ function uploadFileWebSocket(file, onProgress, onComplete, onError) {
             const chunk = file.slice(offset, offset + chunkSize);
             const buffer = await chunk.arrayBuffer();
 
-            // Wait for buffer to clear - more aggressive backpressure
-            while (ws.bufferedAmount > WS_CHUNK_SIZE * 2 && ws.readyState === WebSocket.OPEN) {
+            // Wait for buffer to clear before sending more (flow control)
+            while (ws.bufferedAmount > WS_MAX_BUFFERED && ws.readyState === WebSocket.OPEN) {
               await new Promise((r) => setTimeout(r, 5));
             }
 
