@@ -71,7 +71,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        environment: [default, x4-pro, x4-classic, sticky]
+        include:
+          - environment: default
+          - environment: x4-pro
+          - environment: x4-classic
+          - environment: sticky
+          - environment: x4-pro-debug
+            pull_request_only: true
+    if: ${{ !matrix.pull_request_only || github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v6
         with:
