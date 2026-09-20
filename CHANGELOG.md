@@ -13,6 +13,7 @@
 
 ### Changed
 
+- Idle power saving now engages after 1 second instead of 3, and battery level is polled every 6 seconds instead of every 1.5, trading slightly less frequent battery updates for lower average power draw.
 - PNG, XTC, and image-dithering scratch buffers use fewer heap allocations to reduce fragmentation.
 - The shared settings catalog keeps its initial allocation instead of retaining unused vector capacity.
 - SPI SD-card transfers are batched through the ESP32 hardware FIFO for faster reads.
