@@ -38,6 +38,7 @@
 - Incremental EPUB indexing resumes after skipping chapters and refreshes the status bar when indexing completes.
 - Rapid queued EPUB page turns skip rendering intermediate pages until the final destination.
 - Silent restarts now preserve the frontlight state instead of applying wake or schedule settings.
+- Devices with only Up/Down navigation buttons (e.g. X4 Pro) can now reach every book in the Recent Books grid view, with Up/Down walking left-to-right, line by line, instead of only moving between rows.
 - The Home button now returns from Customize Status Bar to the previous menu instead of leaving the reader.
 - OPDS book downloads can follow secure redirects without sharing catalog credentials with the download host.
 - Larger EPUB stylesheets work on PSRAM readers, including rules that hide duplicate images.
