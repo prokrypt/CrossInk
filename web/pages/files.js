@@ -90,6 +90,19 @@ function formatFileSize(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)).toLocaleString() + " " + sizes[i];
 }
 
+// Maps each modal overlay id to its Escape/Cancel-button close function.
+// Click-outside uses closeUploadModal (a no-op mid-upload) to avoid
+// accidentally aborting an in-progress upload from a stray outside click.
+const MODAL_CANCEL_FNS = {
+  uploadModal: handleCancelUploadModal,
+  folderModal: closeFolderModal,
+  deleteModal: closeDeleteModal,
+  renameModal: closeRenameModal,
+  moveModal: closeMoveModal,
+  imagePreviewModal: closeImagePreview,
+};
+const MODAL_OUTSIDE_CLICK_FNS = { ...MODAL_CANCEL_FNS, uploadModal: closeUploadModal };
+
 async function hydrate() {
   // Fetch CrossInk version
   fetchVersion();
@@ -98,16 +111,28 @@ async function hydrate() {
   document.querySelectorAll(".modal-overlay").forEach(function (overlay) {
     overlay.addEventListener("click", function (e) {
       if (e.target === overlay) {
-        // Call the appropriate close function for each modal to ensure cleanup
-        if (overlay.id === "uploadModal") return closeUploadModal();
-        if (overlay.id === "folderModal") return closeFolderModal();
-        if (overlay.id === "deleteModal") return closeDeleteModal();
-        if (overlay.id === "renameModal") return closeRenameModal();
-        if (overlay.id === "moveModal") return closeMoveModal();
-        if (overlay.id === "imagePreviewModal") return closeImagePreview();
+        const closeFn = MODAL_OUTSIDE_CLICK_FNS[overlay.id];
+        if (closeFn) return closeFn();
         overlay.classList.remove("open");
       }
     });
+  });
+
+  // Escape cancels whichever modal is currently open
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    const openOverlay = document.querySelector(".modal-overlay.open");
+    if (!openOverlay) return;
+    const closeFn = MODAL_CANCEL_FNS[openOverlay.id];
+    if (closeFn) closeFn();
+  });
+
+  // Enter confirms the rename/move text inputs
+  document.getElementById("renameNewName").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") confirmRename();
+  });
+  document.getElementById("moveDestPath").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") confirmMove();
   });
 
   const breadcrumbs = document.getElementById("directory-breadcrumbs");
@@ -1419,6 +1444,10 @@ let currentUploadXhr = null; // Active XHR reference for external abort
 const HTTP_PORT = Number(window.location.port || 80);
 const WS_PORT = HTTP_PORT + 1;
 const WS_CHUNK_SIZE = 4096; // 4KB chunks - smaller for ESP32 stability
+// Max bytes allowed in flight before pausing sends. Throughput is capped at
+// roughly WS_MAX_BUFFERED / RTT, so a small window starves high-latency links
+// (e.g. a phone's WiFi) much more than low-latency ones (e.g. Ethernet).
+const WS_MAX_BUFFERED = WS_CHUNK_SIZE * 16;
 
 // ============================================================================
 // EPUB Image Conversion Functions (from Baseline JPEG Converter)
@@ -4907,8 +4936,8 @@ function uploadFileWebSocket(file, onProgress, onComplete, onError) {
             const chunk = file.slice(offset, offset + chunkSize);
             const buffer = await chunk.arrayBuffer();
 
-            // Wait for buffer to clear - more aggressive backpressure
-            while (ws.bufferedAmount > WS_CHUNK_SIZE * 2 && ws.readyState === WebSocket.OPEN) {
+            // Wait for buffer to clear before sending more (flow control)
+            while (ws.bufferedAmount > WS_MAX_BUFFERED && ws.readyState === WebSocket.OPEN) {
               await new Promise((r) => setTimeout(r, 5));
             }
 
@@ -5443,7 +5472,12 @@ function openRenameModal(name, path) {
   setTimeout(() => {
     const input = document.getElementById("renameNewName");
     input.focus();
-    input.select();
+    const dotIndex = name.lastIndexOf(".");
+    if (dotIndex > 0) {
+      input.setSelectionRange(0, dotIndex);
+    } else {
+      input.select();
+    }
   }, 50);
 }
 

@@ -410,8 +410,11 @@ void RecentBooksGridActivity::loop() {
   }
 
   const int listSize = static_cast<int>(recentBooks.size());
+  // Boards without Left/Right (e.g. X4 Pro) must still be able to reach every
+  // book, so Up/Down walk the grid in reading order instead of by row.
+  const bool upDownWalksReadingOrder = !mappedInput.hasLeftRightButtons();
   enum class NavDirection { Right, Left, Down, Up };
-  auto handleNav = [this, listSize](NavDirection direction) {
+  auto handleNav = [this, listSize, upDownWalksReadingOrder](NavDirection direction) {
     switch (direction) {
       case NavDirection::Right:
         selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, true);
@@ -420,10 +423,14 @@ void RecentBooksGridActivity::loop() {
         selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, false);
         break;
       case NavDirection::Down:
-        selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, true);
+        selectorIndex = upDownWalksReadingOrder
+                            ? moveHorizontalInGrid(selectorIndex, listSize, true)
+                            : moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, true);
         break;
       case NavDirection::Up:
-        selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, false);
+        selectorIndex = upDownWalksReadingOrder
+                            ? moveHorizontalInGrid(selectorIndex, listSize, false)
+                            : moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, false);
         break;
     }
     ensureProgressLoaded(selectorIndex);
@@ -448,9 +455,14 @@ void RecentBooksGridActivity::loop() {
   if (mappedInput.wasScreenTapped(touchX, touchY)) {
     const int touchedIndex = bookIndexFromPoint(touchX, touchY);
     if (touchedIndex >= 0) {
-      selectorIndex = touchedIndex;
-      ensureProgressLoaded(selectorIndex);
-      onSelectBook(recentBooks[selectorIndex].book.path);
+      // First tap selects a book; a second tap on the already-selected book opens it.
+      if (touchedIndex == selectorIndex) {
+        onSelectBook(recentBooks[selectorIndex].book.path);
+      } else {
+        selectorIndex = touchedIndex;
+        ensureProgressLoaded(selectorIndex);
+        requestUpdate();
+      }
       return;
     }
   }
