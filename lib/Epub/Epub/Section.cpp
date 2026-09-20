@@ -984,9 +984,27 @@ bool Section::buildSomeMore(const int maxPages) {
     // ParseStatus::More: yield once we've laid out the requested number of pages.
     if (maxPages > 0 && (builtPageCount_ - startCount) >= maxPages) {
       build_->bytesConsumed = build_->parser->parseBytesConsumed();
+      updateSmoothedEstimate();
       return true;
     }
   }
+}
+
+void Section::updateSmoothedEstimate() {
+  if (!build_ || builtPageCount_ == 0 || build_->bytesConsumed == 0 || build_->totalBytes <= build_->bytesConsumed) {
+    return;
+  }
+
+  const uint32_t raw =
+      PageCountEstimator::estimate(builtPageCount_, protectedImageUnits_, build_->totalBytes, build_->bytesConsumed);
+
+  constexpr float ALPHA = 0.25f;
+  if (build_->smoothedEstimate <= 0) {
+    build_->smoothedEstimate = static_cast<float>(raw);
+  } else if (build_->bytesConsumed != build_->smoothedAtConsumed) {
+    build_->smoothedEstimate += ALPHA * (static_cast<float>(raw) - build_->smoothedEstimate);
+  }
+  build_->smoothedAtConsumed = build_->bytesConsumed;
 }
 
 bool Section::hasHtmlCache() const {
@@ -1037,19 +1055,10 @@ uint16_t Section::estimatedTotalPages() const {
   // from being multiplied by their byte size.
   const uint32_t raw = PageCountEstimator::estimate(builtPageCount_, protectedImageUnits_, total, consumed);
 
-  // Damp that jitter with an exponential moving average. Step it once per build advance (keyed on
-  // bytesConsumed) rather than per status-bar redraw, so the smoothing rate doesn't depend on how
-  // often we repaint. As the build nears the end, consumed -> total and raw -> the built count, so
-  // the average settles onto the true count (and finalizeBuild then returns the exact pageCount).
-  constexpr float ALPHA = 0.25f;  // weight of each new sample; lower = steadier but slower to settle
-  if (build_->smoothedEstimate <= 0) {
-    build_->smoothedEstimate = static_cast<float>(raw);  // seed on the first estimate
-  } else if (consumed != build_->smoothedAtConsumed) {
-    build_->smoothedEstimate += ALPHA * (static_cast<float>(raw) - build_->smoothedEstimate);
-  }
-  build_->smoothedAtConsumed = consumed;
-
-  const uint64_t est = static_cast<uint64_t>(build_->smoothedEstimate + 0.5f);
+  // The EMA is advanced by buildSomeMore(), once per yielded incremental build chunk.
+  // Fall back to the current raw estimate only until the first chunk seeds the smoother.
+  const float smoothed = build_->smoothedEstimate > 0 ? build_->smoothedEstimate : static_cast<float>(raw);
+  const uint64_t est = static_cast<uint64_t>(smoothed + 0.5f);
   if (est <= pageCount) return pageCount;  // never fewer than the pages already available
   return est > PageCountEstimator::kMaxPages ? PageCountEstimator::kMaxPages : static_cast<uint16_t>(est);
 }

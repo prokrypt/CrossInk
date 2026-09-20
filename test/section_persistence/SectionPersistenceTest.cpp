@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <utility>
@@ -89,6 +91,7 @@ TEST_F(SectionPersistenceTest, FullCommitReopensAndResolvesMetadataAcrossAChunkB
   ASSERT_TRUE(reopened.loadSectionFile(harness.spec));
   EXPECT_FALSE(reopened.isPartial());
   EXPECT_EQ(reopened.pageCount, 65);
+  EXPECT_EQ(reopened.estimatedTotalPages(), 65);
   EXPECT_EQ(reopened.findAnchor("boundary"), 64);
   EXPECT_EQ(reopened.getParagraphIndexForPage(63), 189);
   EXPECT_EQ(reopened.getParagraphIndexForPage(64), 192);
@@ -147,5 +150,38 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
   ASSERT_TRUE(Storage.exists(replacement.section.filePath.c_str()));
   EXPECT_EQ(Storage.bytes(replacement.section.filePath), previous);
   replacement.section.build_.reset();
+}
+
+TEST_F(SectionPersistenceTest, IncrementalEstimateSmoothingAdvancesPerBuildChunkAndGetterStaysReadOnly) {
+  SectionHarness harness;
+  harness.section.pageCount = 12;
+  harness.section.builtPageCount_ = 12;
+  harness.section.build_ = makeUniqueNoThrow<Section::BuildContext>();
+  ASSERT_NE(harness.section.build_, nullptr);
+
+  harness.section.build_->totalBytes = 1000;
+  harness.section.build_->bytesConsumed = 200;
+  harness.section.updateSmoothedEstimate();
+  EXPECT_FLOAT_EQ(harness.section.build_->smoothedEstimate, 60.0f);
+  EXPECT_EQ(harness.section.build_->smoothedAtConsumed, 200U);
+  EXPECT_EQ(harness.section.estimatedTotalPages(), 60);
+
+  harness.section.builtPageCount_ = 24;
+  harness.section.build_->bytesConsumed = 400;
+  harness.section.updateSmoothedEstimate();
+  EXPECT_FLOAT_EQ(harness.section.build_->smoothedEstimate, 60.0f);
+  EXPECT_EQ(harness.section.build_->smoothedAtConsumed, 400U);
+
+  harness.section.builtPageCount_ = 36;
+  harness.section.build_->bytesConsumed = 500;
+  EXPECT_EQ(harness.section.estimatedTotalPages(), 60);
+  EXPECT_FLOAT_EQ(harness.section.build_->smoothedEstimate, 60.0f);
+  EXPECT_EQ(harness.section.build_->smoothedAtConsumed, 400U);
+
+  harness.section.updateSmoothedEstimate();
+  EXPECT_FLOAT_EQ(harness.section.build_->smoothedEstimate, 63.0f);
+  EXPECT_EQ(harness.section.build_->smoothedAtConsumed, 500U);
+  EXPECT_EQ(harness.section.estimatedTotalPages(), 63);
+  harness.section.build_.reset();
 }
 }  // namespace

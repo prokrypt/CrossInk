@@ -52,7 +52,7 @@ class Section {
     uint32_t totalBytes = 0;
     // Exponentially-smoothed page-count estimate (0 = not yet seeded) and the bytesConsumed at its
     // last update. The raw byte-ratio estimate jitters as the build crosses dense/sparse regions;
-    // the EMA is stepped once per build advance (not per redraw) to damp that wobble.
+    // the EMA is stepped once per yielded incremental build chunk (not per redraw) to damp that wobble.
     float smoothedEstimate = 0;
     uint32_t smoothedAtConsumed = 0;
   };
@@ -75,6 +75,7 @@ class Section {
   bool writeSectionFileHeader(const ReaderRenderSpec& spec);
   uint32_t onPageComplete(std::unique_ptr<Page> page);
   bool ensureBuildFileOpen();
+  void updateSmoothedEstimate();
   bool finalizeBuild();
   // Write the LUTs/anchor map (and, for a partial, the watermark trailer), patch the
   // header, stamp the version byte, and swap the tmp .bin over filePath.
