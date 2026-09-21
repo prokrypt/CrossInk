@@ -426,7 +426,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 75
+#define EXPECTED_VERSION 77
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96
@@ -694,21 +694,21 @@ not by writing native C++ structures. CRCs use standard IEEE CRC32 (zlib).
 
 The 32-byte header is:
 
-| Offset | Bytes | Field |
-| --- | --- | --- |
-| 0 | 4 | `PXC2` |
-| 4 | 1 | Version 2 |
-| 5 | 1 | Pixel format 1: four 2-bit pixels per byte, most significant first |
-| 6 | 2 | Header bytes: 32 |
-| 8 | 2 | Width |
-| 10 | 2 | Height |
-| 12 | 2 | Row bytes: `(width + 3) / 4` |
-| 14 | 2 | Block bytes: 2048 |
-| 16 | 2 | Block count: ceiling of raw bytes / 2048 |
-| 18 | 2 | Flags: zero |
-| 20 | 4 | Raw pixel bytes |
-| 24 | 4 | Raw pixel CRC32 |
-| 28 | 4 | Complete PXC2 file bytes |
+| Offset | Bytes | Field                                                              |
+| ------ | ----- | ------------------------------------------------------------------ |
+| 0      | 4     | `PXC2`                                                             |
+| 4      | 1     | Version 2                                                          |
+| 5      | 1     | Pixel format 1: four 2-bit pixels per byte, most significant first |
+| 6      | 2     | Header bytes: 32                                                   |
+| 8      | 2     | Width                                                              |
+| 10     | 2     | Height                                                             |
+| 12     | 2     | Row bytes: `(width + 3) / 4`                                       |
+| 14     | 2     | Block bytes: 2048                                                  |
+| 16     | 2     | Block count: ceiling of raw bytes / 2048                           |
+| 18     | 2     | Flags: zero                                                        |
+| 20     | 4     | Raw pixel bytes                                                    |
+| 24     | 4     | Raw pixel CRC32                                                    |
+| 28     | 4     | Complete PXC2 file bytes                                           |
 
 Dimensions are 1–1024, raw data is at most 128 KiB, and there are at most 64
 blocks. Each block starts with a 12-byte header: codec (`u8`, 0 RAW, 1 raw DEFLATE,
@@ -734,18 +734,18 @@ acceptance checks, not implied by host workspace accounting.
 
 The local index is `/.crosspoint/epub_<hash>/optimizer-images.idx`. Its header is:
 
-| Offset | Bytes | Field |
-| --- | --- | --- |
-| 0 | 4 | `COIX` |
-| 4 | 2 | Version 1 |
-| 6 | 2 | Header bytes: 32 |
-| 8 | 2 | Record bytes: 208 |
-| 10 | 2 | Record count: 0–256 |
-| 12 | 4 | Flags/reserved: zero |
-| 16 | 4 | Manifest central-directory CRC32 |
-| 20 | 4 | Manifest uncompressed bytes |
-| 24 | 4 | CRC32 of all records |
-| 28 | 4 | CRC32 of header bytes 0–27 |
+| Offset | Bytes | Field                            |
+| ------ | ----- | -------------------------------- |
+| 0      | 4     | `COIX`                           |
+| 4      | 2     | Version 1                        |
+| 6      | 2     | Header bytes: 32                 |
+| 8      | 2     | Record bytes: 208                |
+| 10     | 2     | Record count: 0–256              |
+| 12     | 4     | Flags/reserved: zero             |
+| 16     | 4     | Manifest central-directory CRC32 |
+| 20     | 4     | Manifest uncompressed bytes      |
+| 24     | 4     | CRC32 of all records             |
+| 28     | 4     | CRC32 of header bytes 0–27       |
 
 Each 208-byte record contains NUL-terminated `href[129]` (offset 0),
 `pxcHref[65]` (129), width `u16` (194), height `u16` (196), format `u8` (198,
@@ -771,11 +771,12 @@ landscape output, and record internal free/largest heap blocks and low-water
 marks. Repeat corrupt sidecars, full/read-only SD, interrupted writes and book
 replacement at the same path on X3/X4, Sticky (SPI SD) and X4 Pro (SDMMC).
 
-### CSS rules cache revision 16
+### CSS rules cache revision 18
 
-Revision 16 retains the existing binary layout and invalidates older CSS caches
-because PSRAM devices now admit streamed stylesheet sources up to 512 KiB
-(previously 128 KiB). C3 retains its 128 KiB limit. Existing rule-count and
+Revision 18 adds the serialized `list-style-type` property used to number
+ordered lists and suppress list markers. It also includes the PSRAM streamed
+stylesheet path introduced in revision 16, which admits sources up to 512 KiB
+on PSRAM readers while C3 retains its 128 KiB limit. Existing rule-count and
 internal-memory guards still apply. Rebuilding an invalid CSS cache also
 invalidates section caches through the existing EPUB-load path, so books that
 previously cached zero rules can restore hidden content and layout rules.
