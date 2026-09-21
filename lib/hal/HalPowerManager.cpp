@@ -40,6 +40,28 @@ void HalPowerManager::begin() {
   normalFreq = getCpuFrequencyMhz();
   modeMutex = xSemaphoreCreateMutex();
   assert(modeMutex != nullptr);
+
+#if CONFIG_PM_ENABLE
+  if (esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "crossink-active", &cpuFreqLock) != ESP_OK) {
+    LOG_ERR("PWR", "Failed to create CPU frequency lock; device will run at the DFS floor");
+    cpuFreqLock = nullptr;
+  } else {
+    // Matches the initial isLowPower == false: the device boots active.
+    esp_pm_lock_acquire(cpuFreqLock);
+  }
+  esp_pm_config_t pmConfig = {};
+  pmConfig.max_freq_mhz = normalFreq;
+  pmConfig.min_freq_mhz = DFS_MIN_FREQ;
+  // Tickless idle light-sleeps whenever every task is blocked and no PM lock is
+  // held. The SDK's display locks keep panel work out of that window.
+  pmConfig.light_sleep_enable = true;
+  const esp_err_t pmErr = esp_pm_configure(&pmConfig);
+  if (pmErr != ESP_OK) {
+    LOG_ERR("PWR", "esp_pm_configure failed (%d); auto light sleep disabled", static_cast<int>(pmErr));
+  } else {
+    LOG_INF("PWR", "Auto light sleep enabled (%d-%d MHz)", pmConfig.min_freq_mhz, pmConfig.max_freq_mhz);
+  }
+#endif
 }
 
 void HalPowerManager::setPowerSaving(bool enabled) {
@@ -61,6 +83,11 @@ void HalPowerManager::setPowerSaving(bool enabled) {
 
   if (mode == None && enabled && !isLowPower) {
     LOG_DBG("PWR", "Going to low-power mode");
+#if CONFIG_PM_ENABLE
+    // DFS owns the clock here: dropping the lock is what lets the CPU fall to
+    // DFS_MIN_FREQ and lets the idle task light-sleep between loop ticks.
+    if (cpuFreqLock != nullptr) esp_pm_lock_release(cpuFreqLock);
+#else
     if (!setCpuFrequencyMhz(LOW_POWER_FREQ)) {
       LOG_DBG("PWR", "Failed to set CPU frequency = %d MHz", LOW_POWER_FREQ);
       if (modeMutex != nullptr) {
@@ -68,10 +95,14 @@ void HalPowerManager::setPowerSaving(bool enabled) {
       }
       return;
     }
+#endif
     isLowPower = true;
 
   } else if ((!enabled || mode != None) && isLowPower) {
     LOG_DBG("PWR", "Restoring normal CPU frequency");
+#if CONFIG_PM_ENABLE
+    if (cpuFreqLock != nullptr) esp_pm_lock_acquire(cpuFreqLock);
+#else
     if (!setCpuFrequencyMhz(normalFreq)) {
       LOG_DBG("PWR", "Failed to set CPU frequency = %d MHz", normalFreq);
       if (modeMutex != nullptr) {
@@ -79,6 +110,7 @@ void HalPowerManager::setPowerSaving(bool enabled) {
       }
       return;
     }
+#endif
     isLowPower = false;
   }
 

@@ -13,6 +13,7 @@
 
 ### Changed
 
+- Idle power saving now puts the device into automatic light sleep between loop ticks instead of only lowering the CPU clock, cutting idle draw while leaving buttons, touch, and the frontlight working exactly as before. The screen, Wi-Fi transfers, and USB sessions stay awake while they are in use.
 - GitHub workflows and release documentation links now follow the `development` default branch.
 - Idle power saving now engages after 1 second instead of 3, and battery level is polled every 6 seconds instead of every 1.5, trading slightly less frequent battery updates for lower average power draw.
 - PNG, XTC, and image-dithering scratch buffers use fewer heap allocations to reduce fragmentation.
