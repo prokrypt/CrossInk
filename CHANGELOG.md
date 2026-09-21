@@ -10,6 +10,8 @@
 - A new **Extend** sleep screen cover mode fills the empty margins around a cover that doesn't match the screen's aspect ratio by repeating its edge pixels instead of leaving them blank.
 - A new **Extend Mirror** sleep screen cover mode fills those same margins by reflecting the cover's edge content instead of repeating a single edge pixel.
 - Go to % and Go to Stable Page use a numeric keypad for typing an exact destination, including decimal percentages. Touch devices use the keypad exclusively; button-only devices keep the slider by default and hold Confirm/Select to switch to the keypad.
+- Files can be renamed from the File Browser action menu while keeping reading progress, bookmarks, clippings, and recent-book entries linked to the new name.
+- Firmware builds can include only selected UI languages to reduce flash usage while preserving English fallback.
 
 ### Changed
 
@@ -22,6 +24,7 @@
 - SD-card font prewarming releases temporary lookup buffers before allocating large glyph bitmaps.
 - UC8179 grayscale images use a slightly longer waveform for stronger midtone separation.
 - EPUB image preparation writes extracted data in chunks and reuses two cached images on PSRAM readers.
+- Font menus and the web portal use a persistent catalog that loads one family's details at a time, preventing crashes with larger font collections.
 - Web portal pages reuse browser-cached content after checking for firmware updates.
 - Rapid queued EPUB page turns defer text anti-aliasing and image loading until the final page, making intermediate turns faster.
 - Grayscale sleep screen images use the panel's direct grayscale waveform where supported, which folds the base frame into the grayscale pass instead of refreshing the screen separately first.
@@ -29,6 +32,11 @@
 ### Fixed
 
 - Periodic memory telemetry now reports only when free heap or PSRAM changes, while checking for changes every 2 seconds.
+- The web EPUB optimizer now accepts books that use standard Adobe or IDPF font obfuscation, while leaving DRM-protected books unchanged.
+- Frontlight schedule time pickers now use the compact number keypad from Go To screens.
+- X4 Classic's left/right tilt direction labels now match the physical page-turn direction.
+- Touch keyboards no longer show button-only hold and navigation hints.
+- The web settings page no longer offers the Up + Down shortcut on devices that cannot use it.
 - OPDS Wi-Fi selection and search entry stay awake while the user is actively choosing or typing.
 - USB Drive exits cleanly when a connected host is unplugged without ejecting first.
 - EPUB ordered lists show numbers, respect marker-free styles, and retain their container indentation.
@@ -65,6 +73,8 @@
 - Sync Progress from the reader menu opens KOReader setup when credentials have not been configured.
 - Button-combo settings no longer offer Sleep because the same combo cannot wake the reader.
 - EPUB variation selectors no longer appear as missing-glyph boxes after otherwise supported symbols.
+- Cancelling Word Spacing on button readers no longer briefly changes the slider value.
+- The File Browser now displays decomposed Hangul and accented filenames copied from macOS correctly.
 
 ## [v1.5.1] - 2026-09-10
 
