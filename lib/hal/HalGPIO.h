@@ -85,6 +85,11 @@ class HalGPIO {
   // profile, not the X3/X4 runtime detection.
   bool hasEdgeSideButtons() const;
 
+  // True when the board wires distinct physical Left/Right buttons. False on
+  // boards like X4 Pro whose only nav keys are Up/Down (its edge buttons map
+  // directly to the reader's prev/next pair instead of Left/Right).
+  bool hasLeftRightButtons() const;
+
   // Start button GPIO and setup SPI for screen and SD card
   void begin();
 

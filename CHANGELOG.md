@@ -1,3 +1,71 @@
+## [Unreleased]
+
+### Added
+
+- Add the continuous **IncreMENTAL** EPUB indexing method for background chapter indexing.
+- EPUBs with stable page numbers can jump directly to a specific stable page from the reader menu.
+- Hidden folders can be created using the web file manager now when prefixed with a dot.
+- Choose whole numbers, one decimal, or two decimals for the book progress percentage in status bar settings.
+- Two-finger Screen Rotation can be turned off in Settings > Controls > Taps & Gestures on multi-touch devices.
+- A new **Extend** sleep screen cover mode fills the empty margins around a cover that doesn't match the screen's aspect ratio by repeating its edge pixels instead of leaving them blank.
+- A new **Extend Mirror** sleep screen cover mode fills those same margins by reflecting the cover's edge content instead of repeating a single edge pixel.
+- Go to % and Go to Stable Page use a numeric keypad for typing an exact destination, including decimal percentages. Touch devices use the keypad exclusively; button-only devices keep the slider by default and hold Confirm/Select to switch to the keypad.
+
+### Changed
+
+- Idle power saving now puts the device into automatic light sleep between loop ticks instead of only lowering the CPU clock, cutting idle draw while leaving buttons, touch, and the frontlight working exactly as before. The screen, Wi-Fi transfers, and USB sessions stay awake while they are in use.
+- GitHub workflows and release documentation links now follow the `development` default branch.
+- Idle power saving now engages after 1 second instead of 3, and battery level is polled every 6 seconds instead of every 1.5, trading slightly less frequent battery updates for lower average power draw.
+- PNG, XTC, and image-dithering scratch buffers use fewer heap allocations to reduce fragmentation.
+- The shared settings catalog keeps its initial allocation instead of retaining unused vector capacity.
+- SPI SD-card transfers are batched through the ESP32 hardware FIFO for faster reads.
+- SD-card font prewarming releases temporary lookup buffers before allocating large glyph bitmaps.
+- UC8179 grayscale images use a slightly longer waveform for stronger midtone separation.
+- EPUB image preparation writes extracted data in chunks and reuses two cached images on PSRAM readers.
+- Web portal pages reuse browser-cached content after checking for firmware updates.
+- Rapid queued EPUB page turns defer text anti-aliasing and image loading until the final page, making intermediate turns faster.
+- Grayscale sleep screen images use the panel's direct grayscale waveform where supported, which folds the base frame into the grayscale pass instead of refreshing the screen separately first.
+
+### Fixed
+
+- Periodic memory telemetry now reports only when free heap or PSRAM changes, while checking for changes every 2 seconds.
+- OPDS Wi-Fi selection and search entry stay awake while the user is actively choosing or typing.
+- USB Drive exits cleanly when a connected host is unplugged without ejecting first.
+- EPUB ordered lists show numbers, respect marker-free styles, and retain their container indentation.
+- EPUB chapter layout releases rebuildable font caches first, reducing low-memory failures on X3/X4.
+- KOReader Sync uploads retain exact text-node positions, including zero offsets and UTF-8 text.
+- Saved clipping highlights now retain Focus Reading's custom-font glyphs instead of showing replacement characters.
+- EPUB dictionary lookup can select an individual part of a hyphenated word.
+- Short Power-button frontlight and touchscreen shortcuts in EPUB books no longer run the configured long-press action.
+- Incremental EPUB indexing resumes after skipping chapters and refreshes the status bar when indexing completes.
+- Rapid queued EPUB page turns skip rendering intermediate pages until the final destination.
+- Silent restarts now preserve the frontlight state instead of applying wake or schedule settings.
+- Devices with only Up/Down navigation buttons (e.g. X4 Pro) can now reach every book in the Recent Books grid view, with Up/Down walking left-to-right, line by line, instead of only moving between rows.
+- The Home button now returns from Customize Status Bar to the previous menu instead of leaving the reader.
+- OPDS book downloads can follow secure redirects without sharing catalog credentials with the download host.
+- Larger EPUB stylesheets work on PSRAM readers, including rules that hide duplicate images.
+- JPEG-heavy EPUBs can use PSRAM for decoding on supported readers, leaving internal memory available for reading.
+- Importing CrossPoint settings preserves tap and swipe modes without carrying over a stale reader touchscreen lock.
+- Saved clippings no longer highlight unrelated single words at page boundaries when matching text after a layout change.
+- Quick Lock sleep now respects the configured short Power-button wake behavior.
+- Quick Lock now clears when the device wakes after an automatic sleep timeout.
+- EPUB content marked with the HTML hidden attribute no longer appears in the reader.
+- EPUB paragraphs without source indentation no longer gain a synthetic first-line indent.
+- End-of-book selection remains consistent during concurrent redraws.
+- Image dithering reports low-memory failures instead of aborting during buffer allocation.
+- The debugging monitor plots CrossInk heap and PSRAM logs separately; ZIP failures identify the affected EPUB entry.
+- Many progressive JPEG images that store brightness and color in separate scans now render instead of appearing blank.
+- PNG sleep overlays preserve four evenly spaced grayscale levels on supported displays.
+- Exiting Calibre Wireless on X4 now returns Home with one clean screen refresh instead of repeated blank flashes.
+- Manage Fonts no longer crashes after Wi-Fi connects on ESP32-S3 readers.
+- Editing font settings from the top drawer's global settings within a book now applies those changes when no per-book font settings exist.
+- Per-book reading stats now write to a backup file first.
+- Paragraph-alignment previews remain available on text-heavy pages instead of disappearing when the preview sample is full.
+- Quick Actions assignments stay visible in button-combo settings, and X4 Classic can use the Up + Down shortcut.
+- Sync Progress from the reader menu opens KOReader setup when credentials have not been configured.
+- Button-combo settings no longer offer Sleep because the same combo cannot wake the reader.
+- EPUB variation selectors no longer appear as missing-glyph boxes after otherwise supported symbols.
+
 ## [v1.5.1] - 2026-09-10
 
 ### Added

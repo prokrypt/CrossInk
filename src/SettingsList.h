@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
+#include "DeviceCapabilities.h"
 #include "KOReaderCredentialStore.h"
 #include "QuickActions.h"
 #include "activities/settings/SettingsActivity.h"
@@ -370,8 +371,10 @@ inline uint8_t shortcutRawValue(const ShortcutOptionCatalog catalog, const Cross
       switch (action) {
         case Action::IGNORE:
           return Chord::CHORD_DISABLED;
+        // Deep sleep wakes from the Power GPIO alone. A chord cannot be used
+        // as the matching wake gesture, so do not offer a misleading action.
         case Action::SLEEP:
-          return Chord::CHORD_SLEEP;
+          return SHORTCUT_OPTION_UNAVAILABLE;
         case Action::PAGE_TURN:
           return Chord::CHORD_PAGE_TURN;
         case Action::PREVIOUS_PAGE:
@@ -552,16 +555,21 @@ inline SettingInfo buildHomeButtonActionSetting(const StrId nameId, uint8_t Cros
 // #1636) so the per-entry SettingInfo cost is paid once. Read-only consumers
 // can use it directly; mutable device UI lists use getSettingsList(), which
 // returns an owned copy and can add SD-card font and dictionary options.
+inline constexpr size_t BASE_SETTINGS_CAPACITY = 102;  // 100 regular entries plus two optional tilt entries.
+
 inline const std::vector<SettingInfo>& getBaseSettingsList() {
   static const std::vector<SettingInfo> baseList = [] {
     std::vector<SettingInfo> v;
-    v.reserve(77);
+    // Reserve the maximum final size. Growing this process-lifetime vector
+    // would otherwise leave it holding roughly twice the memory it needs.
+    v.reserve(BASE_SETTINGS_CAPACITY);
     auto add = [&v](SettingInfo setting) { v.push_back(std::move(setting)); };
 
     // --- Display ---
     add(buildSleepScreenSetting());
     add(SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
-                          {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY));
+                          {StrId::STR_FIT, StrId::STR_CROP, StrId::STR_EXTEND, StrId::STR_EXTEND_MIRROR},
+                          "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY));
     add(SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
                           {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED},
                           "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY));
@@ -675,12 +683,15 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
     add(SettingInfo::Toggle(StrId::STR_GUIDE_READING, &CrossPointSettings::guideReadingEnabled, "guideReadingEnabled",
                             StrId::STR_CAT_READER));
     add(SettingInfo::Enum(StrId::STR_INDEXING_METHOD, &CrossPointSettings::indexingMethod,
-                          {StrId::STR_INDEXING_INCREMENTAL, StrId::STR_INDEXING_FULL_SECTION}, "indexingMethod",
-                          StrId::STR_CAT_READER));
+                          {StrId::STR_INDEXING_INCREMENTAL, StrId::STR_INDEXING_FULL_SECTION,
+                           StrId::STR_INDEXING_INCREMENTAL_MENTAL},
+                          "indexingMethod", StrId::STR_CAT_READER));
 
     // --- Controls ---
     add(SettingInfo::Toggle(StrId::STR_PINCH_FONT_RESIZE, &CrossPointSettings::pinchFontResizeEnabled,
                             "pinchFontResizeEnabled", StrId::STR_CAT_CONTROLS));
+    add(SettingInfo::Toggle(StrId::STR_TWO_FINGER_ROTATION, &CrossPointSettings::twoFingerRotationEnabled,
+                            "twoFingerRotationEnabled", StrId::STR_CAT_CONTROLS));
     const std::vector<StrId> twoFingerSwipeActions = {
         StrId::STR_NOT_SET,          StrId::STR_INCREASE_BRIGHTNESS, StrId::STR_DECREASE_BRIGHTNESS,
         StrId::STR_INCREASE_WARMTH,  StrId::STR_DECREASE_WARMTH,     StrId::STR_NEXT_CHAPTER,
@@ -867,6 +878,12 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                             StrId::STR_CUSTOMISE_STATUS_BAR));
     add(SettingInfo::Toggle(StrId::STR_BOOK_PROGRESS_PERCENTAGE, &CrossPointSettings::statusBarBookProgressPercentage,
                             "statusBarBookProgressPercentage", StrId::STR_CUSTOMISE_STATUS_BAR));
+    SettingInfo percentageFormat =
+        SettingInfo::Enum(StrId::STR_PERCENTAGE_FORMAT, &CrossPointSettings::statusBarBookPercentageFormat, {},
+                          "statusBarBookPercentageFormat", StrId::STR_CUSTOMISE_STATUS_BAR);
+    percentageFormat.enumStringValues.assign(std::begin(CrossPointSettings::bookPercentageFormatLabels),
+                                             std::end(CrossPointSettings::bookPercentageFormatLabels));
+    add(std::move(percentageFormat));
     add(SettingInfo::Enum(StrId::STR_PROGRESS_BAR, &CrossPointSettings::statusBarProgressBar,
                           {StrId::STR_HIDE, StrId::STR_BOOK, StrId::STR_CHAPTER}, "statusBarProgressBar",
                           StrId::STR_CUSTOMISE_STATUS_BAR)
@@ -960,6 +977,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                                     s.nameId == StrId::STR_DISABLE_TOUCHSCREEN || s.nameId == StrId::STR_NEXT_PAGE ||
                                     s.nameId == StrId::STR_PREV_PAGE || s.nameId == StrId::STR_TAP_HIDE_STATUS_BAR ||
                                     s.nameId == StrId::STR_PINCH_FONT_RESIZE ||
+                                    s.nameId == StrId::STR_TWO_FINGER_ROTATION ||
                                     s.nameId == StrId::STR_TWO_FINGER_SWIPE_UP ||
                                     s.nameId == StrId::STR_TWO_FINGER_SWIPE_DOWN ||
                                     s.nameId == StrId::STR_TWO_FINGER_SWIPE_LEFT ||
@@ -971,6 +989,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     v.erase(std::remove_if(v.begin(), v.end(),
                            [](const SettingInfo& s) {
                              return s.nameId == StrId::STR_PINCH_FONT_RESIZE ||
+                                    s.nameId == StrId::STR_TWO_FINGER_ROTATION ||
                                     s.nameId == StrId::STR_TWO_FINGER_SWIPE_UP ||
                                     s.nameId == StrId::STR_TWO_FINGER_SWIPE_DOWN ||
                                     s.nameId == StrId::STR_TWO_FINGER_SWIPE_LEFT ||
@@ -1017,9 +1036,11 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                            }),
             v.end());
     for (auto& setting : v) {
-      if (setting.nameId == StrId::STR_SHORT_PWR_BTN || settingKeyIs(setting, "longPwrBtn") ||
-          settingKeyIs(setting, "powerChordAction") || settingKeyIs(setting, "sideButtonChordAction")) {
+      if (setting.nameId == StrId::STR_SHORT_PWR_BTN || settingKeyIs(setting, "longPwrBtn")) {
         removeEnumRawValue(setting, CrossPointSettings::TOGGLE_HOME_BUTTON_IN_READER);
+      } else if (settingKeyIs(setting, "powerChordAction") || settingKeyIs(setting, "sideButtonChordAction")) {
+        removeEnumRawValue(setting, shortcutRawValue(ShortcutOptionCatalog::ButtonChord,
+                                                     CrossPointSettings::TOGGLE_HOME_BUTTON_IN_READER));
       }
     }
   }
@@ -1029,8 +1050,15 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
           !settingKeyIs(setting, "powerChordAction") && !settingKeyIs(setting, "sideButtonChordAction")) {
         continue;
       }
-      if (!Frontlight.present()) removeEnumRawValue(setting, CrossPointSettings::TOGGLE_FRONTLIGHT);
-      if (!gpio.hasTouch()) removeEnumRawValue(setting, CrossPointSettings::TOGGLE_TOUCHSCREEN);
+      const auto catalog = settingKeyIs(setting, "powerChordAction") || settingKeyIs(setting, "sideButtonChordAction")
+                               ? ShortcutOptionCatalog::ButtonChord
+                               : ShortcutOptionCatalog::PowerButton;
+      if (!Frontlight.present()) {
+        removeEnumRawValue(setting, shortcutRawValue(catalog, CrossPointSettings::TOGGLE_FRONTLIGHT));
+      }
+      if (!gpio.hasTouch()) {
+        removeEnumRawValue(setting, shortcutRawValue(catalog, CrossPointSettings::TOGGLE_TOUCHSCREEN));
+      }
     }
   }
   if (!Frontlight.present()) {
@@ -1182,11 +1210,13 @@ inline std::vector<SettingInfo> buildControlsSettingsParentList(const std::vecto
 inline std::vector<SettingInfo> buildControlsTapsGesturesSettingsList(const std::vector<SettingInfo>& allSettings) {
   std::vector<SettingInfo> settings;
   const bool hasPinch = hasSettingByName(allSettings, StrId::STR_PINCH_FONT_RESIZE);
+  const bool hasRotation = hasSettingByName(allSettings, StrId::STR_TWO_FINGER_ROTATION);
   const bool hasTwoFingerSwipe = hasSettingByName(allSettings, StrId::STR_TWO_FINGER_SWIPE_UP);
-  settings.reserve(3 + (hasPinch ? 1u : 0u) + (hasTwoFingerSwipe ? 1u : 0u));
+  settings.reserve(3 + (hasPinch ? 1u : 0u) + (hasRotation ? 1u : 0u) + (hasTwoFingerSwipe ? 1u : 0u));
   addSettingByName(settings, allSettings, StrId::STR_NEXT_PAGE);
   addSettingByName(settings, allSettings, StrId::STR_PREV_PAGE);
   if (hasPinch) addSettingByName(settings, allSettings, StrId::STR_PINCH_FONT_RESIZE);
+  if (hasRotation) addSettingByName(settings, allSettings, StrId::STR_TWO_FINGER_ROTATION);
   addSettingByName(settings, allSettings, StrId::STR_TAP_HIDE_STATUS_BAR);
   if (hasTwoFingerSwipe) {
     settings.push_back(SettingInfo::Submenu(StrId::STR_TWO_FINGER_SWIPE, SettingAction::ControlsTwoFingerSwipe));
@@ -1244,11 +1274,11 @@ inline std::vector<SettingInfo> buildControlsFrontButtonSettingsList(const std::
 
 inline std::vector<SettingInfo> buildControlsSideButtonSettingsList(const std::vector<SettingInfo>& allSettings) {
   std::vector<SettingInfo> settings;
-  settings.reserve(3 + (gpio.hasTouch() ? 1u : 0u));
+  settings.reserve(3 + (deviceSupportsSideButtonChord(gpio) ? 1u : 0u));
   addSettingByName(settings, allSettings, StrId::STR_SIDE_BTN_LAYOUT);
   addSettingByKey(settings, allSettings, "sideButtonOrientationAware");
   addSettingByKey(settings, allSettings, "sideButtonLongPress");
-  if (gpio.hasTouch()) {
+  if (deviceSupportsSideButtonChord(gpio)) {
     addSettingByName(settings, allSettings, StrId::STR_SIDE_BUTTON_CHORD);
   }
   return settings;

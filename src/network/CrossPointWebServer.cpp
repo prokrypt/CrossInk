@@ -104,13 +104,15 @@ bool isWebSettingAvailable(const SettingInfo& setting) {
       setting.nameId == StrId::STR_TOUCH_READER_CONTROLS || setting.nameId == StrId::STR_DISABLE_TOUCHSCREEN ||
       setting.nameId == StrId::STR_NEXT_PAGE || setting.nameId == StrId::STR_PREV_PAGE ||
       setting.nameId == StrId::STR_TAP_HIDE_STATUS_BAR || setting.nameId == StrId::STR_PINCH_FONT_RESIZE ||
-      setting.nameId == StrId::STR_TWO_FINGER_SWIPE_UP || setting.nameId == StrId::STR_TWO_FINGER_SWIPE_DOWN ||
-      setting.nameId == StrId::STR_TWO_FINGER_SWIPE_LEFT || setting.nameId == StrId::STR_TWO_FINGER_SWIPE_RIGHT;
+      setting.nameId == StrId::STR_TWO_FINGER_ROTATION || setting.nameId == StrId::STR_TWO_FINGER_SWIPE_UP ||
+      setting.nameId == StrId::STR_TWO_FINGER_SWIPE_DOWN || setting.nameId == StrId::STR_TWO_FINGER_SWIPE_LEFT ||
+      setting.nameId == StrId::STR_TWO_FINGER_SWIPE_RIGHT;
   if (isTouchSetting && !gpio.hasTouch()) {
     return false;
   }
 
-  const bool isMultiTouchSetting = setting.nameId == StrId::STR_PINCH_FONT_RESIZE || isTwoFingerSwipeSetting(setting);
+  const bool isMultiTouchSetting = setting.nameId == StrId::STR_PINCH_FONT_RESIZE ||
+                                   setting.nameId == StrId::STR_TWO_FINGER_ROTATION || isTwoFingerSwipeSetting(setting);
   if (isMultiTouchSetting && !gpio.supportsMultiTouch()) {
     return false;
   }
@@ -239,6 +241,9 @@ size_t wsLastProgressSent = 0;
 String wsLastCompleteName;
 size_t wsLastCompleteSize = 0;
 unsigned long wsLastCompleteAt = 0;
+// Keeps the WiFi modem awake for the duration of a WS upload; STA-mode power
+// save otherwise adds beacon-interval latency to every small write round trip
+std::unique_ptr<WifiPowerSaveGuard> wsUploadPowerSaveGuard;
 
 String normalizeWebPath(const String& inputPath) {
   if (inputPath.isEmpty() || inputPath == "/") {
@@ -391,8 +396,8 @@ void CrossPointWebServer::begin() {
   server->onNotFound([this] { handleNotFound(); });
 
   // Collect WebDAV headers and register handler
-  const char* davHeaders[] = {"Depth", "Destination", "Overwrite", "If", "Lock-Token", "Timeout"};
-  server->collectHeaders(davHeaders, 6);
+  const char* davHeaders[] = {"Depth", "Destination", "Overwrite", "If", "Lock-Token", "Timeout", "If-None-Match"};
+  server->collectHeaders(davHeaders, 7);
   server->addHandler(new WebDAVHandler());  // Note: WebDAVHandler will be deleted by WebServer when server is stopped
 
   server->begin();
@@ -432,6 +437,7 @@ void CrossPointWebServer::abortWsUpload(const char* tag) {
   wsUploadInProgress = false;
   wsUploadClientNum = 255;
   wsLastProgressSent = 0;
+  wsUploadPowerSaveGuard.reset();
 }
 
 void CrossPointWebServer::stop() {
@@ -538,16 +544,25 @@ CrossPointWebServer::WsUploadStatus CrossPointWebServer::getWsUploadStatus() con
   return status;
 }
 
-static void sendHtmlContent(WebServer* server, const char* data, size_t len) {
+static void sendStaticContent(WebServer* server, const char* data, size_t len, const char* etag,
+                              const char* contentType = "text/html") {
+  server->sendHeader("ETag", etag);
+  // Revalidate on each visit so firmware updates cannot leave stale pages cached.
+  server->sendHeader("Cache-Control", "no-cache");
+  if (server->header("If-None-Match") == etag) {
+    server->send(304);
+    return;
+  }
   server->sendHeader("Content-Encoding", "gzip");
-  server->send_P(200, "text/html", data, len);
+  server->send_P(200, contentType, data, len);
 }
 
-void CrossPointWebServer::handleRoot() const { sendHtmlContent(server.get(), HomePageHtml, sizeof(HomePageHtml)); }
+void CrossPointWebServer::handleRoot() const {
+  sendStaticContent(server.get(), HomePageHtml, sizeof(HomePageHtml), HomePageHtmlETag);
+}
 
 void CrossPointWebServer::handleJszip() const {
-  server->sendHeader("Content-Encoding", "gzip");
-  server->send_P(200, "application/javascript", jszip_minJs, jszip_minJsCompressedSize);
+  sendStaticContent(server.get(), jszip_minJs, jszip_minJsCompressedSize, jszip_minJsETag, "application/javascript");
 }
 
 // Shared stylesheet and logo are referenced with a content-hashed ?v= query,
@@ -692,7 +707,7 @@ bool CrossPointWebServer::scanFiles(const char* path, const FileVisitor visitor,
 bool CrossPointWebServer::isEpubFile(const String& filename) const { return FsHelpers::hasEpubExtension(filename); }
 
 void CrossPointWebServer::handleFileList() const {
-  sendHtmlContent(server.get(), FilesPageHtml, sizeof(FilesPageHtml));
+  sendStaticContent(server.get(), FilesPageHtml, sizeof(FilesPageHtml), FilesPageHtmlETag);
 }
 
 void CrossPointWebServer::handleFileListData() const {
@@ -939,6 +954,8 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       return;
     }
 
+    state.powerSaveGuard = makeUniqueNoThrow<WifiPowerSaveGuard>();
+
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (state.file && state.error.isEmpty()) {
       // Buffer incoming data and flush when buffer is full
@@ -968,6 +985,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       state.size += upload.currentSize;
     }
   } else if (upload.status == UPLOAD_FILE_END) {
+    state.powerSaveGuard.reset();
     if (state.file) {
       // Flush any remaining buffered data
       if (!flushUploadBuffer(state)) {
@@ -991,6 +1009,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       }
     }
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
+    state.powerSaveGuard.reset();
     state.bufferPos = 0;  // Discard buffered data
     if (state.file) {
       state.file.close();
@@ -1021,7 +1040,29 @@ void CrossPointWebServer::handleCreateFolder() const {
     return;
   }
 
-  const String folderName = StringUtils::sanitizeFilename(server->arg("name").c_str()).c_str();
+  const String requestedName = server->arg("name");
+  size_t leadingDots = 0;
+  while (leadingDots < requestedName.length() && requestedName[leadingDots] == '.') {
+    leadingDots++;
+  }
+
+  const String nameSuffix = requestedName.substring(leadingDots);
+  bool suffixHasNameCharacter = false;
+  for (size_t i = 0; i < nameSuffix.length(); ++i) {
+    if (nameSuffix[i] != ' ' && nameSuffix[i] != '.') {
+      suffixHasNameCharacter = true;
+      break;
+    }
+  }
+  if (!suffixHasNameCharacter || leadingDots >= StringUtils::kDefaultMaxFilenameBytes) {
+    server->send(400, "text/plain", "Invalid folder name");
+    return;
+  }
+  const size_t suffixBudget =
+      StringUtils::kDefaultMaxFilenameBytes > leadingDots ? StringUtils::kDefaultMaxFilenameBytes - leadingDots : 0;
+  const String sanitizedSuffix = StringUtils::sanitizeFilename(nameSuffix.c_str(), suffixBudget).c_str();
+  String folderName = requestedName.substring(0, leadingDots);
+  folderName += sanitizedSuffix;
 
   // Validate folder name
   if (folderName.isEmpty() || folderName == "book") {
@@ -1043,12 +1084,19 @@ void CrossPointWebServer::handleCreateFolder() const {
   }
   parent.close();
 
+  if (isProtectedPath(parentPath)) {
+    server->send(403, "text/plain", "Access denied to protected path");
+    return;
+  }
+
   // Build full folder path
   String folderPath = parentPath;
   if (!folderPath.endsWith("/")) folderPath += "/";
   folderPath += folderName;
 
-  if (isProtectedPath(folderPath)) {
+  // Allow creating a new hidden folder in a visible parent. Existing hidden
+  // and system-managed paths remain protected unless Show Hidden Files is on.
+  if (isProtectedPath(folderPath) && !folderName.startsWith(".")) {
     server->send(403, "text/plain", "Access denied to protected path");
     return;
   }
@@ -1340,7 +1388,7 @@ void CrossPointWebServer::handleDelete() const {
 }
 
 void CrossPointWebServer::handleSettingsPage() const {
-  sendHtmlContent(server.get(), SettingsPageHtml, sizeof(SettingsPageHtml));
+  sendStaticContent(server.get(), SettingsPageHtml, sizeof(SettingsPageHtml), SettingsPageHtmlETag);
 }
 
 void CrossPointWebServer::handleGetSettings() const {
@@ -1948,6 +1996,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
 
           wsUploadClientNum = num;
           wsUploadInProgress = true;
+          wsUploadPowerSaveGuard = makeUniqueNoThrow<WifiPowerSaveGuard>();
           wsServer->sendTXT(num, "READY");
         } else {
           wsServer->sendTXT(num, "ERROR:Invalid START format");
@@ -1996,6 +2045,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         wsLastCompleteName = wsUploadFileName;
         wsLastCompleteSize = wsUploadSize;
         wsLastCompleteAt = millis();
+        wsUploadPowerSaveGuard.reset();
 
         unsigned long elapsed = millis() - wsUploadStartTime;
         float kbps = (elapsed > 0) ? (wsUploadSize / 1024.0) / (elapsed / 1000.0) : 0;
@@ -2024,7 +2074,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
 // --- Font management handlers ---
 
 void CrossPointWebServer::handleFontsPage() const {
-  sendHtmlContent(server.get(), FontsPageHtml, sizeof(FontsPageHtml));
+  sendStaticContent(server.get(), FontsPageHtml, sizeof(FontsPageHtml), FontsPageHtmlETag);
 }
 
 void CrossPointWebServer::handleFontList() const {

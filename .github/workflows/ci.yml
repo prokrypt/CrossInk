@@ -72,14 +72,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - environment: default
-          - environment: x4-pro
-          - environment: x4-classic
-          - environment: sticky
-          - environment: x4-pro-debug
-            pull_request_only: true
-    if: ${{ !matrix.pull_request_only || github.event_name == 'pull_request' }}
+        environment: [debug, x4-pro-debug, x4-classic-debug, sticky-debug]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -122,28 +115,36 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload firmware artifacts
-        if: matrix.environment == 'default'
+        if: matrix.environment == 'debug'
         uses: actions/upload-artifact@v7
         with:
-          name: firmware-x3-x4
+          name: firmware-x3-x4-debug
           path: |
-            .pio/build/default/firmware-x3-x4.bin
+            .pio/build/debug/firmware-x3-x4.bin
           if-no-files-found: error
 
       - name: Upload X4 Pro firmware artifact
-        if: matrix.environment == 'x4-pro'
+        if: matrix.environment == 'x4-pro-debug'
         uses: actions/upload-artifact@v7
         with:
-          name: firmware-x4-pro
-          path: .pio/build/x4-pro/firmware-x4-pro.bin
+          name: firmware-x4-pro-debug
+          path: .pio/build/x4-pro-debug/firmware-x4-pro.bin
           if-no-files-found: error
 
       - name: Upload X4 Classic firmware artifact
-        if: matrix.environment == 'x4-classic'
+        if: matrix.environment == 'x4-classic-debug'
         uses: actions/upload-artifact@v7
         with:
-          name: firmware-x4-classic
-          path: .pio/build/x4-classic/firmware-x4-classic.bin
+          name: firmware-x4-classic-debug
+          path: .pio/build/x4-classic-debug/firmware-x4-classic.bin
+          if-no-files-found: error
+
+      - name: Upload Sticky firmware artifact
+        if: matrix.environment == 'sticky-debug'
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmware-sticky-debug
+          path: .pio/build/sticky-debug/firmware-sticky.bin
           if-no-files-found: error
 
   # This job is used as the PR required actions check, allows for changes to other steps in the future without breaking

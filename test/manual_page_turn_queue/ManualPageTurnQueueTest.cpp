@@ -36,6 +36,18 @@ TEST(ManualPageTurnQueue, DrainsOneQueuedTurnAtATimeInOrder) {
   EXPECT_FALSE(queue.takeNext(request));
 }
 
+TEST(ManualPageTurnQueue, ReportsWhetherTheDispatchedTurnHasASuccessor) {
+  ManualPageTurnQueue queue;
+  queue.enqueue(next());
+  queue.enqueue(next());
+
+  ManualPageTurnRequest request;
+  ASSERT_TRUE(queue.takeNext(request));
+  EXPECT_TRUE(queue.hasPending());
+  ASSERT_TRUE(queue.takeNext(request));
+  EXPECT_FALSE(queue.hasPending());
+}
+
 TEST(ManualPageTurnQueue, OppositeDirectionCancelsAndConsumesTheInput) {
   ManualPageTurnQueue queue;
   queue.enqueue(next());
@@ -64,11 +76,95 @@ TEST(ManualPageTurnQueue, OppositeDirectionCancelsTheLastQueuedTurnWhileItRender
   EXPECT_FALSE(queue.hasDispatched());
 }
 
+TEST(ManualPageTurnQueue, OppositeDirectionCancelsAQueuedSuccessorWhileItRenders) {
+  ManualPageTurnQueue queue;
+  queue.markDispatched(next());
+  queue.enqueue(next());
+
+  EXPECT_EQ(queue.enqueue(previous()), ManualPageTurnQueue::EnqueueResult::Cancelled);
+  EXPECT_FALSE(queue.hasPending());
+  EXPECT_FALSE(queue.hasDispatched());
+}
+
+TEST(ManualPageTurnQueue, TracksWhenTheDispatchedTurnOpposesANewDirection) {
+  ManualPageTurnQueue queue;
+  queue.markDispatched(next());
+
+  EXPECT_TRUE(queue.hasDispatched());
+  EXPECT_TRUE(queue.dispatchedIsForward());
+  EXPECT_TRUE(queue.dispatchedDirectionMatches(true));
+  EXPECT_FALSE(queue.dispatchedDirectionMatches(false));
+  EXPECT_TRUE(queue.dispatchedDirectionOpposes(false));
+  EXPECT_FALSE(queue.dispatchedDirectionOpposes(true));
+}
+
+TEST(ManualPageTurnQueue, ReverseOfForwardDispatchedTurnMatchesPreviousDirection) {
+  ManualPageTurnQueue queue;
+  queue.markDispatched(next());
+
+  EXPECT_TRUE(queue.dispatchedIsForward());
+  EXPECT_FALSE(queue.dispatchedDirectionMatches(false));
+  EXPECT_TRUE(queue.dispatchedDirectionOpposes(false));
+}
+
+TEST(QueuedTurnRenderingState, CancellationDuringDecisionKeepsTheCurrentRenderAtFullQuality) {
+  QueuedTurnRenderingState state;
+  state.beginDecision();
+
+  EXPECT_FALSE(state.cancelDeferred());
+  EXPECT_FALSE(state.finishDecision(true));
+}
+
+TEST(QueuedTurnRenderingState, CancellationAfterDeferralRequestsRecoveryRedraw) {
+  QueuedTurnRenderingState state;
+  state.beginDecision();
+
+  ASSERT_TRUE(state.finishDecision(true));
+  EXPECT_TRUE(state.cancelDeferred());
+}
+
+TEST(QueuedTurnRenderingState, ClearingADeferredQueueRequestsRecoveryRedraw) {
+  QueuedTurnRenderingState state;
+  state.beginDecision();
+
+  ASSERT_TRUE(state.finishDecision(true));
+  EXPECT_TRUE(state.cancelDeferred());
+}
+
+TEST(QueuedTurnRenderingState, DiscardingAnOutOfBoundsSuccessorRequestsRecoveryRedraw) {
+  QueuedTurnRenderingState state;
+  state.beginDecision();
+
+  ASSERT_TRUE(state.finishDecision(true));
+  EXPECT_TRUE(state.cancelDeferred());
+}
+
+TEST(ManualPageTurnQueue, TracksWhenTheDispatchedTurnOpposesANewDirection) {
+  ManualPageTurnQueue queue;
+  queue.markDispatched(next());
+
+  EXPECT_TRUE(queue.hasDispatched());
+  EXPECT_TRUE(queue.dispatchedIsForward());
+  EXPECT_TRUE(queue.dispatchedDirectionMatches(true));
+  EXPECT_FALSE(queue.dispatchedDirectionMatches(false));
+  EXPECT_TRUE(queue.dispatchedDirectionOpposes(false));
+  EXPECT_FALSE(queue.dispatchedDirectionOpposes(true));
+}
+
+TEST(ManualPageTurnQueue, ReverseOfForwardDispatchedTurnMatchesPreviousDirection) {
+  ManualPageTurnQueue queue;
+  queue.markDispatched(next());
+
+  EXPECT_TRUE(queue.dispatchedIsForward());
+  EXPECT_FALSE(queue.dispatchedIsForward() == false);
+  EXPECT_FALSE(queue.dispatchedDirectionMatches(false));
+  EXPECT_TRUE(queue.dispatchedDirectionOpposes(false));
+}
+
 TEST(ManualPageTurnQueue, ClearDiscardsPendingAndDispatchedTurns) {
   ManualPageTurnQueue queue;
   queue.enqueue(next());
   queue.markDispatched(next());
-
   queue.clear();
 
   EXPECT_FALSE(queue.hasPending());

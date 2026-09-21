@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "network/WifiPowerSaveGuard.h"
+
 // Structure to hold file information
 struct FileInfo {
   String name;
@@ -44,6 +46,10 @@ class CrossPointWebServer {
     static constexpr size_t UPLOAD_BUFFER_SIZE = 4096;  // 4KB buffer
     std::vector<uint8_t> buffer;
     size_t bufferPos = 0;
+
+    // Keeps the WiFi modem awake for the duration of the upload; STA-mode power
+    // save otherwise adds beacon-interval latency to every small write round trip
+    std::unique_ptr<WifiPowerSaveGuard> powerSaveGuard;
 
     UploadState() { buffer.resize(UPLOAD_BUFFER_SIZE); }
   } upload;

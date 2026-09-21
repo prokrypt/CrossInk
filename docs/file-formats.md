@@ -303,6 +303,23 @@ Binary layout:
 
 ## `section.bin`
 
+### Version 77
+
+Version 77 keeps the serialized layout unchanged. It was bumped because ordered
+lists now number their items, `list-style-type: none` suppresses markers, and
+`<ul>`/`<ol>` margins and padding contribute to child insets. Complete files use
+byte `77`; suspended partials use the previously unused sentinel `0xF3`.
+The related CSS rule cache uses version `18`; version `17` already occurs in
+local branch history.
+
+### Version 75
+
+Version 75 keeps the serialized layout unchanged but excludes EPUB elements with
+the HTML `hidden` attribute. Complete files use byte `75`; suspended partials use
+`0xF4`. Both older full and partial layouts rebuild automatically.
+Versions 67–74 and partial sentinel 0xF5 already occur in other local branch
+history; using fresh identifiers avoids accepting those experimental caches.
+
 ### Version 66
 
 Version 66 keeps the version 63 serialized layout unchanged. It was bumped
@@ -409,7 +426,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 66
+#define EXPECTED_VERSION 75
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96
@@ -753,3 +770,12 @@ with SD font and AA, visit/revisit image pages and sleep, compare portrait and
 landscape output, and record internal free/largest heap blocks and low-water
 marks. Repeat corrupt sidecars, full/read-only SD, interrupted writes and book
 replacement at the same path on X3/X4, Sticky (SPI SD) and X4 Pro (SDMMC).
+
+### CSS rules cache revision 16
+
+Revision 16 retains the existing binary layout and invalidates older CSS caches
+because PSRAM devices now admit streamed stylesheet sources up to 512 KiB
+(previously 128 KiB). C3 retains its 128 KiB limit. Existing rule-count and
+internal-memory guards still apply. Rebuilding an invalid CSS cache also
+invalidates section caches through the existing EPUB-load path, so books that
+previously cached zero rules can restore hidden content and layout rules.

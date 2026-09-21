@@ -149,6 +149,7 @@ class EpubReaderActivity final : public Activity {
   unsigned long lastPageTurnTime = 0UL;
   unsigned long pageTurnDuration = 0UL;
   ManualPageTurnQueue pendingManualPageTurns;
+  QueuedTurnRenderingState queuedTurnRendering;
   unsigned long pageShownAtMs = 0UL;
   unsigned long lastRenderCompleteMs = 0UL;
   int idlePrewarmSpine = -1;
@@ -175,6 +176,10 @@ class EpubReaderActivity final : public Activity {
   bool pendingPercentJump = false;
   // Normalized 0.0-1.0 progress within the target spine item, computed from book percentage.
   float pendingSpineProgress = 0.0f;
+  std::optional<uint32_t> pendingReferenceUnitOffset;
+  uint32_t pendingReferenceUnitCount = 0;
+  bool pendingReferenceUnitsAreCharacters = false;
+  std::optional<uint16_t> pendingResolvedReferencePage;
   uint16_t pendingParagraphIndex = UINT16_MAX;
 #if CROSSINK_APP_CAP_TOUCH
   ReaderDrawerState touchReaderDrawerState{};
@@ -325,21 +330,15 @@ class EpubReaderActivity final : public Activity {
   // Interactive builds stop as soon as the requested page is ready and give the
   // main loop a chance to observe input between pages.
   static constexpr int INTERACTIVE_BUILD_PAGES_PER_CHUNK = 1;
+  // Ticking one page at a time (checked against RenderLock::peek() and the input-yield flag
+  // before every tick) keeps the background build responsive. Incremental limits the build to
+  // a small lookahead window, while IncreMENTAL keeps working to completion.
   static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 1;
-  // How many pages to keep laid out ahead of the reader for a still-building section. A page
-  // turn is ~1s on e-ink and a page builds in ~30ms, so the reader can't out-click the builder
-  // -- a tiny buffer is enough. The background build stops once the watermark is this far
-  // ahead and resumes as the reader advances; building unbounded instead locked up input by
-  // monopolizing the RenderLock. A giant single-spine book therefore never finalizes its .bin
-  // in one sitting -- instant reopen comes from Section::suspendBuild() persisting the pages
-  // already laid out as a partial file on exit/sleep.
   static constexpr int BUILD_WINDOW_AHEAD = 5;
-  // Reopening a partial does not immediately restart its whole-chapter extension build.
-  // Start it only when the reader is close enough to need pages past the watermark.
   static constexpr int PARTIAL_REBUILD_START_MARGIN = 15;
   // Show the indexing popup when an initial build must lay out more than this many pages up front
   // (a deep resume/jump into a not-yet-built section), so it isn't a silent wait. Kept independent
-  // of the small look-ahead window so ordinary landings stay popup-free.
+  // of the background build so ordinary landings stay popup-free.
   static constexpr int BUILD_POPUP_PAGE_THRESHOLD = 20;
   // Also show the popup when first building a spine larger than this (uncompressed bytes): its
   // whole HTML must be inflated before page 1 can lay out (the giant single-spine case), which is
@@ -403,8 +402,9 @@ class EpubReaderActivity final : public Activity {
   static void saveGlobalSettingsForBookReader(void* ctx);
   static void beginGlobalSettingsEditForBookReader(void* ctx);
   static void endGlobalSettingsEditForBookReader(void* ctx);
-  // Jump to a percentage of the book (0-100), mapping it to spine and page.
-  void jumpToPercent(int percent);
+  // Jump to a percentage of the book (0.0-100.0, two decimals meaningful), mapping it to spine and page.
+  void jumpToPercent(float percent);
+  void jumpToStablePage(uint32_t page);
   void reindexCurrentSection();
   void prepareCurrentSectionForRelayout();
   void executeReaderQuickAction(CrossPointSettings::LONG_PRESS_MENU_ACTION action,
@@ -436,7 +436,7 @@ class EpubReaderActivity final : public Activity {
   void applyOrientation(uint8_t orientation);
   void requestManualPageTurn(bool isForwardTurn, const char* source);
   bool drainPendingManualPageTurn();
-  void clearPendingManualPageTurns();
+  void clearPendingManualPageTurns(bool requestRecoveryRedraw = true);
   void finishManualPageTurnBrakeIfReady();
   void cancelSilentNextChapterPrefetchForForwardTurn();
   void pageTurn(bool isForwardTurn, const char* source = "unknown");
@@ -483,14 +483,15 @@ class EpubReaderActivity final : public Activity {
     return true;
   }
   bool preventAutoSleep() override { return automaticPageTurnActive; }
-  // Hold the loop hot only while the build has work this loop would do: a kept-alive
-  // build sitting outside the lookahead window is dormant, and reporting it here would
-  // pin the CPU at full clock (no power saving, yield-only loop) for the whole read.
-  // Mirrors the tick condition in loop(): catch-up phase, or watermark inside the window.
   bool sectionBuildWantsTick() const {
-    return section && section->isBuilding() &&
-           (!section->activeBuildHasCaughtReadablePages() ||
-            static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD);
+    if (!section || !section->isBuilding()) {
+      return false;
+    }
+    if (SETTINGS.indexingMethod != CrossPointSettings::INDEXING_INCREMENTAL) {
+      return true;
+    }
+    return !section->activeBuildHasCaughtReadablePages() ||
+           static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD;
   }
   bool backgroundSectionBuildHasHeap();
   void idlePrewarmNextPage();

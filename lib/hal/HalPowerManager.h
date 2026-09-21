@@ -6,6 +6,9 @@
 #include <Logging.h>
 #include <Wire.h>
 #include <freertos/semphr.h>
+#if CONFIG_PM_ENABLE
+#include <esp_pm.h>
+#endif
 
 #include <cassert>
 
@@ -24,6 +27,11 @@ extern HalPowerManager powerManager;  // Singleton
 class HalPowerManager {
   int normalFreq = 0;  // MHz
   bool isLowPower = false;
+#if CONFIG_PM_ENABLE
+  // Held while the device is active. Releasing it is what lets DFS drop to the
+  // floor and lets tickless idle enter light sleep.
+  esp_pm_lock_handle_t cpuFreqLock = nullptr;
+#endif
 
   mutable int _batteryCachedPercent = 0;  // Last read battery percentage * 10 (0-1000); callers divide by 10 (ADC/X4
                                           // path only — I2C/X3 path stores 0-100 directly)
@@ -39,12 +47,17 @@ class HalPowerManager {
 #else
   static constexpr int LOW_POWER_FREQ = 10;  // MHz
 #endif
-  static constexpr unsigned long IDLE_POWER_SAVING_MS = 3000;  // ms
-  static constexpr unsigned long BATTERY_POLL_MS = 1500;       // ms
+  // DFS floor when power management is enabled. 80 MHz keeps APB pinned at
+  // 80 MHz across every mode, so SPI dividers computed at bus setup stay valid
+  // no matter what the CPU clock is doing.
+  static constexpr int DFS_MIN_FREQ = 80;  // MHz
+  static constexpr unsigned long IDLE_POWER_SAVING_MS = 1000;  // ms
+  static constexpr unsigned long BATTERY_POLL_MS = 6000;       // ms
 
   void begin();
 
-  // Control CPU frequency for power saving
+  // Control CPU frequency for power saving. With power management enabled this
+  // toggles the activity PM lock instead, so idle time light-sleeps.
   void setPowerSaving(bool enabled);
 
   // Setup wake up GPIO and enter deep sleep
