@@ -231,6 +231,18 @@ bool MappedInputManager::shouldMirrorPowerAsConfirmHold() const {
          !isPowerButtonActionAvailableOutsideReader(static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.longPwrBtn));
 }
 
+bool MappedInputManager::hasLeftRightButtonsHardware() const {
+#ifdef SIMULATOR
+#ifdef SIMULATOR_DEVICE_X4_PRO
+  return false;
+#else
+  return true;
+#endif
+#else
+  return gpio.hasLeftRightButtons();
+#endif
+}
+
 #if CROSSINK_APP_CAP_TOUCH
 bool MappedInputManager::touchInputEnabled() const {
   return gpio.hasTouch() && (!readerMode || !SETTINGS.disableReaderTouchscreen || readerTouchscreenOverride);
@@ -639,18 +651,6 @@ bool MappedInputManager::hasHomeKeyHardware() const {
 #endif
 #else
   return gpio.hasHomeKey();
-#endif
-}
-
-bool MappedInputManager::hasLeftRightButtonsHardware() const {
-#ifdef SIMULATOR
-#ifdef SIMULATOR_DEVICE_X4_PRO
-  return false;
-#else
-  return true;
-#endif
-#else
-  return gpio.hasLeftRightButtons();
 #endif
 }
 
