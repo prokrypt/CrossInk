@@ -37,6 +37,7 @@ namespace {
 constexpr uint8_t SETTINGS_FILE_VERSION = 2;
 constexpr char SETTINGS_FILE_BIN[] = "/.crosspoint/settings.bin";
 constexpr char SETTINGS_FILE_JSON[] = "/.crosspoint/crossink-settings.json";
+constexpr char SETTINGS_FILE_JSON_BAK[] = "/.crosspoint/crossink-settings.json.bak";
 constexpr char LEGACY_SETTINGS_FILE_JSON[] = "/.crosspoint/settings.json";
 constexpr char SETTINGS_FILE_BAK[] = "/.crosspoint/settings.bin.bak";
 constexpr char LANG_FILE_BIN[] = "/.crosspoint/language.bin";
@@ -779,15 +780,13 @@ bool CrossPointSettings::saveToFile() const {
   std::lock_guard<std::mutex> lock(storeMutex);
   JsonDocument doc;
   toJson(doc);
-  return PersistableStoreBase::writeDocToFile(SETTINGS_FILE_JSON, doc);
+  return PersistableStoreBase::writeDocToFileAtomically(SETTINGS_FILE_JSON, doc);
 }
 
 bool CrossPointSettings::loadFromFile() {
   enum class JsonLoadStatus : uint8_t { MissingOrEmpty, Loaded, Failed };
 
   auto loadJsonSettings = [this](const char* path, bool migrateToCurrentPath) -> JsonLoadStatus {
-    if (!Storage.exists(path)) return JsonLoadStatus::MissingOrEmpty;
-
     JsonDocument doc;
     if (PersistableStoreBase::readDocFromFile(path, doc)) {
       bool result = false;
@@ -820,8 +819,14 @@ bool CrossPointSettings::loadFromFile() {
 
   // Prefer CrossInk's namespaced settings file. Use the old generic file only
   // as a migration fallback so other firmware can keep its own settings.json.
+  const bool hasCrossInkSettings = Storage.exists(SETTINGS_FILE_JSON) || Storage.exists(SETTINGS_FILE_JSON_BAK);
   JsonLoadStatus jsonStatus = loadJsonSettings(SETTINGS_FILE_JSON, false);
-  if (jsonStatus != JsonLoadStatus::MissingOrEmpty) return jsonStatus == JsonLoadStatus::Loaded;
+  // A CrossInk-specific settings file takes precedence even when it is
+  // damaged. Falling through would import another firmware's settings.json
+  // and replace the user's CrossInk preferences.
+  if (hasCrossInkSettings || jsonStatus != JsonLoadStatus::MissingOrEmpty) {
+    return jsonStatus == JsonLoadStatus::Loaded;
+  }
 
   jsonStatus = loadJsonSettings(LEGACY_SETTINGS_FILE_JSON, true);
   if (jsonStatus != JsonLoadStatus::MissingOrEmpty) return jsonStatus == JsonLoadStatus::Loaded;
