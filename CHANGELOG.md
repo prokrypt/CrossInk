@@ -7,6 +7,7 @@
 ### Fixed
 
 - OPDS downloads now use the first listed author for filename templates when a catalog also lists translators or other contributors.
+- Retain the CSS spacing supplied by empty inline spans.
 
 ## [v1.6.0] - 2026-09-21
 
