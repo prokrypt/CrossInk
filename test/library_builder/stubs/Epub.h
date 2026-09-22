@@ -13,6 +13,7 @@ struct FakeMetadata {
 };
 
 inline std::map<std::string, FakeMetadata> bookMetadata;
+inline std::map<std::string, FakeMetadata> cachedBookMetadata;
 inline std::vector<bool> metadataCacheUse;
 
 class Epub {
@@ -24,7 +25,9 @@ class Epub {
   bool loadMetadata(std::string& title, std::string& author, const bool allowCachedMetadata = true) {
     ++fake::parses;
     metadataCacheUse.push_back(allowCachedMetadata);
-    const auto& metadata = bookMetadata[path];
+    const auto cached = cachedBookMetadata.find(path);
+    const auto& metadata =
+        allowCachedMetadata && cached != cachedBookMetadata.end() ? cached->second : bookMetadata[path];
     if (!metadata.success) return false;
     title = metadata.title;
     author = metadata.author;

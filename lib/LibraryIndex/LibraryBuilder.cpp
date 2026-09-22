@@ -52,9 +52,9 @@ struct StagedEntry {
 };
 constexpr size_t STAGE_STRIDE = sizeof(StagedEntry);
 
-// Sort array element. Holding a 12-byte key prefix rather than the whole fold
-// keeps this at 14 bytes per book; ties fall back to the ordinal, so the order
-// is total and a rebuild cannot shuffle equal-prefix books between runs.
+// Sort array element. Holding a 12-byte key segment rather than the whole fold
+// keeps this at 14 bytes per book. Equal-prefix runs are refined from the
+// staged source in later passes without growing the resident array.
 struct SortKey {
   char key[12];
   uint16_t ordinal;
@@ -82,6 +82,42 @@ bool sortKeyLess(const SortKey& a, const SortKey& b) {
 // work between yields.
 void serviceBuilder(uint32_t& workUnits) {
   if ((++workUnits & 0x1Fu) == 0) delay(1);
+}
+
+// Only ties need another read. At most 11 fixed-size segments are considered,
+// so recursion depth is bounded and the 14-byte-per-book array is reused.
+template <typename LoadSegment>
+bool refineSortKeyTies(SortKey* keys, const uint16_t begin, const uint16_t end, const size_t offset,
+                       const size_t keyBytes, LoadSegment& loadSegment, uint32_t& serviceUnits) {
+  if (end - begin < 2 || offset >= keyBytes) return true;
+  for (uint16_t i = begin; i < end; i++) {
+    serviceBuilder(serviceUnits);
+    if (!loadSegment(keys[i].ordinal, offset, keys[i].key)) return false;
+  }
+  std::sort(keys + begin, keys + end, sortKeyLess);
+  uint16_t run = begin;
+  while (run < end) {
+    uint16_t next = run + 1;
+    while (next < end && memcmp(keys[run].key, keys[next].key, sizeof(keys[run].key)) == 0) next++;
+    if (!refineSortKeyTies(keys, run, next, offset + sizeof(keys[run].key), keyBytes, loadSegment, serviceUnits))
+      return false;
+    run = next;
+  }
+  return true;
+}
+
+template <typename LoadSegment>
+bool sortKeysWithFullTies(SortKey* keys, const uint16_t count, const size_t keyBytes, LoadSegment& loadSegment,
+                          uint32_t& serviceUnits) {
+  std::sort(keys, keys + count, sortKeyLess);
+  uint16_t run = 0;
+  while (run < count) {
+    uint16_t next = run + 1;
+    while (next < count && memcmp(keys[run].key, keys[next].key, sizeof(keys[run].key)) == 0) next++;
+    if (!refineSortKeyTies(keys, run, next, sizeof(keys[run].key), keyBytes, loadSegment, serviceUnits)) return false;
+    run = next;
+  }
+  return true;
 }
 
 bool recoverInterruptedInstall() {
@@ -334,9 +370,12 @@ int findPrior(WalkState& st, const uint64_t pathHash) {
     st.stats->parsed++;
     Epub epub(fullPath, CACHE_DIR);
     std::string bookTitle;
-    const bool sourceChanged = priorIndex >= 0 && (st.prior[priorIndex].fileSize != fileSize ||
-                                                   (modificationTime != 0 && priorRecord.modificationTime != 0 &&
-                                                    priorRecord.modificationTime != modificationTime));
+    // A missing timestamp cannot prove that a path-keyed EPUB cache still
+    // belongs to this file, even when its byte length happens to match.
+    const bool sourceChanged =
+        modificationTime == 0 ||
+        (priorIndex >= 0 && (st.prior[priorIndex].fileSize != fileSize || priorRecord.modificationTime == 0 ||
+                             priorRecord.modificationTime != modificationTime));
     if (epub.loadMetadata(bookTitle, author, !sourceChanged)) {
       entry.record.metadataStatus = CLIX_METADATA_EXTRACTED;
       if (!bookTitle.empty()) {
@@ -416,7 +455,7 @@ struct DedupFrame {
 };
 
 void walk(WalkState& st, const std::string& path, const int depth) {
-  if (st.failed || depth > LIBRARY_MAX_DEPTH || st.books >= CLIX_MAX_RECORDS) return;
+  if (st.failed || depth > LIBRARY_MAX_DEPTH) return;
 
   const uint16_t dedupBase = st.activeDedupCount;
   const DedupFrame dedupFrame{st, dedupBase};
@@ -451,7 +490,7 @@ void walk(WalkState& st, const std::string& path, const int depth) {
 
   for (HalFile entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
     serviceBuilder(st.serviceUnits);
-    if (st.failed || st.books >= CLIX_MAX_RECORDS) {
+    if (st.failed) {
       entry.close();
       break;
     }
@@ -469,7 +508,7 @@ void walk(WalkState& st, const std::string& path, const int depth) {
       const size_t resumePosition = dir.position();
       dir.close();
       walk(st, joinLibraryPath(path, name), depth + 1);
-      if (st.failed || st.books >= CLIX_MAX_RECORDS) return;
+      if (st.failed) return;
 
       dir = Storage.open(path.c_str());
       if (!dir || !dir.isDirectory() || !dir.seekSet(resumePosition)) {
@@ -516,6 +555,12 @@ void walk(WalkState& st, const std::string& path, const int depth) {
                 static_cast<unsigned>(LIBRARY_MAX_DEDUP_KEYS), path.c_str());
         st.dedupDegraded = true;
       }
+    }
+    if (st.books >= CLIX_MAX_RECORDS) {
+      LOG_ERR("LIBIDX", "library exceeds the %u-book index limit; keeping the previous index",
+              static_cast<unsigned>(CLIX_MAX_RECORDS));
+      st.failed = true;
+      break;
     }
     if (!folderEmitted) {
       // Folders are emitted lazily, so only directories that actually hold a
@@ -859,8 +904,29 @@ bool emitIndex(const char* folderStagePath, WalkState& st, const uint16_t* order
       authorSort[i].ordinal = i;
     }
     if (!ioFailed) {
+      const auto loadSurnameSegment = [&](const uint16_t ordinal, const size_t offset, char* segment) {
+        const uint16_t src = order[canonicalFrom[ordinal]];
+        uint8_t authorLen = 0;
+        char author[STAGE_AUTHOR_BYTES] = {};
+        if (!readStageAt(static_cast<uint64_t>(src) * STAGE_STRIDE + offsetof(StagedEntry, authorLen), &authorLen,
+                         sizeof(authorLen)))
+          return false;
+        if (authorLen > 0 && !readStageAt(static_cast<uint64_t>(src) * STAGE_STRIDE + offsetof(StagedEntry, author),
+                                          author, std::min<size_t>(authorLen, sizeof(author))))
+          return false;
+        const std::string key = authorLen == 0 ? std::string() : surnameKey(std::string_view(author, authorLen));
+        if (key.empty()) {
+          memset(segment, 0xFF, sizeof(SortKey::key));
+        } else {
+          memset(segment, 0, sizeof(SortKey::key));
+          if (offset < key.size())
+            memcpy(segment, key.data() + offset, std::min(key.size() - offset, sizeof(SortKey::key)));
+        }
+        return true;
+      };
       delay(1);
-      std::sort(authorSort.get(), authorSort.get() + n, sortKeyLess);
+      if (!sortKeysWithFullTies(authorSort.get(), n, STAGE_AUTHOR_BYTES, loadSurnameSegment, serviceUnits))
+        ioFailed = true;
       delay(1);
     }
   }
@@ -1319,15 +1385,26 @@ bool buildLibraryIndex(const char* rootPath, BuildStats& stats, const bool readM
         memcpy(keys[i].key, r.fold, std::min<size_t>(r.foldLen, sizeof(keys[i].key)));
         keys[i].ordinal = i;
       }
-      if (!stage.close()) {
-        LOG_ERR("LIBIDX", "title sort: stage close failed");
+      const auto loadTitleSegment = [&stage](const uint16_t ordinal, const size_t offset, char* key) {
+        const uint64_t position = static_cast<uint64_t>(ordinal) * STAGE_STRIDE + offsetof(StagedEntry, record) +
+                                  offsetof(ClixRecord, fold) + offset;
+        if (!stage.seekSet(position) || stage.read(reinterpret_cast<uint8_t*>(key), sizeof(SortKey::key)) !=
+                                            static_cast<int>(sizeof(SortKey::key))) {
+          LOG_ERR("LIBIDX", "title sort: staged fold read failed at %u", static_cast<unsigned>(position));
+          return false;
+        }
+        return true;
+      };
+      delay(1);
+      const bool sorted = sortKeysWithFullTies(keys.get(), st.books, CLIX_FOLD_BYTES, loadTitleSegment, serviceUnits);
+      delay(1);
+      const bool stageClosed = stage.close();
+      if (!sorted || !stageClosed) {
+        if (!stageClosed) LOG_ERR("LIBIDX", "title sort: stage close failed");
         Storage.remove(STAGE_PATH);
         Storage.remove(folderStagePath.c_str());
         return false;
       }
-      delay(1);
-      std::sort(keys.get(), keys.get() + st.books, sortKeyLess);
-      delay(1);
       for (uint16_t i = 0; i < st.books; i++) {
         serviceBuilder(serviceUnits);
         order[i] = keys[i].ordinal;

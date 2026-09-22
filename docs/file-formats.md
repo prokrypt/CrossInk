@@ -52,12 +52,14 @@ struct ImageFolderIndexRecord {
 ### Version 1
 
 `LibraryIndexFile` (`lib/LibraryIndex/LibraryIndexFile.{h,cpp}`) reads the
-`CLX1` on-disk index that backs the Library screen: one sorted, searchable
-snapshot of every book on the card, built by `LibraryBuilder` so paging,
+`CLX1` on-disk index for the planned Library screen: one sorted, searchable
+snapshot of up to 4,096 books on the card, built by `LibraryBuilder` so paging,
 sorting, and searching the shelf cost a handful of seeks instead of a
 directory walk per screen. The format itself (`lib/LibraryIndex/LibraryFormat.h`)
 is free of `HalStorage` and Arduino so its layout and validation rules are
 host-testable (`test/library_format`, `test/library_index_file`).
+If the scan finds another book beyond the limit, the rebuild fails and keeps
+the previous index instead of publishing a partial shelf.
 
 Every section starts on a 512-byte boundary. Records are a fixed 128 bytes
 each, so record `k` always lives at `recordStart + 128*k` with no offset table

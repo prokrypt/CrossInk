@@ -52,6 +52,7 @@ class LibraryBuilderTest : public ::testing::Test {
   void SetUp() override {
     fake::reset();
     bookMetadata.clear();
+    cachedBookMetadata.clear();
     metadataCacheUse.clear();
     fake::add("/a.epub");
     fake::add("/b.epub");
@@ -248,6 +249,27 @@ TEST_F(LibraryBuilderTest, ZeroTimestampAndFailedExtractionAreNeverFresh) {
   EXPECT_TRUE(stats.indexReplaced);
 }
 
+TEST_F(LibraryBuilderTest, ZeroTimestampDoesNotReuseStaleEpubCache) {
+  fake::files["/a.epub"]->time = 0;
+  bookMetadata["/a.epub"].title = "Original title";
+  initial();
+
+  cachedBookMetadata["/a.epub"].title = "Original title";
+  bookMetadata["/a.epub"].title = "Replacement title";
+  metadataCacheUse.clear();
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+
+  ASSERT_FALSE(metadataCacheUse.empty());
+  EXPECT_FALSE(metadataCacheUse.front());
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  ClixRecord record{};
+  ASSERT_TRUE(recordAtPath(index, "/a.epub", record));
+  std::string title;
+  ASSERT_TRUE(index.readTitle(record, title));
+  EXPECT_EQ(title, "Replacement title");
+}
+
 TEST_F(LibraryBuilderTest, MetadataModeChangesInvalidateCachedMetadata) {
   initial();
   fake::parses = 0;
@@ -283,6 +305,22 @@ TEST_F(LibraryBuilderTest, RebuildVotesFromSourceAuthorInsteadOfPriorCanonicalAu
   ASSERT_TRUE(index.readRecord(0, record));
   ASSERT_TRUE(index.readAuthor(record, author));
   EXPECT_EQ(author, "Victor Hugo");
+}
+
+TEST_F(LibraryBuilderTest, SortsPastTheFirstTwelveTitleAndSurnameBytes) {
+  const std::string commonPrefix(36, 'Q');
+  bookMetadata["/a.epub"].title = commonPrefix + " Z";
+  bookMetadata["/b.epub"].title = commonPrefix + " A";
+  bookMetadata["/a.epub"].author = "Alice " + commonPrefix + "Z";
+  bookMetadata["/b.epub"].author = "Bob " + commonPrefix + "A";
+
+  initial();
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  EXPECT_EQ(pathAt(index, SortOrder::TitleAsc, 0), "/b.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::TitleAsc, 1), "/a.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::AuthorAsc, 0), "/b.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::AuthorAsc, 1), "/a.epub");
 }
 
 TEST_F(LibraryBuilderTest, EqualBasenamesInDifferentFoldersReconcileIndependently) {
@@ -477,6 +515,19 @@ TEST_F(LibraryBuilderTest, LibrariesPastOldGateAndAtFormatCeilingKeepAllOrders) 
           << count << ':' << row;
     }
   }
+}
+
+TEST_F(LibraryBuilderTest, BookPastFormatCeilingKeepsPreviousIndex) {
+  initial();
+  const auto previous = fake::files[INDEX]->bytes;
+  for (unsigned i = 0; i < CLIX_MAX_RECORDS - 1; i++) {
+    fake::add("/book" + numbered("", i) + ".epub");
+  }
+
+  EXPECT_FALSE(buildLibraryIndex("/", stats, false));
+  EXPECT_EQ(fake::files[INDEX]->bytes, previous);
+  EXPECT_FALSE(Storage.exists("/.crosspoint/library.stage"));
+  EXPECT_FALSE(Storage.exists("/.crosspoint/library.stage.f"));
 }
 
 TEST_F(LibraryBuilderTest, SortAllocationFailureProducesValidDegradedIndex) {

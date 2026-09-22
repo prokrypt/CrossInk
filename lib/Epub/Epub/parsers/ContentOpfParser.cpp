@@ -190,7 +190,7 @@ bool ContentOpfParser::findItemHref(const std::string& idref, std::string& href)
 }
 
 bool ContentOpfParser::setup() {
-  if (!itemIndexArena.init(ITEM_INDEX_ARENA_SLAB_BYTES)) {
+  if (!metadataOnly && !itemIndexArena.init(ITEM_INDEX_ARENA_SLAB_BYTES)) {
     LOG_ERR("COF", "Failed to allocate manifest index arena (%u bytes)",
             static_cast<unsigned>(ITEM_INDEX_ARENA_SLAB_BYTES));
     lowMemoryFailure = true;
