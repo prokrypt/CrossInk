@@ -11,6 +11,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <PNGdec.h>
+#undef local  // zlib's zutil.h #defines local to static; leaks into catalog.h's `local` variable
 #include <Xtc.h>
 
 #include <algorithm>

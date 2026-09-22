@@ -1085,7 +1085,12 @@ void mirrorWakeShortPressToNvs() {
 
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout) {
-  HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
+  // Scope the CPU frequency lock so it can be released before deep sleep entry.
+  // The lock is held during sleep prep to ensure full speed for file I/O and state
+  // save, but it must be released before esp_deep_sleep_start() or the PM system
+  // will abort with the lock still held.
+  {
+    HalPowerManager::Lock powerLock;
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
 
   const bool isQuickResumeSleep =
@@ -1129,8 +1134,11 @@ void enterDeepSleep(bool fromTimeout) {
 
   putTiltSensorToSleepForDeepSleep();
   display.deepSleep();
+  Frontlight.prepareForDeepSleep();
   mirrorWakeShortPressToNvs();
   LOG_DBG("MAIN", "Entering deep sleep");
+
+  }  // Release powerLock before deep sleep entry
 
   powerManager.startDeepSleep(gpio);
 }
@@ -1379,6 +1387,7 @@ void setup() {
       restoreLightOn = false;
     }
   }
+  Frontlight.releaseAfterWake();
   Frontlight.begin(SETTINGS.frontlightBrightness, SETTINGS.frontlightWarmth, restoreLightOn);
 
   if (recoveryFirmwareMode) {

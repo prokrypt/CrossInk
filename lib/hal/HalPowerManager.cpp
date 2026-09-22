@@ -49,11 +49,16 @@ void HalPowerManager::begin() {
     // Matches the initial isLowPower == false: the device boots active.
     esp_pm_lock_acquire(cpuFreqLock);
   }
+  if (esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "epd-refresh", &displayPmLock) != ESP_OK) {
+    LOG_ERR("PWR", "Failed to create display no-light-sleep lock; refresh may light-sleep");
+    displayPmLock = nullptr;
+  }
   esp_pm_config_t pmConfig = {};
   pmConfig.max_freq_mhz = normalFreq;
   pmConfig.min_freq_mhz = DFS_MIN_FREQ;
   // Tickless idle light-sleeps whenever every task is blocked and no PM lock is
-  // held. The SDK's display locks keep panel work out of that window.
+  // held. HalDisplay's busy-wait hooks (beginDisplayBusyWait/endDisplayBusyWait)
+  // hold displayPmLock during EPD refresh so it stays out of that window.
   pmConfig.light_sleep_enable = true;
   const esp_err_t pmErr = esp_pm_configure(&pmConfig);
   if (pmErr != ESP_OK) {
@@ -61,6 +66,18 @@ void HalPowerManager::begin() {
   } else {
     LOG_INF("PWR", "Auto light sleep enabled (%d-%d MHz)", pmConfig.min_freq_mhz, pmConfig.max_freq_mhz);
   }
+#endif
+}
+
+void HalPowerManager::beginDisplayBusyWait() {
+#if CONFIG_PM_ENABLE
+  if (displayPmLock != nullptr) esp_pm_lock_acquire(displayPmLock);
+#endif
+}
+
+void HalPowerManager::endDisplayBusyWait() {
+#if CONFIG_PM_ENABLE
+  if (displayPmLock != nullptr) esp_pm_lock_release(displayPmLock);
 #endif
 }
 

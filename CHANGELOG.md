@@ -31,6 +31,7 @@
 
 ### Fixed
 
+- X4 Pro firmware with automatic light sleep now enters deep sleep correctly when the frontlight is enabled.
 - Periodic memory telemetry now reports only when free heap or PSRAM changes, while checking for changes every 2 seconds.
 - The web EPUB optimizer now accepts books that use standard Adobe or IDPF font obfuscation, while leaving DRM-protected books unchanged.
 - Frontlight schedule time pickers now use the compact number keypad from Go To screens.
@@ -51,6 +52,7 @@
 - Devices with only Up/Down navigation buttons (e.g. X4 Pro) can now reach every book in the Recent Books grid view, with Up/Down walking left-to-right, line by line, instead of only moving between rows.
 - The Home button now returns from Customize Status Bar to the previous menu instead of leaving the reader.
 - OPDS book downloads can follow secure redirects without sharing catalog credentials with the download host.
+- Automatic light sleep can no longer engage while the e-ink panel is mid-refresh, closing a latent waveform/SPI timing risk on devices with idle power saving enabled.
 - Larger EPUB stylesheets work on PSRAM readers, including rules that hide duplicate images.
 - JPEG-heavy EPUBs can use PSRAM for decoding on supported readers, leaving internal memory available for reading.
 - Importing CrossPoint settings preserves tap and swipe modes without carrying over a stale reader touchscreen lock.

@@ -31,6 +31,9 @@ class HalPowerManager {
   // Held while the device is active. Releasing it is what lets DFS drop to the
   // floor and lets tickless idle enter light sleep.
   esp_pm_lock_handle_t cpuFreqLock = nullptr;
+  // Held only for the duration of an EPD busy-wait (see beginDisplayBusyWait),
+  // so tickless idle can never light-sleep mid-refresh.
+  esp_pm_lock_handle_t displayPmLock = nullptr;
 #endif
 
   mutable int _batteryCachedPercent = 0;  // Last read battery percentage * 10 (0-1000); callers divide by 10 (ADC/X4
@@ -59,6 +62,12 @@ class HalPowerManager {
   // Control CPU frequency for power saving. With power management enabled this
   // toggles the activity PM lock instead, so idle time light-sleeps.
   void setPowerSaving(bool enabled);
+
+  // Registered with HalDisplay via EInkDisplay::setBusyWaitHooks() so the SDK's
+  // BUSY-pin poll never light-sleeps mid-refresh. No-ops when PM is disabled or
+  // lock creation failed.
+  void beginDisplayBusyWait();
+  void endDisplayBusyWait();
 
   // Setup wake up GPIO and enter deep sleep
   // Should be called inside main loop() to handle the currentLockMode
