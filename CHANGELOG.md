@@ -2,7 +2,7 @@
 
 ### Added
 
-- Automatic light sleep is available in the X4 Pro light-sleep firmware profiles, reducing idle power while retaining normal button, touch, and frontlight behavior.
+- Automatic light sleep is available in the X4 Pro light-sleep firmware profiles, reducing idle power while retaining normal button, touch, frontlight, and USB-serial behavior.
 - Add the continuous **IncreMENTAL** EPUB indexing method for background chapter indexing.
 - EPUBs with stable page numbers can jump directly to a specific stable page from the reader menu.
 - Hidden folders can be created using the web file manager now when prefixed with a dot.
