@@ -243,13 +243,17 @@ void LibraryActivity::resetViewport() {
   selection = rowCount() ? CONTROL_COUNT : 3;
   showSelection = !mappedInput.hasTouchHardware();
   topIndex = 0;
+  listNav.reset(selection - CONTROL_COUNT);
   uiReady = false;
 }
 
 void LibraryActivity::reloadAfterBookAction() {
   rebuildIndex();
   selection = std::min(selection, std::max(CONTROL_COUNT, CONTROL_COUNT + rowCount() - 1));
-  topIndex = followListSelection(selection - CONTROL_COUNT, topIndex, visibleRows, rowCount());
+  listNav.selected = selection - CONTROL_COUNT;
+  listNav.top = topIndex;
+  listNav.follow(rowCount());
+  topIndex = listNav.top;
   requestUpdate();
 }
 
@@ -415,8 +419,10 @@ void LibraryActivity::loop() {
   const auto swipe = mappedInput.wasSwipe();
   if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
     if (mappedInput.hasTouchHardware()) showSelection = false;
-    topIndex = scrollListBy(topIndex, swipe == MappedInputManager::SwipeDir::Up ? visibleRows : -visibleRows,
-                            visibleRows, rowCount());
+    listNav.top = topIndex;
+    const int page = listNav.pageRowsFor(rowCount());
+    listNav.scrollBy(swipe == MappedInputManager::SwipeDir::Up ? page : -page, rowCount());
+    topIndex = listNav.top;
     requestUpdate();
     return;
   }
@@ -429,17 +435,19 @@ void LibraryActivity::loop() {
     }
     selection = next;
     if (selection >= CONTROL_COUNT) {
-      topIndex = followListSelection(selection - CONTROL_COUNT, topIndex, visibleRows, rowCount());
-      if (SETTINGS.libraryListExpanded && selection - CONTROL_COUNT >= topIndex + visibleRows / 2)
-        topIndex = selection - CONTROL_COUNT;
+      listNav.selected = selection - CONTROL_COUNT;
+      listNav.top = topIndex;
+      listNav.follow(rowCount());
+      topIndex = listNav.top;
     }
     requestUpdate();
   };
   buttonNavigator.onNextRelease([&] { move(ButtonNavigator::nextIndex(selection, count)); });
   buttonNavigator.onPreviousRelease([&] { move(ButtonNavigator::previousIndex(selection, count)); });
-  buttonNavigator.onNextContinuous([&] { move(ButtonNavigator::nextPageIndex(selection, count, visibleRows)); });
+  buttonNavigator.onNextContinuous(
+      [&] { move(ButtonNavigator::nextPageIndex(selection, count, listNav.pageRowsFor(rowCount()))); });
   buttonNavigator.onPreviousContinuous(
-      [&] { move(ButtonNavigator::previousPageIndex(selection, count, visibleRows)); });
+      [&] { move(ButtonNavigator::previousPageIndex(selection, count, listNav.pageRowsFor(rowCount()))); });
 }
 
 void LibraryActivity::listScreen(UiApp::ScreenType& screen, void* user) {
@@ -596,24 +604,28 @@ void LibraryActivity::buildListScreen(UiApp::ScreenType& screen) {
   props.headerText = screen.theme().bodyText;
   props.headerText.bold = true;
   props.rtl = (I18N.getLanguage() == Language::AR || I18N.getLanguage() == Language::HE);
-  visibleRows = std::max<int>(1, configureUiList(props, screen.theme(), screen.body(), UiListRowType::WithSubtitle));
-  if (SETTINGS.libraryListExpanded && sort != Sort::DateAdded && sort != Sort::RecentlyRead)
-    visibleRows = std::max(1, visibleRows / 2);
-  topIndex = scrollListBy(topIndex, 0, visibleRows, rowCount());
-  props.topIndex = static_cast<uint16_t>(topIndex);
+  configureUiList(props, screen.theme(), screen.body(), UiListRowType::WithSubtitle);
+  listNav.selected = showSelection ? selection - CONTROL_COUNT : -1;
+  listNav.top = topIndex;
+  listNav.syncToProps(screen.body(), props.rowHeight, props.rowGap, rowCount(), props);
+  topIndex = listNav.top;
   screen.list(props);
 }
 
 void LibraryActivity::render(RenderLock&&) {
-  renderer.clearScreen();
-  const auto header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
-  if (mappedInput.hasTouchHardware())
-    TouchHeaderBackButton::draw(renderer, uiTarget, header, tr(STR_LIBRARY), false,
-                                3 * HEADER_CONTROL_SIZE + 2 * HEADER_CONTROL_GAP + headerControlRightInset() + 10);
-  else
-    GUI.drawHeader(renderer, header, tr(STR_LIBRARY));
   uiReady = false;
-  app.render();
+  for (int pass = 0; pass < 8; ++pass) {
+    renderer.clearScreen();
+    const auto header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
+    if (mappedInput.hasTouchHardware())
+      TouchHeaderBackButton::draw(renderer, uiTarget, header, tr(STR_LIBRARY), false,
+                                  3 * HEADER_CONTROL_SIZE + 2 * HEADER_CONTROL_GAP + headerControlRightInset() + 10);
+    else
+      GUI.drawHeader(renderer, header, tr(STR_LIBRARY));
+    app.render();
+    topIndex = listNav.top;
+    if (!listNav.consumeRebuildNeeded()) break;
+  }
   uiReady = true;
   if (sortPopup.processRender(renderer, mappedInput)) return;
   const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(query.empty() ? tr(STR_HOME) : tr(STR_BACK)),

@@ -14,6 +14,7 @@
 
 - Library indexing now preserves the previous shelf after SD-card directory errors and refreshes metadata when books are replaced.
 - Library indexing now sorts long shared title and author prefixes correctly and preserves the previous shelf when a card exceeds the 4,096-book limit.
+- Button navigation in the Library now reaches the last visible book before scrolling to the next page.
 
 ## [v1.6.0] - 2026-09-21
 

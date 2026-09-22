@@ -30,13 +30,13 @@ class LibraryActivity final : public Activity {
   freeink::ui::GfxRendererTarget uiTarget;
   UiApp app;
   ButtonNavigator buttonNavigator;
+  freeink::ui::ListNav listNav;
   OptionPopup sortPopup;
   library::LibraryIndexFile index;
   Sort sort = Sort::DateAdded;
   bool descending = true;
   int selection = CONTROL_COUNT;
   bool showSelection = true;
-  int visibleRows = 1;
   int topIndex = 0;
   bool uiReady = false;
   bool longPressFired = false;
