@@ -553,7 +553,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t longPressButtonBehavior = OFF;
   // UI Theme
   uint8_t uiTheme = LYRA;
-  // Recent Books screen layout
+  // Legacy Recent Books layout; retained for binary settings compatibility.
   uint8_t recentBooksView = RECENT_BOOKS_LIST;
   // UI scale (list fonts + row heights); touch boards default one step larger
   uint8_t uiScale = defaultUiScale();
@@ -579,12 +579,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t dictionaryFontPointSize = 0;
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
-  // Show the title and author read from inside each book rather than its
-  // filename in the Library index. Not yet wired to a settings row or read by
-  // any activity: the Library index builder (lib/LibraryIndex/LibraryBuilder)
-  // takes this as an explicit readMetadata argument, so this field currently
-  // has no effect. Users can disable this once wired up to make index
-  // rebuilds skip EPUB parsing.
+  // Prefer embedded EPUB titles/authors in Library; disable for filename-only scans.
   uint8_t libraryUseMetadata = 1;
   // Hide file extensions in the file browser right-side value column (0 = show, 1 = hide)
   uint8_t hideFileExtension = 0;

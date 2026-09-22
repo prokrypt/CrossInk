@@ -227,6 +227,16 @@ bool LibraryIndexFile::readTitle(const ClixRecord& record, std::string& out) {
   return readBlobField(record, 1, out) && !out.empty();
 }
 
+bool LibraryIndexFile::readDisplayText(const ClixRecord& record, std::string& title, std::string& author) {
+  if (!readBlobField(record, 1, title) || !readBlobField(record, 0, author)) return false;
+  if (title.empty()) {
+    if (!readName(record, title)) return false;
+    const size_t dot = title.find_last_of('.');
+    if (dot != std::string::npos && dot != 0) title.resize(dot);
+  }
+  return true;
+}
+
 bool LibraryIndexFile::readSourceAuthor(const ClixRecord& record, std::string& out) {
   return readBlobField(record, 2, out);
 }

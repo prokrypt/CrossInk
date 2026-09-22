@@ -222,3 +222,31 @@ TEST(LibraryIndexFile, RejectsFolderRecordBeyondFolderBlob) {
   std::string path;
   EXPECT_FALSE(index.readPath(record, path));
 }
+
+TEST(LibraryIndexFile, DisplayTextAcceptsMissingMetadataAndRejectsMalformedFields) {
+  library::ClixHeader header{};
+  std::memcpy(header.magic, library::CLIX_MAGIC, sizeof(header.magic));
+  header.formatVersion = library::CLIX_FORMAT_VERSION;
+  header.foldVersion = library::CLIX_FOLD_VERSION;
+  header.bookCount = 1;
+  const auto blob = makeBlob(123, {'n', 'o', 't', 'e', '.', 't', 'x', 't', 0, 0, 0});
+  library::layoutSections(header, 0, blob.size());
+  std::vector<uint8_t> bytes(header.selfSize, 0);
+  std::memcpy(bytes.data(), &header, sizeof(header));
+  std::memcpy(bytes.data() + header.nameStart, blob.data(), blob.size());
+  library::ClixRecord record{};
+  record.nameLen = 8;
+  Storage.setFile("/library.clx", bytes);
+  library::LibraryIndexFile index;
+  ASSERT_TRUE(index.open("/library.clx"));
+  std::string title = "previous title";
+  std::string author = "previous author";
+  ASSERT_TRUE(index.readDisplayText(record, title, author));
+  EXPECT_EQ(title, "note");
+  EXPECT_TRUE(author.empty());
+  index.close();
+  bytes[header.nameStart + sizeof(uint64_t) + record.nameLen] = 255;
+  Storage.setFile("/library.clx", std::move(bytes));
+  ASSERT_TRUE(index.open("/library.clx"));
+  EXPECT_FALSE(index.readDisplayText(record, title, author));
+}

@@ -95,3 +95,5 @@ add_subdirectory(library_format)
 add_subdirectory(library_index_file)
 add_subdirectory(content_opf_parser)
 add_subdirectory(library_builder)
+
+add_subdirectory(library_recent_order)

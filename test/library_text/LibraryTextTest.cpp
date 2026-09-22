@@ -274,3 +274,17 @@ TEST(LibraryPath, RootDoesNotGainASecondSeparator) {
 TEST(LibraryPath, NestedFolderGetsOneSeparator) {
   EXPECT_EQ(library::joinLibraryPath("/Books", "book.epub"), "/Books/book.epub");
 }
+
+TEST(LibraryText, FoldIntoReusesStorageAndReplacesPreviousText) {
+  std::string output;
+  output.reserve(512);
+  const auto* storage = output.data();
+  library::foldInto("The Sundial — Shirley Jackson", output);
+  EXPECT_EQ(output, "the sundial shirley jackson");
+  EXPECT_EQ(output.data(), storage);
+  library::foldInto("L'Énéide", output, true);
+  EXPECT_EQ(output, "eneide");
+  EXPECT_EQ(output.data(), storage);
+  library::foldInto("", output);
+  EXPECT_TRUE(output.empty());
+}

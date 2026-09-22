@@ -85,6 +85,9 @@ class LibraryIndexFile {
   // longer carries "Title - Author".
   bool readAuthor(const ClixRecord& record, std::string& out);
   bool readTitle(const ClixRecord& record, std::string& out);
+  // Checked display text for browsing/search. Empty metadata is valid: use
+  // the filename stem for a missing title and leave a missing author blank.
+  bool readDisplayText(const ClixRecord& record, std::string& title, std::string& author);
   // Cleaned author spelling before the library-wide spelling vote. Empty is a
   // valid value, so success is independent of `out.empty()`.
   bool readSourceAuthor(const ClixRecord& record, std::string& out);

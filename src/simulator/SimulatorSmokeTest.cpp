@@ -3,6 +3,8 @@
 #include "SimulatorSmokeTest.h"
 
 #include <HalStorage.h>
+#include <LibraryBuilder.h>
+#include <LibraryIndexFile.h>
 #include <Logging.h>
 
 #include <algorithm>
@@ -35,7 +37,7 @@ enum class SmokeStep : uint8_t {
   Home,
   FileBrowser,
   FileBrowserSettings,
-  RecentBooks,
+  Library,
   Settings,
   ReaderOptions,
   ReaderMenu,
@@ -392,22 +394,31 @@ class SimulatorSmokeTest {
           break;
         }
 #endif
-        activityManager.goToRecentBooks();
-        queueStep("Recent Books", SmokeStep::RecentBooks);
+        activityManager.goToLibrary();
+        queueStep("Library", SmokeStep::Library);
         break;
 
       case SmokeStep::FileBrowserSettings:
-        activityManager.goToRecentBooks();
-        queueStep("Recent Books", SmokeStep::RecentBooks);
+        activityManager.goToLibrary();
+        queueStep("Library", SmokeStep::Library);
         break;
 
-      case SmokeStep::RecentBooks:
+      case SmokeStep::Library: {
+        // Rendering an error screen is not a successful Library smoke test.
+        // The script supplies an isolated card with at least one EPUB.
+        library::LibraryIndexFile shelf;
+        const bool hasFixture = std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK") != nullptr;
+        const bool readable = shelf.open(library::libraryIndexPath());
+        const bool populated = readable && (!hasFixture || shelf.bookCount() > 0);
+        shelf.close();
+        if (!populated) fail("Library did not publish a readable populated index");
         if (mappedInputManager.hasHomeKey()) {
           renderer.setOrientation(GfxRenderer::Orientation::LandscapeCounterClockwise);
         }
         activityManager.goToSettings();
         queueStep(mappedInputManager.hasHomeKey() ? "Settings landscape" : "Settings", SmokeStep::Settings);
         break;
+      }
 
       case SmokeStep::Settings:
         renderer.setOrientation(GfxRenderer::Orientation::Portrait);

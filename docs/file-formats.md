@@ -52,7 +52,7 @@ struct ImageFolderIndexRecord {
 ### Version 1
 
 `LibraryIndexFile` (`lib/LibraryIndex/LibraryIndexFile.{h,cpp}`) reads the
-`CLX1` on-disk index for the planned Library screen: one sorted, searchable
+`CLX1` on-disk index for the Library screen: one sorted, searchable
 snapshot of up to 4,096 books on the card, built by `LibraryBuilder` so paging,
 sorting, and searching the shelf cost a handful of seeks instead of a
 directory walk per screen. The format itself (`lib/LibraryIndex/LibraryFormat.h`)

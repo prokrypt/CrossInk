@@ -171,6 +171,12 @@ bool isSingleCodepoint(const std::string_view text) {
 
 std::string fold(const std::string_view text, const bool stripArticle) {
   std::string out;
+  foldInto(text, out, stripArticle);
+  return out;
+}
+
+void foldInto(const std::string_view text, std::string& out, const bool stripArticle) {
+  out.clear();
   out.reserve(text.size());
 
   const auto* cursor = reinterpret_cast<const unsigned char*>(text.data());
@@ -231,7 +237,6 @@ std::string fold(const std::string_view text, const bool stripArticle) {
       }
     }
   }
-  return out;
 }
 
 uint32_t foldedGroupInitial(const std::string_view folded) {

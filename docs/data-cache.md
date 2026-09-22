@@ -21,7 +21,8 @@ The main data directory is `.crosspoint` on the SD card. It stores render caches
 ├── settings.bin.bak        # Legacy binary settings file after migration, if present
 ├── state.json              # Last-opened book and sleep/session state
 ├── state.bin.bak           # Legacy binary state file after migration, if present
-├── recent.json             # Recent books list
+├── recent.json             # Reading history for Home and Library
+├── library.idx             # Library titles, authors, paths and sort indexes
 ├── recent.bin.bak          # Legacy binary recent-books file after migration, if present
 ├── wifi.json               # Saved Wi-Fi networks
 ├── opds.json               # Saved OPDS servers
@@ -83,3 +84,26 @@ All-time reading stats can also be backed up outside `.crosspoint` in:
 ```
 
 For binary file layout details, see [File Formats](./file-formats.md).
+
+## Library
+
+Library replaces the Recent Books screen. It reconciles the SD card on entry and
+through **Library > … > Refresh library**, reusing metadata for unchanged books.
+**Settings > Display > Use Book Metadata** selects embedded EPUB titles and
+authors; disabling it uses filenames. TXT, Markdown and XTC files use filename
+fallbacks. The existing CLX1 binary format is unchanged.
+
+**Date Added** uses the file modification time captured by the index, with its
+first-seen sequence breaking ties. **Recently Read** places the saved reading
+history first (up to 18 books), followed by books without history in date order.
+Reversing that sort reverses each section; it keeps books with history together.
+Search matches words in the title and author and retains the selected sort.
+Series metadata and series sorting are not part of this UI change.
+
+On button devices, Up from the first book reaches sort direction, then the sort
+method, then the Library options button. Confirm activates the selected control;
+holding Confirm on a book opens its actions. On touch devices, tap the sort
+method or direction icon directly and hold a book row for its actions.
+
+The Lyra Carousel snapshot cache advances to version 6 so cached home menus
+regenerate with the Library label. No manual EPUB cache reset is required.

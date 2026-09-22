@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Added
+
+- Library replaces Recent Books with a searchable book list, title and author metadata, and sorting by date added, title, author, or recently read.
+
 ### Fixed
 
 - Library indexing now preserves the previous shelf after SD-card directory errors and refreshes metadata when books are replaced.
