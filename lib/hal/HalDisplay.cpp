@@ -1,5 +1,6 @@
 #include <HalDisplay.h>
 #include <HalGPIO.h>
+#include <HalPowerManager.h>
 
 #include "HalSpiBus.h"
 
@@ -7,6 +8,13 @@
 HalDisplay display;
 
 #define SD_SPI_MISO 7
+
+namespace {
+// EInkDisplay::setBusyWaitHooks() only accepts plain function pointers, so these
+// forward to the powerManager singleton instead of capturing state.
+void onDisplayBusyWaitBegin() { powerManager.beginDisplayBusyWait(); }
+void onDisplayBusyWaitEnd() { powerManager.endDisplayBusyWait(); }
+}  // namespace
 
 HalDisplay::HalDisplay() : einkDisplay(EPD_SCLK, EPD_MOSI, EPD_CS, EPD_DC, EPD_RST, EPD_BUSY) {}
 
@@ -21,6 +29,9 @@ void HalDisplay::begin(bool seamless) {
   }
 
   einkDisplay.begin();
+  // Keep tickless idle from light-sleeping mid-refresh; safe even before
+  // powerManager.begin() runs since the hooks no-op until the lock exists.
+  einkDisplay.setBusyWaitHooks(&onDisplayBusyWaitBegin, &onDisplayBusyWaitEnd);
 
   if (seamless) {
     // Defuse the SDK's X3 _x3InitialFullSyncsRemaining counter (no-op on X4)
