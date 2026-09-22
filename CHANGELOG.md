@@ -1,3 +1,13 @@
+## [Unreleased]
+
+### Added
+
+### Changed
+
+### Fixed
+
+- OPDS downloads now use the first listed author for filename templates when a catalog also lists translators or other contributors.
+
 ## [v1.6.0] - 2026-09-21
 
 ### Added
