@@ -63,9 +63,9 @@ the previous index instead of publishing a partial shelf.
 
 Every section starts on a 512-byte boundary. Records are a fixed 128 bytes
 each, so record `k` always lives at `recordStart + 128*k` with no offset table
-to load first, and 32 records exactly fill a 4096-byte scan buffer. Two
-`uint16_t` permutation arrays (author order, then arrival order) let the
-Author and Recent tabs page in sorted order without re-sorting on every open;
+to load first, and 32 records exactly fill a 4096-byte scan buffer. Three
+`uint16_t` permutation arrays (surname order, first-name order, then arrival
+order) let the author and recent sorts page without re-sorting on every open;
 Title order needs no permutation because the record section is already
 title-sorted.
 
@@ -78,14 +78,13 @@ reconciliation instead: `openForReconciliation()` accepts stale sort/search
 keys so each book's `firstSeen` arrival order survives across the rebuild
 even though its fold and permutations are regenerated.
 
-This port starts CrossInk's own format/fold version numbering at `1`; there is
-no prior on-disk `CLX1` layout to migrate from, unlike upstream CrossPoint
-Reader's `2`/`3` (an artifact of their own pre-release iteration).
+CrossInk's format version is `2`; version `1` indexes rebuild automatically
+because they lack the first-name permutation. The fold version remains `1`.
 
 ```c++
 struct ClixHeader {            // 64 bytes, padded to the first 512-byte sector
     char magic[4];              // "CLX1"
-    u8 formatVersion;           // 1
+    u8 formatVersion;           // 2
     u8 foldVersion;             // 1
     u8 flags;                   // bit0: ranks degraded, bit1: dedup degraded
     u8 metadataEnabled;         // 0 or 1

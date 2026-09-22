@@ -2,7 +2,7 @@
 
 ### Added
 
-- Library replaces Recent Books with a searchable book list, title and author metadata, and sorting by date added, title, author, or recently read.
+- Library replaces Recent Books with a searchable book list, title and author metadata, and sorting by date added, title, author last name, author first name, or recently read.
 
 ### Fixed
 

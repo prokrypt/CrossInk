@@ -1042,6 +1042,44 @@ bool emitIndex(const char* folderStagePath, WalkState& st, const uint16_t* order
     const uint16_t ordinal = authorSort ? authorSort[k].ordinal : k;
     put(&ordinal, sizeof(ordinal));
   }
+  // Reuse the surname sort buffer for a second author permutation. There is no
+  // extra per-book allocation on C3; both orders use the canonical display name.
+  if (!ioFailed && authorSort && n > 1) {
+    std::string foldedAuthor;
+    foldedAuthor.reserve(STAGE_AUTHOR_BYTES);
+    const auto loadFirstNameSegment = [&](const uint16_t ordinal, const size_t offset, char* segment) {
+      const uint16_t src = order[canonicalFrom ? canonicalFrom[ordinal] : ordinal];
+      uint8_t authorLen = 0;
+      char author[STAGE_AUTHOR_BYTES] = {};
+      if (!readStageAt(static_cast<uint64_t>(src) * STAGE_STRIDE + offsetof(StagedEntry, authorLen), &authorLen,
+                       sizeof(authorLen)))
+        return false;
+      if (authorLen > 0 && !readStageAt(static_cast<uint64_t>(src) * STAGE_STRIDE + offsetof(StagedEntry, author),
+                                        author, std::min<size_t>(authorLen, sizeof(author))))
+        return false;
+      foldInto(std::string_view(author, authorLen), foldedAuthor);
+      if (foldedAuthor.empty()) {
+        memset(segment, 0xFF, sizeof(SortKey::key));
+      } else {
+        memset(segment, 0, sizeof(SortKey::key));
+        if (offset < foldedAuthor.size())
+          memcpy(segment, foldedAuthor.data() + offset, std::min(foldedAuthor.size() - offset, sizeof(SortKey::key)));
+      }
+      return true;
+    };
+    for (uint16_t i = 0; i < n && !ioFailed; i++) {
+      serviceBuilder(serviceUnits);
+      authorSort[i].ordinal = i;
+      loadFirstNameSegment(i, 0, authorSort[i].key);
+    }
+    if (!ioFailed && !sortKeysWithFullTies(authorSort.get(), n, STAGE_AUTHOR_BYTES, loadFirstNameSegment, serviceUnits))
+      ioFailed = true;
+  }
+  for (uint16_t k = 0; k < n; k++) {
+    serviceBuilder(serviceUnits);
+    const uint16_t ordinal = authorSort && !stats.ranksDegraded ? authorSort[k].ordinal : k;
+    put(&ordinal, sizeof(ordinal));
+  }
   for (uint16_t k = 0; k < n; k++) {
     serviceBuilder(serviceUnits);
     const uint16_t ordinal = arrivalOrder[k];

@@ -21,6 +21,7 @@
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "components/icons/libraryIcons.h"
+#include "components/icons/listIcons.h"
 
 namespace fui = freeink::ui;
 
@@ -114,8 +115,10 @@ library::SortOrder LibraryActivity::indexOrder() const {
   switch (sort) {
     case Sort::Title:
       return descending ? library::SortOrder::TitleDesc : library::SortOrder::TitleAsc;
-    case Sort::Author:
+    case Sort::AuthorLast:
       return descending ? library::SortOrder::AuthorDesc : library::SortOrder::AuthorAsc;
+    case Sort::AuthorFirst:
+      return descending ? library::SortOrder::AuthorFirstDesc : library::SortOrder::AuthorFirstAsc;
     case Sort::RecentlyRead:
       return library::SortOrder::RecentAsc;
     case Sort::DateAdded:
@@ -128,8 +131,10 @@ const char* LibraryActivity::sortLabel() const {
   switch (sort) {
     case Sort::Title:
       return tr(STR_LIBRARY_TITLE);
-    case Sort::Author:
-      return tr(STR_LIBRARY_AUTHOR);
+    case Sort::AuthorLast:
+      return tr(STR_LIBRARY_AUTHOR_LAST_NAME);
+    case Sort::AuthorFirst:
+      return tr(STR_LIBRARY_AUTHOR_FIRST_NAME);
     case Sort::RecentlyRead:
       return tr(STR_LIBRARY_RECENTLY_READ);
     case Sort::DateAdded:
@@ -208,7 +213,7 @@ void LibraryActivity::applyFilter() {
 }
 
 void LibraryActivity::resetViewport() {
-  selection = rowCount() ? CONTROL_COUNT : 1;
+  selection = rowCount() ? CONTROL_COUNT : 2;
   topIndex = 0;
   uiReady = false;
 }
@@ -245,19 +250,18 @@ void LibraryActivity::openBook(const int row) {
 }
 
 void LibraryActivity::openSortPicker() {
-  std::vector<std::string> options{tr(STR_LIBRARY_DATE_ADDED), tr(STR_LIBRARY_TITLE), tr(STR_LIBRARY_AUTHOR),
-                                   tr(STR_LIBRARY_RECENTLY_READ)};
-  openDialog(
-      makeUniqueNoThrow<OptionSelectionActivity>(renderer, mappedInput, "LibrarySort", StrId::STR_LIBRARY_SORT_BY,
-                                                 std::move(options), static_cast<uint8_t>(sort), false, true),
-      [this](const ActivityResult& result) {
-        const auto* selected = std::get_if<OptionSelectionResult>(&result.data);
-        if (result.isCancelled || !selected || selected->index > static_cast<uint8_t>(Sort::RecentlyRead)) return;
-        sort = static_cast<Sort>(selected->index);
-        descending = sort == Sort::DateAdded || sort == Sort::RecentlyRead;
-        applyFilter();
-        resetViewport();
-      });
+  static constexpr StrId choices[] = {StrId::STR_LIBRARY_DATE_ADDED, StrId::STR_LIBRARY_TITLE,
+                                      StrId::STR_LIBRARY_AUTHOR_LAST_NAME, StrId::STR_LIBRARY_AUTHOR_FIRST_NAME,
+                                      StrId::STR_LIBRARY_RECENTLY_READ};
+  sortPopup.setDismissOnOutsideTouchDown(true);
+  sortPopup.show(StrId::STR_LIBRARY_SORT_BY, choices, 5, static_cast<int>(sort), [this](const int selected) {
+    if (selected < 0 || selected > static_cast<int>(Sort::RecentlyRead)) return;
+    sort = static_cast<Sort>(selected);
+    descending = sort == Sort::DateAdded || sort == Sort::RecentlyRead;
+    applyFilter();
+    resetViewport();
+  });
+  requestUpdate();
 }
 
 void LibraryActivity::openSearch() {
@@ -272,26 +276,18 @@ void LibraryActivity::openSearch() {
       });
 }
 
-void LibraryActivity::openOptions() {
-  std::vector<std::string> options{tr(STR_SEARCH), tr(STR_LIBRARY_RESCAN)};
-  openDialog(makeUniqueNoThrow<OptionSelectionActivity>(renderer, mappedInput, "LibraryOptions", StrId::STR_LIBRARY,
-                                                        std::move(options), 0, false, true),
-             [this](const ActivityResult& result) {
-               const auto* selected = std::get_if<OptionSelectionResult>(&result.data);
-               if (result.isCancelled || !selected) return;
-               if (selected->index == 0) openSearch();
-               if (selected->index == 1) {
-                 rebuildIndex();
-                 resetViewport();
-               }
-             });
+void LibraryActivity::refreshLibrary() {
+  rebuildIndex();
+  resetViewport();
+  requestUpdate();
 }
 
 void LibraryActivity::activateControl(const int control) {
   app.clearTapFlash();
-  if (control == 0) openOptions();
-  if (control == 1) openSortPicker();
-  if (control == 2) {
+  if (control == 0) openSearch();
+  if (control == 1) refreshLibrary();
+  if (control == 2) openSortPicker();
+  if (control == 3) {
     descending = !descending;
     applyFilter();
     topIndex = 0;
@@ -317,6 +313,10 @@ void LibraryActivity::onControlEvent(const fui::ActionEvent& event, void* user) 
 
 void LibraryActivity::loop() {
   RenderLock lock;
+  if (sortPopup.isActive()) {
+    sortPopup.handleInput(mappedInput, [this] { requestUpdate(); });
+    return;
+  }
   if (pendingCacheDeletedFeedback && millis() - cacheDeletedFeedbackShowTime >= ACTION_FEEDBACK_MS) {
     pendingCacheDeletedFeedback = false;
     requestUpdate();
@@ -341,7 +341,7 @@ void LibraryActivity::loop() {
     if (selection >= CONTROL_COUNT && rowCount() > 0)
       showBookActionMenu(selection - CONTROL_COUNT, true);
     else
-      openOptions();
+      activateControl(selection);
     return;
   }
   if (uiReady) {
@@ -415,10 +415,13 @@ void LibraryActivity::buildSortHeader(UiApp::ScreenType& screen) {
   labelStyle.bold = true;
   const int16_t labelWidth = std::min<int16_t>(
       band.width / 3, uiTarget.measureText(labelStyle.font, tr(STR_LIBRARY_SORT_BY), labelStyle).width);
-  const int16_t iconWidth = 32;
+  // The 32px glyph sits inside a wider selection box with even side padding.
+  const int16_t iconWidth = 48;
   const int16_t methodWidth = std::min<int16_t>(
       band.width - labelWidth - iconWidth - 4 * margin,
-      uiTarget.measureText(screen.theme().bodyText.font, sortLabel(), screen.theme().bodyText).width + 12);
+      std::max<int16_t>(
+          (sort == Sort::AuthorLast || sort == Sort::AuthorFirst) ? 220 : 0,
+          uiTarget.measureText(screen.theme().bodyText.font, sortLabel(), screen.theme().bodyText).width + 20));
   const int16_t gap = std::max<int16_t>(0, (band.width - 2 * margin - labelWidth - methodWidth - iconWidth) / 2);
   const fui::Rect label{static_cast<int16_t>(band.x + margin), band.y, labelWidth, band.height};
   const fui::Rect method{static_cast<int16_t>(label.right() + gap), band.y, methodWidth, band.height};
@@ -431,17 +434,17 @@ void LibraryActivity::buildSortHeader(UiApp::ScreenType& screen) {
   button.text = screen.theme().bodyText;
   button.styles = fui::plainStyles();
   button.styles.selected = screen.theme().button.selected;
-  button.state = selection == 1 ? fui::StateSelected : fui::StateNormal;
+  button.state = selection == 2 ? fui::StateSelected : fui::StateNormal;
   screen.button(button, method);
   button.label = nullptr;
   button.icon = fui::bitmapFromIcon(descending ? icon_arrow_down_wide_narrow_32 : icon_arrow_up_wide_narrow_32);
-  button.state = selection == 2 ? fui::StateSelected : fui::StateNormal;
+  button.state = selection == 3 ? fui::StateSelected : fui::StateNormal;
   screen.button(button, direction);
   const int16_t split = static_cast<int16_t>((method.right() + direction.x) / 2);
-  screen.frame().hit(fui::Rect{band.x, band.y, static_cast<int16_t>(split - band.x), band.height}, ACTION_CONTROL, 1,
+  screen.frame().hit(fui::Rect{band.x, band.y, static_cast<int16_t>(split - band.x), band.height}, ACTION_CONTROL, 2,
                      fui::InputTouch);
   screen.frame().hit(fui::Rect{split, band.y, static_cast<int16_t>(band.right() - split), band.height}, ACTION_CONTROL,
-                     2, fui::InputTouch);
+                     3, fui::InputTouch);
   uiTarget.fill(fui::Rect{band.x, band.y, band.width, 1}, fui::Paint::solid(fui::Color::Black));
   uiTarget.fill(fui::Rect{band.x, static_cast<int16_t>(band.bottom() - 1), band.width, 1},
                 fui::Paint::solid(fui::Color::Black));
@@ -456,21 +459,27 @@ void LibraryActivity::buildListScreen(UiApp::ScreenType& screen) {
   screen.setContentMarginFromScreen(fui::Insets{headerBottom, static_cast<int16_t>(bounds[1]),
                                                 static_cast<int16_t>(metrics.buttonHintsHeight + bounds[2]),
                                                 static_cast<int16_t>(bounds[3])});
-  // Header options are also the first stop in the button navigation ring.
+  // Search and refresh are the first two stops in the button navigation ring.
   const int16_t controlSize = HEADER_CONTROL_SIZE;
   const auto header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
-  fui::ButtonProps options;
-  options.icon = fui::bitmapFromIcon(icon_ellipsis_32);
-  options.action = ACTION_CONTROL;
-  options.value = 0;
-  options.inputMask = fui::InputTouch;
-  options.styles = fui::plainStyles();
-  options.styles.selected = screen.theme().button.selected;
-  options.state = selection == 0 ? fui::StateSelected : fui::StateNormal;
-  screen.button(
-      options,
-      fui::Rect{static_cast<int16_t>(renderer.getScreenWidth() - bounds[1] - controlSize - headerControlRightInset()),
-                static_cast<int16_t>(header.y + header.height - controlSize), controlSize, controlSize});
+  const int16_t right = static_cast<int16_t>(renderer.getScreenWidth() - bounds[1] - headerControlRightInset());
+  fui::ButtonProps action;
+  action.action = ACTION_CONTROL;
+  action.inputMask = fui::InputTouch;
+  action.styles = fui::plainStyles();
+  action.styles.selected = screen.theme().button.selected;
+  action.icon = fui::bitmapFromIcon(icon_search_32);
+  action.value = 0;
+  action.state = selection == 0 ? fui::StateSelected : fui::StateNormal;
+  screen.button(action,
+                fui::Rect{static_cast<int16_t>(right - controlSize),
+                          static_cast<int16_t>(header.y + header.height - controlSize), controlSize, controlSize});
+  action.icon = fui::bitmapFromIcon(icon_refresh_cw_32);
+  action.value = 1;
+  action.state = selection == 1 ? fui::StateSelected : fui::StateNormal;
+  screen.button(action,
+                fui::Rect{static_cast<int16_t>(right - 2 * controlSize),
+                          static_cast<int16_t>(header.y + header.height - controlSize), controlSize, controlSize});
   buildSortHeader(screen);
   if (scanFailed || index.ranksDegraded() || filterFailed) {
     const auto warning = screen.take(fui::LayoutAnchor::Top, uiTarget.lineHeight(screen.theme().smallText.font) + 8);
@@ -514,12 +523,13 @@ void LibraryActivity::render(RenderLock&&) {
   const auto header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
   if (mappedInput.hasTouchHardware())
     TouchHeaderBackButton::draw(renderer, uiTarget, header, tr(STR_LIBRARY), false,
-                                HEADER_CONTROL_SIZE + headerControlRightInset() + 10);
+                                2 * HEADER_CONTROL_SIZE + headerControlRightInset() + 10);
   else
     GUI.drawHeader(renderer, header, tr(STR_LIBRARY));
   uiReady = false;
   app.render();
   uiReady = true;
+  if (sortPopup.processRender(renderer, mappedInput)) return;
   const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(query.empty() ? tr(STR_HOME) : tr(STR_BACK)),
                                             selection < CONTROL_COUNT ? tr(STR_SELECT) : tr(STR_OPEN), tr(STR_DIR_UP),
                                             tr(STR_DIR_DOWN));

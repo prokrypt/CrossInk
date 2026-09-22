@@ -77,6 +77,13 @@ uint16_t LibraryIndexFile::ordinalForRow(const SortOrder order, const uint16_t r
       uint16_t ordinal = NONE;
       return readAt(authorOrderOffset(head, k), &ordinal, sizeof(ordinal)) && ordinal < head.bookCount ? ordinal : NONE;
     }
+    case SortOrder::AuthorFirstAsc:
+    case SortOrder::AuthorFirstDesc: {
+      const uint16_t k = order == SortOrder::AuthorFirstAsc ? row : static_cast<uint16_t>(head.bookCount - 1 - row);
+      uint16_t ordinal = NONE;
+      return readAt(firstNameOrderOffset(head, k), &ordinal, sizeof(ordinal)) && ordinal < head.bookCount ? ordinal
+                                                                                                          : NONE;
+    }
     case SortOrder::RecentAsc:
     case SortOrder::RecentDesc: {
       // arrivalOrder runs oldest first, so both directions share one on-disk

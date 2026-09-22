@@ -88,22 +88,25 @@ For binary file layout details, see [File Formats](./file-formats.md).
 ## Library
 
 Library replaces the Recent Books screen. It reconciles the SD card on entry and
-through **Library > … > Refresh library**, reusing metadata for unchanged books.
+through the refresh icon in the Library header, reusing metadata for unchanged books.
 **Settings > Display > Use Book Metadata** selects embedded EPUB titles and
 authors; disabling it uses filenames. TXT, Markdown and XTC files use filename
-fallbacks. The existing CLX1 binary format is unchanged.
+fallbacks. CLX1 version 2 adds a first-name author permutation; older Library
+indexes rebuild automatically when Library opens.
 
 **Date Added** uses the file modification time captured by the index, with its
 first-seen sequence breaking ties. **Recently Read** places the saved reading
 history first (up to 18 books), followed by books without history in date order.
 Reversing that sort reverses each section; it keeps books with history together.
 Search matches words in the title and author and retains the selected sort.
+Author (Last Name) sorts by the final word of the displayed author, while
+Author (First Name) sorts by the displayed name from its beginning.
 Series metadata and series sorting are not part of this UI change.
 
-On button devices, Up from the first book reaches sort direction, then the sort
-method, then the Library options button. Confirm activates the selected control;
-holding Confirm on a book opens its actions. On touch devices, tap the sort
-method or direction icon directly and hold a book row for its actions.
+On button devices, Up from the first book reaches sort direction, sort method,
+refresh, and search. Confirm activates the selected control; holding Confirm on
+a book opens its actions. On touch devices, tap the header icons or sort controls
+directly and hold a book row for its actions. The sort method opens a modal list.
 
 The Lyra Carousel snapshot cache advances to version 6 so cached home menus
 regenerate with the Library label. No manual EPUB cache reset is required.

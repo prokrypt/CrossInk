@@ -323,6 +323,36 @@ TEST_F(LibraryBuilderTest, SortsPastTheFirstTwelveTitleAndSurnameBytes) {
   EXPECT_EQ(pathAt(index, SortOrder::AuthorAsc, 1), "/a.epub");
 }
 
+TEST_F(LibraryBuilderTest, FirstNameAndLastNameAuthorOrdersDiffer) {
+  fake::add("/c.epub");
+  bookMetadata["/a.epub"].author = "Zoe Adams";
+  bookMetadata["/b.epub"].author = "Amy Young";
+  bookMetadata["/c.epub"].author = "Beth Moore";
+  initial();
+
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  EXPECT_EQ(pathAt(index, SortOrder::AuthorAsc, 0), "/a.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::AuthorAsc, 1), "/c.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::AuthorAsc, 2), "/b.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::AuthorFirstAsc, 0), "/b.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::AuthorFirstAsc, 1), "/c.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::AuthorFirstAsc, 2), "/a.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::AuthorFirstDesc, 0), "/a.epub");
+}
+
+TEST_F(LibraryBuilderTest, FirstNameSortRefinesLongSharedPrefixes) {
+  const std::string prefix(30, 'Q');
+  bookMetadata["/a.epub"].author = prefix + " Zoe";
+  bookMetadata["/b.epub"].author = prefix + " Amy";
+  initial();
+
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  EXPECT_EQ(pathAt(index, SortOrder::AuthorFirstAsc, 0), "/b.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::AuthorFirstAsc, 1), "/a.epub");
+}
+
 TEST_F(LibraryBuilderTest, EqualBasenamesInDifferentFoldersReconcileIndependently) {
   fake::add("/one/same.epub");
   fake::add("/two/same.epub");
@@ -512,6 +542,8 @@ TEST_F(LibraryBuilderTest, LibrariesPastOldGateAndAtFormatCeilingKeepAllOrders) 
       EXPECT_EQ(pathAt(index, SortOrder::TitleAsc, row), "/book" + numbered("", count - 1 - row) + ".epub")
           << count << ':' << row;
       EXPECT_EQ(pathAt(index, SortOrder::AuthorAsc, row), "/book" + numbered("", authorOrder[row]) + ".epub")
+          << count << ':' << row;
+      EXPECT_EQ(pathAt(index, SortOrder::AuthorFirstAsc, row), "/book" + numbered("", authorOrder[row]) + ".epub")
           << count << ':' << row;
     }
   }

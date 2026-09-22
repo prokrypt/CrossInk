@@ -9,6 +9,7 @@
 
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
+#include "components/OptionPopup.h"
 #include "util/ButtonNavigator.h"
 
 class LibraryActivity final : public Activity {
@@ -18,16 +19,18 @@ class LibraryActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  bool blocksGlobalInput() const override { return sortPopup.isActive(); }
 
  private:
-  enum class Sort : uint8_t { DateAdded, Title, Author, RecentlyRead };
-  // Ring: options, sort method, direction, then the book rows. All controls are
+  enum class Sort : uint8_t { DateAdded, Title, AuthorLast, AuthorFirst, RecentlyRead };
+  // Ring: search, refresh, sort method, direction, then the book rows. All controls are
   // reachable on button-only devices as well as through SDK touch routing.
-  static constexpr int CONTROL_COUNT = 3;
+  static constexpr int CONTROL_COUNT = 4;
   using UiApp = freeink::ui::FreeInkApp<32, 4>;
   freeink::ui::GfxRendererTarget uiTarget;
   UiApp app;
   ButtonNavigator buttonNavigator;
+  OptionPopup sortPopup;
   library::LibraryIndexFile index;
   Sort sort = Sort::DateAdded;
   bool descending = true;
@@ -69,7 +72,7 @@ class LibraryActivity final : public Activity {
   void reloadAfterBookAction();
   void openBook(int row);
   void openSortPicker();
-  void openOptions();
+  void refreshLibrary();
   void openSearch();
   void activateControl(int control);
   // Owns the allocation-failure check and render lock for every child result.

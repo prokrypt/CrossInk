@@ -11,7 +11,7 @@
 //   header        64 bytes of struct, padded to 512
 //   folders       F variable-length records; the id of a folder IS its ordinal
 //   records       N x exactly 128 bytes, in folded-title order
-//   permutations  authorOrder[N] then arrivalOrder[N], both u16
+//   permutations  authorOrder[N], firstNameOrder[N], arrivalOrder[N], all u16
 //   names         path hash, filename, display author, title, and source author blobs
 //
 // The fixed 128-byte record stride is the load-bearing choice: record k lives at
@@ -28,7 +28,7 @@ namespace library {
 inline constexpr char CLIX_MAGIC[4] = {'C', 'L', 'X', '1'};
 // Bumping this is the whole migration: an index from an older version fails
 // validation and is rebuilt. No previous format is accepted.
-inline constexpr uint8_t CLIX_FORMAT_VERSION = 1;
+inline constexpr uint8_t CLIX_FORMAT_VERSION = 2;
 
 // Bump when the fold, the article table, or a permutation's sort key changes.
 // Forces fold and ranks to be rebuilt while firstSeen values are preserved, so
@@ -123,7 +123,7 @@ inline void layoutSections(ClixHeader& h, const uint32_t folderBytes, const uint
   h.folderLen = folderBytes;
   h.recordStart = alignUp(h.folderStart + folderBytes);
   h.permStart = alignUp(h.recordStart + static_cast<uint32_t>(h.bookCount) * sizeof(ClixRecord));
-  h.nameStart = alignUp(h.permStart + static_cast<uint32_t>(h.bookCount) * 2u * sizeof(uint16_t));
+  h.nameStart = alignUp(h.permStart + static_cast<uint32_t>(h.bookCount) * 3u * sizeof(uint16_t));
   h.nameLen = nameBytes;
   h.selfSize = h.nameStart + nameBytes;
 }
@@ -134,8 +134,11 @@ inline uint32_t recordOffset(const ClixHeader& h, const uint16_t ordinal) {
 inline uint32_t authorOrderOffset(const ClixHeader& h, const uint16_t k) {
   return h.permStart + static_cast<uint32_t>(k) * sizeof(uint16_t);
 }
-inline uint32_t arrivalOrderOffset(const ClixHeader& h, const uint16_t k) {
+inline uint32_t firstNameOrderOffset(const ClixHeader& h, const uint16_t k) {
   return h.permStart + (static_cast<uint32_t>(h.bookCount) + k) * sizeof(uint16_t);
+}
+inline uint32_t arrivalOrderOffset(const ClixHeader& h, const uint16_t k) {
+  return h.permStart + (static_cast<uint32_t>(h.bookCount) * 2u + k) * sizeof(uint16_t);
 }
 
 // Why a loaded index was rejected. Reported rather than swallowed so a rebuild

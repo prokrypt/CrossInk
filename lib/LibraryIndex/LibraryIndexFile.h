@@ -25,6 +25,8 @@ enum class SortOrder : uint8_t {
   TitleDesc,
   AuthorAsc,
   AuthorDesc,
+  AuthorFirstAsc,
+  AuthorFirstDesc,
 };
 
 // One book to locate in the index: the complete-path hash (clixPathHash) is
