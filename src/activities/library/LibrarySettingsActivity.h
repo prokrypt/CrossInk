@@ -19,6 +19,7 @@ class LibrarySettingsActivity final : public Activity {
   UiApp app;
   ButtonNavigator buttonNavigator;
   int selection = 0;
+  bool showSelection = true;
   bool uiReady = false;
   bool ignoreConfirmRelease = false;
 

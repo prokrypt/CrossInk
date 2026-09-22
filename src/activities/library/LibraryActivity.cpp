@@ -241,6 +241,7 @@ void LibraryActivity::applyFilter() {
 
 void LibraryActivity::resetViewport() {
   selection = rowCount() ? CONTROL_COUNT : 3;
+  showSelection = !mappedInput.hasTouchHardware();
   topIndex = 0;
   uiReady = false;
 }
@@ -339,6 +340,7 @@ void LibraryActivity::onRowEvent(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<LibraryActivity*>(user);
   if (event.value < 0 || event.value >= self->rowCount()) return;
   self->selection = event.value + CONTROL_COUNT;
+  self->showSelection = false;
   if (event.longPress)
     self->showBookActionMenu(event.value);
   else
@@ -348,6 +350,7 @@ void LibraryActivity::onRowEvent(const fui::ActionEvent& event, void* user) {
 void LibraryActivity::onControlEvent(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<LibraryActivity*>(user);
   self->selection = event.value;
+  self->showSelection = false;
   self->activateControl(event.value);
 }
 
@@ -411,6 +414,7 @@ void LibraryActivity::loop() {
   }
   const auto swipe = mappedInput.wasSwipe();
   if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
+    if (mappedInput.hasTouchHardware()) showSelection = false;
     topIndex = scrollListBy(topIndex, swipe == MappedInputManager::SwipeDir::Up ? visibleRows : -visibleRows,
                             visibleRows, rowCount());
     requestUpdate();
@@ -418,6 +422,11 @@ void LibraryActivity::loop() {
   }
   const int count = rowCount() + CONTROL_COUNT;
   const auto move = [this](const int next) {
+    if (!showSelection) {
+      showSelection = true;
+      requestUpdate();
+      return;
+    }
     selection = next;
     if (selection >= CONTROL_COUNT) {
       topIndex = followListSelection(selection - CONTROL_COUNT, topIndex, visibleRows, rowCount());
@@ -500,11 +509,11 @@ void LibraryActivity::buildSortHeader(UiApp::ScreenType& screen) {
   button.text = screen.theme().bodyText;
   button.styles = fui::plainStyles();
   button.styles.selected = screen.theme().button.selected;
-  button.state = selection == 3 ? fui::StateSelected : fui::StateNormal;
+  button.state = showSelection && selection == 3 ? fui::StateSelected : fui::StateNormal;
   screen.button(button, method);
   button.label = nullptr;
   button.icon = fui::bitmapFromIcon(descending ? icon_arrow_down_wide_narrow_32 : icon_arrow_up_wide_narrow_32);
-  button.state = selection == 4 ? fui::StateSelected : fui::StateNormal;
+  button.state = showSelection && selection == 4 ? fui::StateSelected : fui::StateNormal;
   screen.button(button, direction);
   const int16_t split = static_cast<int16_t>((method.right() + direction.x) / 2);
   screen.frame().hit(fui::Rect{band.x, band.y, static_cast<int16_t>(split - band.x), band.height}, ACTION_CONTROL, 3,
@@ -536,19 +545,19 @@ void LibraryActivity::buildListScreen(UiApp::ScreenType& screen) {
   action.styles.selected = screen.theme().button.selected;
   action.icon = fui::bitmapFromIcon(icon_refresh_cw_32);
   action.value = 0;
-  action.state = selection == 0 ? fui::StateSelected : fui::StateNormal;
+  action.state = showSelection && selection == 0 ? fui::StateSelected : fui::StateNormal;
   screen.button(action,
                 fui::Rect{static_cast<int16_t>(right - 3 * controlSize - 2 * HEADER_CONTROL_GAP),
                           static_cast<int16_t>(header.y + header.height - controlSize), controlSize, controlSize});
   action.icon = fui::bitmapFromIcon(icon_search_32);
   action.value = 1;
-  action.state = selection == 1 ? fui::StateSelected : fui::StateNormal;
+  action.state = showSelection && selection == 1 ? fui::StateSelected : fui::StateNormal;
   screen.button(action,
                 fui::Rect{static_cast<int16_t>(right - 2 * controlSize - HEADER_CONTROL_GAP),
                           static_cast<int16_t>(header.y + header.height - controlSize), controlSize, controlSize});
   action.icon = fui::bitmapFromIcon(icon_ellipsis_vertical_32);
   action.value = 2;
-  action.state = selection == 2 ? fui::StateSelected : fui::StateNormal;
+  action.state = showSelection && selection == 2 ? fui::StateSelected : fui::StateNormal;
   screen.button(action,
                 fui::Rect{static_cast<int16_t>(right - controlSize),
                           static_cast<int16_t>(header.y + header.height - controlSize), controlSize, controlSize});
@@ -577,7 +586,7 @@ void LibraryActivity::buildListScreen(UiApp::ScreenType& screen) {
   props.rowProvider = &LibraryActivity::provideRow;
   props.rowProviderCtx = this;
   props.count = static_cast<uint16_t>(rowCount());
-  props.selectedIndex = static_cast<int16_t>(selection - CONTROL_COUNT);
+  props.selectedIndex = showSelection ? static_cast<int16_t>(selection - CONTROL_COUNT) : -1;
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch | fui::InputLongPress;
   props.iconSize = 28;

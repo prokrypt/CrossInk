@@ -20,6 +20,7 @@ LibrarySettingsActivity::LibrarySettingsActivity(GfxRenderer& renderer, MappedIn
 
 void LibrarySettingsActivity::onEnter() {
   Activity::onEnter();
+  showSelection = !mappedInput.hasTouchHardware();
   applySharedUiTheme(app, uiTarget);
   app.on(ACTION_ROW, &LibrarySettingsActivity::onRow, this);
   app.setScreen(&LibrarySettingsActivity::screen, this);
@@ -55,6 +56,8 @@ void LibrarySettingsActivity::onRow(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<LibrarySettingsActivity*>(user);
   if (event.value < 0 || event.value >= ROW_COUNT) return;
   self->selection = event.value;
+  self->showSelection = false;
+  self->app.clearTapFlash();
   self->toggle(event.value);
 }
 
@@ -82,6 +85,11 @@ void LibrarySettingsActivity::loop() {
     return;
   }
   const auto move = [this](int next) {
+    if (!showSelection) {
+      showSelection = true;
+      requestUpdate();
+      return;
+    }
     selection = next;
     requestUpdate();
   };
@@ -99,9 +107,10 @@ void LibrarySettingsActivity::buildScreen(UiApp::ScreenType& screen) {
   renderer.getOrientedViewableTRBL(&bounds[0], &bounds[1], &bounds[2], &bounds[3]);
   const int16_t headerBottom =
       static_cast<int16_t>(metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput));
-  screen.setContentMarginFromScreen(fui::Insets{headerBottom, static_cast<int16_t>(bounds[1]),
+  const int16_t sidePadding = static_cast<int16_t>(metrics.contentSidePadding);
+  screen.setContentMarginFromScreen(fui::Insets{headerBottom, static_cast<int16_t>(bounds[1] + sidePadding),
                                                 static_cast<int16_t>(metrics.buttonHintsHeight + bounds[2]),
-                                                static_cast<int16_t>(bounds[3])});
+                                                static_cast<int16_t>(bounds[3] + sidePadding)});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
   fui::SettingRowProps row;
   row.label = tr(STR_LIBRARY_LIST_VIEW);
@@ -109,7 +118,7 @@ void LibrarySettingsActivity::buildScreen(UiApp::ScreenType& screen) {
   row.action = ACTION_ROW;
   row.valueId = 0;
   row.labelText = row.valueText = screen.theme().bodyText;
-  row.state = selection == 0 ? fui::StateSelected : fui::StateNormal;
+  row.state = showSelection && selection == 0 ? fui::StateSelected : fui::StateNormal;
   screen.settingRow(row, 44);
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
   const auto heading = screen.take(fui::LayoutAnchor::Top, 44);
@@ -126,7 +135,7 @@ void LibrarySettingsActivity::buildScreen(UiApp::ScreenType& screen) {
     toggle.row.action = ACTION_ROW;
     toggle.row.valueId = static_cast<int16_t>(i + 1);
     toggle.row.labelText = screen.theme().bodyText;
-    toggle.row.state = selection == i + 1 ? fui::StateSelected : fui::StateNormal;
+    toggle.row.state = showSelection && selection == i + 1 ? fui::StateSelected : fui::StateNormal;
     toggle.checked = checks[i];
     screen.toggleRow(toggle, 44);
   }

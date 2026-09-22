@@ -104,6 +104,7 @@ opens a compact/expanded list toggle and independent visibility switches for
 EPUB, XTC/XTCH, TXT, and Markdown files. Expanded Title and Author sorts show
 alphabetic headings; hidden file types remain indexed and can be shown again
 without a rescan. Markdown books open as plain text in the TXT reader.
+Expanded is the default for new Library preferences; a saved Compact choice remains respected.
 Author (Last Name) sorts by the final word of the displayed author, while
 Author (First Name) sorts by the displayed name from its beginning.
 Series metadata and series sorting are not part of this UI change.
@@ -113,5 +114,5 @@ settings, search, and refresh. Confirm activates the selected control; holding C
 a book opens its actions. On touch devices, tap the header icons or sort controls
 directly and hold a book row for its actions. The sort method opens a modal list.
 
-The Lyra Carousel snapshot cache advances to version 6 so cached home menus
-regenerate with the Library label. No manual EPUB cache reset is required.
+The Lyra Carousel snapshot cache advances to version 7 so cached home menus
+regenerate with the Library label and landmark icon. No manual EPUB cache reset is required.

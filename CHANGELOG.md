@@ -8,6 +8,7 @@
 ### Changed
 
 - Library remembers the selected sort and direction, and its header icons have more room for touch controls.
+- Library now opens in Expanded view by default, leaves touch rows unselected until used, and has roomier settings rows and a distinct home icon.
 
 ### Fixed
 

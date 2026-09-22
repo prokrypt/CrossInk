@@ -583,7 +583,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t libraryUseMetadata = 1;
   uint8_t librarySortMethod = 0;
   uint8_t librarySortDescending = 1;
-  uint8_t libraryListExpanded = 0;
+  uint8_t libraryListExpanded = 1;
   uint8_t libraryShowEpub = 1;
   uint8_t libraryShowXtc = 1;
   uint8_t libraryShowTxt = 1;
