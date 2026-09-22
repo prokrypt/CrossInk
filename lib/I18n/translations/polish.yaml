@@ -554,7 +554,7 @@ STR_PREV_PAGE: "Poprzednia strona"
 
 STR_LIBRARY_SORT_BY: "Sortuj według:"
 STR_LIBRARY_DATE_ADDED: "Data dodania"
-STR_LIBRARY_RECENTLY_READ: "Ostatnio czytane"
+STR_LIBRARY_RECENTLY_OPENED: "Ostatnio otwarte"
 STR_LIBRARY_UNAVAILABLE: "Książka niedostępna"
 STR_LIBRARY_SEARCH_FAILED: "Wyszukiwanie niedostępne"
 STR_LIBRARY: "Biblioteka"

@@ -721,7 +721,7 @@ STR_TAP_HIDE_STATUS_BAR: "Klepnutím skrýt stavový řádek"
 
 STR_LIBRARY_SORT_BY: "Řadit podle:"
 STR_LIBRARY_DATE_ADDED: "Datum přidání"
-STR_LIBRARY_RECENTLY_READ: "Nedávno čtené"
+STR_LIBRARY_RECENTLY_OPENED: "Nedávno otevřené"
 STR_LIBRARY_UNAVAILABLE: "Kniha není dostupná"
 STR_LIBRARY_SEARCH_FAILED: "Hledání není dostupné"
 STR_LIBRARY: "Knihovna"

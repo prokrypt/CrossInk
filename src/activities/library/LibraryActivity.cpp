@@ -62,7 +62,7 @@ void LibraryActivity::onEnter() {
   app.setScreen(&LibraryActivity::listScreen, this);
   // Reconcile on entry as card contents may change through USB, Wi-Fi or an
   // external card reader. Unchanged books reuse the index's metadata.
-  rebuildIndex();
+  rebuildIndex(!Storage.exists(library::libraryIndexPath()));
   resetViewport();
   ignoreConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
   requestUpdate();
@@ -74,10 +74,10 @@ void LibraryActivity::onExit() {
   Activity::onExit();
 }
 
-bool LibraryActivity::rebuildIndex() {
+bool LibraryActivity::rebuildIndex(const bool showScanning) {
   uiReady = false;
   index.close();
-  GUI.drawPopup(renderer, tr(STR_LIBRARY_SCANNING));
+  if (showScanning) GUI.drawPopup(renderer, tr(STR_LIBRARY_SCANNING));
   library::BuildStats stats;
   scanFailed = !library::buildLibraryIndex("/", stats, SETTINGS.libraryUseMetadata != 0);
   if (scanFailed) LOG_ERR("LIB", "Library scan failed; retaining the previous index");
@@ -144,7 +144,7 @@ const char* LibraryActivity::sortLabel() const {
     case Sort::AuthorFirst:
       return tr(STR_LIBRARY_AUTHOR_FIRST_NAME);
     case Sort::RecentlyRead:
-      return tr(STR_LIBRARY_RECENTLY_READ);
+      return tr(STR_LIBRARY_RECENTLY_OPENED);
     case Sort::DateAdded:
       return tr(STR_LIBRARY_DATE_ADDED);
   }
@@ -248,7 +248,7 @@ void LibraryActivity::resetViewport() {
 }
 
 void LibraryActivity::reloadAfterBookAction() {
-  rebuildIndex();
+  rebuildIndex(false);
   selection = std::min(selection, std::max(CONTROL_COUNT, CONTROL_COUNT + rowCount() - 1));
   listNav.selected = selection - CONTROL_COUNT;
   listNav.top = topIndex;
@@ -284,7 +284,7 @@ void LibraryActivity::openBook(const int row) {
 void LibraryActivity::openSortPicker() {
   static constexpr StrId choices[] = {StrId::STR_LIBRARY_DATE_ADDED, StrId::STR_LIBRARY_TITLE,
                                       StrId::STR_LIBRARY_AUTHOR_LAST_NAME, StrId::STR_LIBRARY_AUTHOR_FIRST_NAME,
-                                      StrId::STR_LIBRARY_RECENTLY_READ};
+                                      StrId::STR_LIBRARY_RECENTLY_OPENED};
   sortPopup.setDismissOnOutsideTouchDown(true);
   sortPopup.show(StrId::STR_LIBRARY_SORT_BY, choices, 5, static_cast<int>(sort), [this](const int selected) {
     if (selected < 0 || selected > static_cast<int>(Sort::RecentlyRead)) return;
@@ -312,7 +312,7 @@ void LibraryActivity::openSearch() {
 }
 
 void LibraryActivity::refreshLibrary() {
-  rebuildIndex();
+  rebuildIndex(true);
   resetViewport();
   requestUpdate();
 }

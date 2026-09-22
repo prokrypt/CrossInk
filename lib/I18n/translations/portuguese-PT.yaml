@@ -804,7 +804,7 @@ STR_TAP_HIDE_STATUS_BAR: "Toque para ocultar barra de estado"
 
 STR_LIBRARY_SORT_BY: "Ordenar por:"
 STR_LIBRARY_DATE_ADDED: "Data de adição"
-STR_LIBRARY_RECENTLY_READ: "Lidos recentemente"
+STR_LIBRARY_RECENTLY_OPENED: "Abertos recentemente"
 STR_LIBRARY_UNAVAILABLE: "Livro indisponível"
 STR_LIBRARY_SEARCH_FAILED: "Pesquisa indisponível"
 STR_LIBRARY: "Biblioteca"

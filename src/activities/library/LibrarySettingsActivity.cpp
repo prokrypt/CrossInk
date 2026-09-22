@@ -112,12 +112,17 @@ void LibrarySettingsActivity::buildScreen(UiApp::ScreenType& screen) {
                                                 static_cast<int16_t>(metrics.buttonHintsHeight + bounds[2]),
                                                 static_cast<int16_t>(bounds[3] + sidePadding)});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
+  auto rowStyles = screen.theme().listRow;
+  rowStyles.selected.background = fui::Paint::dither(fui::Color::LightGray);
+  rowStyles.selected.foreground = fui::Paint::solid(fui::Color::Black);
+  rowStyles.active = rowStyles.selected;
   fui::SettingRowProps row;
   row.label = tr(STR_LIBRARY_LIST_VIEW);
   row.value = SETTINGS.libraryListExpanded ? tr(STR_LIBRARY_EXPANDED) : tr(STR_COMPACT);
   row.action = ACTION_ROW;
   row.valueId = 0;
   row.labelText = row.valueText = screen.theme().bodyText;
+  row.styles = rowStyles;
   row.state = showSelection && selection == 0 ? fui::StateSelected : fui::StateNormal;
   screen.settingRow(row, 44);
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
@@ -135,6 +140,7 @@ void LibrarySettingsActivity::buildScreen(UiApp::ScreenType& screen) {
     toggle.row.action = ACTION_ROW;
     toggle.row.valueId = static_cast<int16_t>(i + 1);
     toggle.row.labelText = screen.theme().bodyText;
+    toggle.row.styles = rowStyles;
     toggle.row.state = showSelection && selection == i + 1 ? fui::StateSelected : fui::StateNormal;
     toggle.checked = checks[i];
     screen.toggleRow(toggle, 44);

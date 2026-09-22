@@ -69,7 +69,7 @@ class LibraryActivity final : public Activity {
   bool readBook(int row, RecentBook& book, bool fullPath = true);
   uint32_t groupForRow(int row);
   bool hasActiveFilter() const;
-  bool rebuildIndex();
+  bool rebuildIndex(bool showScanning);
   void resolveRecents();
   void applyFilter();
   void resetViewport();

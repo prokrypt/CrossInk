@@ -534,7 +534,7 @@ STR_PREV_PAGE: "Előző oldal"
 
 STR_LIBRARY_SORT_BY: "Rendezés:"
 STR_LIBRARY_DATE_ADDED: "Hozzáadás dátuma"
-STR_LIBRARY_RECENTLY_READ: "Legutóbb olvasott"
+STR_LIBRARY_RECENTLY_OPENED: "Nemrég megnyitott"
 STR_LIBRARY_UNAVAILABLE: "A könyv nem érhető el"
 STR_LIBRARY_SEARCH_FAILED: "A keresés nem érhető el"
 STR_LIBRARY: "Könyvtár"

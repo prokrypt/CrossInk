@@ -713,7 +713,7 @@ STR_TAP_HIDE_STATUS_BAR: "نقر لإخفاء شريط الحالة"
 
 STR_LIBRARY_SORT_BY: "ترتيب حسب:"
 STR_LIBRARY_DATE_ADDED: "تاريخ الإضافة"
-STR_LIBRARY_RECENTLY_READ: "المقروءة مؤخراً"
+STR_LIBRARY_RECENTLY_OPENED: "المفتوحة مؤخراً"
 STR_LIBRARY_UNAVAILABLE: "الكتاب غير متاح"
 STR_LIBRARY_SEARCH_FAILED: "البحث غير متاح"
 STR_LIBRARY: "المكتبة"
