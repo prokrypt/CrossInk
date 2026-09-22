@@ -23,9 +23,9 @@ class LibraryActivity final : public Activity {
 
  private:
   enum class Sort : uint8_t { DateAdded, Title, AuthorLast, AuthorFirst, RecentlyRead };
-  // Ring: search, refresh, sort method, direction, then the book rows. All controls are
+  // Ring: refresh, search, settings, sort method, direction, then the book rows. All controls are
   // reachable on button-only devices as well as through SDK touch routing.
-  static constexpr int CONTROL_COUNT = 4;
+  static constexpr int CONTROL_COUNT = 5;
   using UiApp = freeink::ui::FreeInkApp<32, 4>;
   freeink::ui::GfxRendererTarget uiTarget;
   UiApp app;
@@ -53,6 +53,7 @@ class LibraryActivity final : public Activity {
   // SDK rowProvider consumes the strings before asking for the next row.
   // Reuse one row instead of retaining every title/author in the library.
   RecentBook rowScratch;
+  std::string groupHeading;
 
   static void listScreen(UiApp::ScreenType& screen, void* user);
   static void onRowEvent(const freeink::ui::ActionEvent& event, void* user);
@@ -65,6 +66,8 @@ class LibraryActivity final : public Activity {
   int rowCount() const;
   uint16_t ordinalForRow(int row);
   bool readBook(int row, RecentBook& book, bool fullPath = true);
+  uint32_t groupForRow(int row);
+  bool hasActiveFilter() const;
   bool rebuildIndex();
   void resolveRecents();
   void applyFilter();
@@ -74,6 +77,7 @@ class LibraryActivity final : public Activity {
   void openSortPicker();
   void refreshLibrary();
   void openSearch();
+  void openSettings();
   void activateControl(int control);
   // Owns the allocation-failure check and render lock for every child result.
   void openDialog(std::unique_ptr<Activity>&& activity, ActivityResultHandler handler);

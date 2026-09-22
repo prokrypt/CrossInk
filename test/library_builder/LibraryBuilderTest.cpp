@@ -9,6 +9,7 @@
 
 #include "Epub.h"
 #include "LibraryBuilder.h"
+#include "LibraryFileTypes.h"
 #include "LibraryIndexFile.h"
 
 using namespace library;
@@ -112,6 +113,20 @@ TEST_F(LibraryBuilderTest, DirectoryEntriesAreEnumeratedOnce) {
   EXPECT_EQ(fake::directoryEntriesByPath["/b.epub"], 1u);
   EXPECT_EQ(fake::directoryEntriesByPath["/folder"], 1u);
   EXPECT_EQ(fake::directoryEntriesByPath["/folder/c.txt"], 1u);
+}
+
+TEST_F(LibraryBuilderTest, FileTypesKeepMarkdownSeparateAndIncludeXtch) {
+  EXPECT_EQ(fileTypeFor("book.epub"), FileEpub);
+  EXPECT_EQ(fileTypeFor("book.xtc"), FileXtc);
+  EXPECT_EQ(fileTypeFor("book.xtch"), FileXtc);
+  EXPECT_EQ(fileTypeFor("book.txt"), FileTxt);
+  EXPECT_EQ(fileTypeFor("book.md"), FileMarkdown);
+  fake::add("/graphic.xtch");
+  ASSERT_TRUE(buildLibraryIndex("/", stats, false));
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  ClixRecord record{};
+  EXPECT_TRUE(recordAtPath(index, "/graphic.xtch", record));
 }
 
 TEST_F(LibraryBuilderTest, DirectoryResumeFailureRetainsPreviousIndex) {

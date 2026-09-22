@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstring>
 
+#include "LibraryFileTypes.h"
 #include "LibraryIndexFile.h"
 #include "LibraryText.h"
 
@@ -208,10 +209,7 @@ bool installNewIndex() {
   return true;
 }
 
-bool isBookName(const std::string& name) {
-  return FsHelpers::checkFileExtension(name, ".epub") || FsHelpers::checkFileExtension(name, ".txt") ||
-         FsHelpers::checkFileExtension(name, ".md") || FsHelpers::checkFileExtension(name, ".xtc");
-}
+bool isBookName(const std::string& name) { return fileTypeFor(name) != 0; }
 
 // macOS AppleDouble sidecars and hidden entries. The file browser already hides
 // these (FileBrowserActivity isMacOSMetadataEntry); the shelf must agree, or a

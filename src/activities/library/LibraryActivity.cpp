@@ -4,15 +4,18 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <LibraryBuilder.h>
+#include <LibraryFileTypes.h>
 #include <LibraryRecentOrder.h>
 #include <LibraryText.h>
 #include <Memory.h>
+#include <Utf8.h>
 
 #include <algorithm>
 #include <cstdio>
 
 #include "activities/home/BookActions.h"
 #include "activities/home/FileBrowserActionActivity.h"
+#include "activities/library/LibrarySettingsActivity.h"
 #include "activities/reader/EpubReaderActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -31,6 +34,7 @@ constexpr fui::ActionId ACTION_CONTROL = 2;
 constexpr unsigned long LONG_PRESS_MS = 1000;
 constexpr unsigned long ACTION_FEEDBACK_MS = 1000;
 constexpr int HEADER_CONTROL_SIZE = 44;
+constexpr int HEADER_CONTROL_GAP = 10;
 
 int headerControlRightInset() {
   const auto& metrics = UITheme::getInstance().getMetrics();
@@ -49,6 +53,10 @@ void LibraryActivity::onEnter() {
   Activity::onEnter();
   if (RECENT_BOOKS.pruneMissing()) RECENT_BOOKS.saveToFile();
   applySharedUiTheme(app, uiTarget);
+  sort = SETTINGS.librarySortMethod <= static_cast<uint8_t>(Sort::RecentlyRead)
+             ? static_cast<Sort>(SETTINGS.librarySortMethod)
+             : Sort::DateAdded;
+  descending = SETTINGS.librarySortDescending != 0;
   app.on(ACTION_ROW, &LibraryActivity::onRowEvent, this);
   app.on(ACTION_CONTROL, &LibraryActivity::onControlEvent, this);
   app.setScreen(&LibraryActivity::listScreen, this);
@@ -143,11 +151,16 @@ const char* LibraryActivity::sortLabel() const {
   return tr(STR_LIBRARY_DATE_ADDED);
 }
 
-int LibraryActivity::rowCount() const { return query.empty() ? index.bookCount() : filteredCount; }
+bool LibraryActivity::hasActiveFilter() const {
+  return !query.empty() || !SETTINGS.libraryShowEpub || !SETTINGS.libraryShowXtc || !SETTINGS.libraryShowTxt ||
+         !SETTINGS.libraryShowMarkdown;
+}
+
+int LibraryActivity::rowCount() const { return hasActiveFilter() ? filteredCount : index.bookCount(); }
 
 uint16_t LibraryActivity::ordinalForRow(const int row) {
   if (row < 0 || row >= rowCount()) return UINT16_MAX;
-  if (!query.empty()) return filtered[row];
+  if (hasActiveFilter()) return filtered ? filtered[row] : UINT16_MAX;
   uint16_t indexRow = static_cast<uint16_t>(row);
   if (sort == Sort::RecentlyRead) {
     indexRow = library::recentShelfRow(indexRow, index.bookCount(), recentRows, recentCount, descending);
@@ -171,7 +184,7 @@ void LibraryActivity::applyFilter() {
   filteredCount = 0;
   filterFailed = false;
   filtered.reset();
-  if (query.empty() || !index.isOpen() || index.bookCount() == 0) return;
+  if (!hasActiveFilter() || !index.isOpen() || index.bookCount() == 0) return;
   filtered = makeUniqueNoThrow<uint16_t[]>(index.bookCount());
   if (!filtered) {
     LOG_ERR("LIB", "Cannot allocate Library search results");
@@ -179,14 +192,19 @@ void LibraryActivity::applyFilter() {
     return;
   }
   const std::string needle = library::fold(query);
+  const uint8_t visibleTypes =
+      (SETTINGS.libraryShowEpub ? library::FileEpub : 0) | (SETTINGS.libraryShowXtc ? library::FileXtc : 0) |
+      (SETTINGS.libraryShowTxt ? library::FileTxt : 0) | (SETTINGS.libraryShowMarkdown ? library::FileMarkdown : 0);
   std::string title;
   std::string author;
+  std::string name;
   std::string combined;
   std::string folded;
   // Blob fields are byte-length-prefixed. Reserve once for the entire scan,
   // avoiding concat/fold allocations for each of up to 4,096 books.
   title.reserve(UINT8_MAX);
   author.reserve(UINT8_MAX);
+  name.reserve(UINT8_MAX);
   combined.reserve(2 * UINT8_MAX + 1);
   folded.reserve(2 * UINT8_MAX + 1);
   for (uint16_t row = 0; row < index.bookCount(); ++row) {
@@ -195,17 +213,26 @@ void LibraryActivity::applyFilter() {
                                   : row;
     const uint16_t ordinal = index.ordinalForRow(indexOrder(), indexRow);
     library::ClixRecord record{};
-    if (ordinal == UINT16_MAX || !index.readRecord(ordinal, record) || !index.readDisplayText(record, title, author)) {
+    if (ordinal == UINT16_MAX || !index.readRecord(ordinal, record) || !index.readName(record, name)) {
       LOG_ERR("LIB", "Cannot read Library search data");
       filterFailed = true;
       filteredCount = 0;
       break;
     }
-    combined.assign(title);
-    combined.push_back(' ');
-    combined.append(author);
-    library::foldInto(combined, folded);
-    if (library::matchesQuery(folded, needle)) {
+    if ((library::fileTypeFor(name) & visibleTypes) == 0) continue;
+    if (!needle.empty() && !index.readDisplayText(record, title, author)) {
+      LOG_ERR("LIB", "Cannot read Library search text");
+      filterFailed = true;
+      filteredCount = 0;
+      break;
+    }
+    if (!needle.empty()) {
+      combined.assign(title);
+      combined.push_back(' ');
+      combined.append(author);
+      library::foldInto(combined, folded);
+    }
+    if (needle.empty() || library::matchesQuery(folded, needle)) {
       filtered[filteredCount++] = ordinal;
     }
     if ((row & 31) == 31) delay(1);
@@ -213,7 +240,7 @@ void LibraryActivity::applyFilter() {
 }
 
 void LibraryActivity::resetViewport() {
-  selection = rowCount() ? CONTROL_COUNT : 2;
+  selection = rowCount() ? CONTROL_COUNT : 3;
   topIndex = 0;
   uiReady = false;
 }
@@ -258,6 +285,9 @@ void LibraryActivity::openSortPicker() {
     if (selected < 0 || selected > static_cast<int>(Sort::RecentlyRead)) return;
     sort = static_cast<Sort>(selected);
     descending = sort == Sort::DateAdded || sort == Sort::RecentlyRead;
+    SETTINGS.librarySortMethod = static_cast<uint8_t>(sort);
+    SETTINGS.librarySortDescending = descending;
+    if (!SETTINGS.saveToFile()) LOG_ERR("LIB", "Cannot save Library sort");
     applyFilter();
     resetViewport();
   });
@@ -282,13 +312,23 @@ void LibraryActivity::refreshLibrary() {
   requestUpdate();
 }
 
+void LibraryActivity::openSettings() {
+  openDialog(makeUniqueNoThrow<LibrarySettingsActivity>(renderer, mappedInput), [this](const ActivityResult&) {
+    applyFilter();
+    resetViewport();
+  });
+}
+
 void LibraryActivity::activateControl(const int control) {
   app.clearTapFlash();
-  if (control == 0) openSearch();
-  if (control == 1) refreshLibrary();
-  if (control == 2) openSortPicker();
-  if (control == 3) {
+  if (control == 0) refreshLibrary();
+  if (control == 1) openSearch();
+  if (control == 2) openSettings();
+  if (control == 3) openSortPicker();
+  if (control == 4) {
     descending = !descending;
+    SETTINGS.librarySortDescending = descending;
+    if (!SETTINGS.saveToFile()) LOG_ERR("LIB", "Cannot save Library sort direction");
     applyFilter();
     topIndex = 0;
     requestUpdate();
@@ -379,8 +419,11 @@ void LibraryActivity::loop() {
   const int count = rowCount() + CONTROL_COUNT;
   const auto move = [this](const int next) {
     selection = next;
-    if (selection >= CONTROL_COUNT)
+    if (selection >= CONTROL_COUNT) {
       topIndex = followListSelection(selection - CONTROL_COUNT, topIndex, visibleRows, rowCount());
+      if (SETTINGS.libraryListExpanded && selection - CONTROL_COUNT >= topIndex + visibleRows / 2)
+        topIndex = selection - CONTROL_COUNT;
+    }
     requestUpdate();
   };
   buttonNavigator.onNextRelease([&] { move(ButtonNavigator::nextIndex(selection, count)); });
@@ -405,6 +448,29 @@ void LibraryActivity::provideRow(void* user, const uint16_t row, fui::ListItem& 
   if (!self->rowScratch.author.empty()) item.subtitle = self->rowScratch.author.c_str();
   item.icon = listIconFor(UITheme::getFileIcon(self->rowScratch.path), 32);
   item.actionValue = static_cast<int16_t>(row);
+  if (SETTINGS.libraryListExpanded && self->sort != Sort::DateAdded && self->sort != Sort::RecentlyRead) {
+    const uint32_t initial = self->groupForRow(row);
+    if (row == 0 || initial != self->groupForRow(row - 1)) {
+      self->groupHeading.clear();
+      utf8AppendCodepoint(initial ? (initial >= 'a' && initial <= 'z' ? initial - 'a' + 'A' : initial) : '#',
+                          self->groupHeading);
+      item.sectionHeading = self->groupHeading.c_str();
+    }
+  }
+}
+
+uint32_t LibraryActivity::groupForRow(const int row) {
+  library::ClixRecord record{};
+  if (!index.readRecord(ordinalForRow(row), record)) return 0;
+  std::string key;
+  if (sort == Sort::Title) {
+    key.assign(record.fold, record.foldLen);
+  } else {
+    std::string author;
+    if (!index.readAuthor(record, author)) return 0;
+    key = library::fold(sort == Sort::AuthorLast ? library::surnameKey(author) : author);
+  }
+  return library::foldedGroupInitial(key);
 }
 
 void LibraryActivity::buildSortHeader(UiApp::ScreenType& screen) {
@@ -434,17 +500,17 @@ void LibraryActivity::buildSortHeader(UiApp::ScreenType& screen) {
   button.text = screen.theme().bodyText;
   button.styles = fui::plainStyles();
   button.styles.selected = screen.theme().button.selected;
-  button.state = selection == 2 ? fui::StateSelected : fui::StateNormal;
+  button.state = selection == 3 ? fui::StateSelected : fui::StateNormal;
   screen.button(button, method);
   button.label = nullptr;
   button.icon = fui::bitmapFromIcon(descending ? icon_arrow_down_wide_narrow_32 : icon_arrow_up_wide_narrow_32);
-  button.state = selection == 3 ? fui::StateSelected : fui::StateNormal;
+  button.state = selection == 4 ? fui::StateSelected : fui::StateNormal;
   screen.button(button, direction);
   const int16_t split = static_cast<int16_t>((method.right() + direction.x) / 2);
-  screen.frame().hit(fui::Rect{band.x, band.y, static_cast<int16_t>(split - band.x), band.height}, ACTION_CONTROL, 2,
+  screen.frame().hit(fui::Rect{band.x, band.y, static_cast<int16_t>(split - band.x), band.height}, ACTION_CONTROL, 3,
                      fui::InputTouch);
   screen.frame().hit(fui::Rect{split, band.y, static_cast<int16_t>(band.right() - split), band.height}, ACTION_CONTROL,
-                     3, fui::InputTouch);
+                     4, fui::InputTouch);
   uiTarget.fill(fui::Rect{band.x, band.y, band.width, 1}, fui::Paint::solid(fui::Color::Black));
   uiTarget.fill(fui::Rect{band.x, static_cast<int16_t>(band.bottom() - 1), band.width, 1},
                 fui::Paint::solid(fui::Color::Black));
@@ -459,7 +525,7 @@ void LibraryActivity::buildListScreen(UiApp::ScreenType& screen) {
   screen.setContentMarginFromScreen(fui::Insets{headerBottom, static_cast<int16_t>(bounds[1]),
                                                 static_cast<int16_t>(metrics.buttonHintsHeight + bounds[2]),
                                                 static_cast<int16_t>(bounds[3])});
-  // Search and refresh are the first two stops in the button navigation ring.
+  // Every header icon owns a 44px touch box, with 10px of clearance.
   const int16_t controlSize = HEADER_CONTROL_SIZE;
   const auto header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
   const int16_t right = static_cast<int16_t>(renderer.getScreenWidth() - bounds[1] - headerControlRightInset());
@@ -468,17 +534,23 @@ void LibraryActivity::buildListScreen(UiApp::ScreenType& screen) {
   action.inputMask = fui::InputTouch;
   action.styles = fui::plainStyles();
   action.styles.selected = screen.theme().button.selected;
-  action.icon = fui::bitmapFromIcon(icon_search_32);
+  action.icon = fui::bitmapFromIcon(icon_refresh_cw_32);
   action.value = 0;
   action.state = selection == 0 ? fui::StateSelected : fui::StateNormal;
   screen.button(action,
-                fui::Rect{static_cast<int16_t>(right - controlSize),
+                fui::Rect{static_cast<int16_t>(right - 3 * controlSize - 2 * HEADER_CONTROL_GAP),
                           static_cast<int16_t>(header.y + header.height - controlSize), controlSize, controlSize});
-  action.icon = fui::bitmapFromIcon(icon_refresh_cw_32);
+  action.icon = fui::bitmapFromIcon(icon_search_32);
   action.value = 1;
   action.state = selection == 1 ? fui::StateSelected : fui::StateNormal;
   screen.button(action,
-                fui::Rect{static_cast<int16_t>(right - 2 * controlSize),
+                fui::Rect{static_cast<int16_t>(right - 2 * controlSize - HEADER_CONTROL_GAP),
+                          static_cast<int16_t>(header.y + header.height - controlSize), controlSize, controlSize});
+  action.icon = fui::bitmapFromIcon(icon_ellipsis_vertical_32);
+  action.value = 2;
+  action.state = selection == 2 ? fui::StateSelected : fui::StateNormal;
+  screen.button(action,
+                fui::Rect{static_cast<int16_t>(right - controlSize),
                           static_cast<int16_t>(header.y + header.height - controlSize), controlSize, controlSize});
   buildSortHeader(screen);
   if (scanFailed || index.ranksDegraded() || filterFailed) {
@@ -496,7 +568,8 @@ void LibraryActivity::buildListScreen(UiApp::ScreenType& screen) {
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
   if (rowCount() == 0) {
     if (!scanFailed && !filterFailed) {
-      screen.centeredText(query.empty() ? tr(STR_LIBRARY_EMPTY) : tr(STR_LIBRARY_NO_RESULTS), screen.theme().bodyText);
+      screen.centeredText(hasActiveFilter() ? tr(STR_LIBRARY_NO_RESULTS) : tr(STR_LIBRARY_EMPTY),
+                          screen.theme().bodyText);
     }
     return;
   }
@@ -511,8 +584,12 @@ void LibraryActivity::buildListScreen(UiApp::ScreenType& screen) {
   props.labelText = screen.theme().bodyText;
   props.labelText.bold = true;
   props.labelText.maxLines = 1;
+  props.headerText = screen.theme().bodyText;
+  props.headerText.bold = true;
   props.rtl = (I18N.getLanguage() == Language::AR || I18N.getLanguage() == Language::HE);
   visibleRows = std::max<int>(1, configureUiList(props, screen.theme(), screen.body(), UiListRowType::WithSubtitle));
+  if (SETTINGS.libraryListExpanded && sort != Sort::DateAdded && sort != Sort::RecentlyRead)
+    visibleRows = std::max(1, visibleRows / 2);
   topIndex = scrollListBy(topIndex, 0, visibleRows, rowCount());
   props.topIndex = static_cast<uint16_t>(topIndex);
   screen.list(props);
@@ -523,7 +600,7 @@ void LibraryActivity::render(RenderLock&&) {
   const auto header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
   if (mappedInput.hasTouchHardware())
     TouchHeaderBackButton::draw(renderer, uiTarget, header, tr(STR_LIBRARY), false,
-                                2 * HEADER_CONTROL_SIZE + headerControlRightInset() + 10);
+                                3 * HEADER_CONTROL_SIZE + 2 * HEADER_CONTROL_GAP + headerControlRightInset() + 10);
   else
     GUI.drawHeader(renderer, header, tr(STR_LIBRARY));
   uiReady = false;

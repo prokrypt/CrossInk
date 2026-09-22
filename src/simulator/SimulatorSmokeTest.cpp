@@ -273,6 +273,27 @@ class SimulatorSmokeTest {
         SETTINGS.tapToHideStatusBar) {
       fail("Reader controls settings round-trip mismatch");
     }
+    SETTINGS.librarySortMethod = 3;
+    SETTINGS.librarySortDescending = 0;
+    SETTINGS.libraryListExpanded = 1;
+    SETTINGS.libraryShowMarkdown = 0;
+    JsonDocument librarySaved;
+    SETTINGS.toJson(librarySaved);
+    SETTINGS.librarySortMethod = 0;
+    SETTINGS.librarySortDescending = 1;
+    SETTINGS.libraryListExpanded = 0;
+    SETTINGS.libraryShowMarkdown = 1;
+    SETTINGS.fromJson(librarySaved.as<JsonVariantConst>());
+    if (SETTINGS.librarySortMethod != 3 || SETTINGS.librarySortDescending || !SETTINGS.libraryListExpanded ||
+        SETTINGS.libraryShowMarkdown) {
+      fail("Library settings round-trip mismatch");
+    }
+    librarySaved["librarySortMethod"] = 99;
+    librarySaved["libraryShowTxt"] = 2;
+    SETTINGS.fromJson(librarySaved.as<JsonVariantConst>());
+    if (SETTINGS.librarySortMethod != 3 || SETTINGS.libraryShowTxt != 1) {
+      fail("Invalid Library settings were not rejected");
+    }
     SETTINGS.fromJson(original.as<JsonVariantConst>());
   }
 

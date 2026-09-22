@@ -99,12 +99,17 @@ first-seen sequence breaking ties. **Recently Read** places the saved reading
 history first (up to 18 books), followed by books without history in date order.
 Reversing that sort reverses each section; it keeps books with history together.
 Search matches words in the title and author and retains the selected sort.
+The sort method and direction are saved when changed. The Library Settings icon
+opens a compact/expanded list toggle and independent visibility switches for
+EPUB, XTC/XTCH, TXT, and Markdown files. Expanded Title and Author sorts show
+alphabetic headings; hidden file types remain indexed and can be shown again
+without a rescan. Markdown books open as plain text in the TXT reader.
 Author (Last Name) sorts by the final word of the displayed author, while
 Author (First Name) sorts by the displayed name from its beginning.
 Series metadata and series sorting are not part of this UI change.
 
 On button devices, Up from the first book reaches sort direction, sort method,
-refresh, and search. Confirm activates the selected control; holding Confirm on
+settings, search, and refresh. Confirm activates the selected control; holding Confirm on
 a book opens its actions. On touch devices, tap the header icons or sort controls
 directly and hold a book row for its actions. The sort method opens a modal list.
 

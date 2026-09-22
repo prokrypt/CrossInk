@@ -3,6 +3,11 @@
 ### Added
 
 - Library replaces Recent Books with a searchable book list, title and author metadata, and sorting by date added, title, author last name, author first name, or recently read.
+- Library settings can switch between compact and alphabetically grouped lists and show or hide EPUB, XTC/XTCH, TXT, and Markdown files separately.
+
+### Changed
+
+- Library remembers the selected sort and direction, and its header icons have more room for touch controls.
 
 ### Fixed
 
