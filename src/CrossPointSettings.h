@@ -473,6 +473,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t twoFingerSwipeDown = TWO_FINGER_SWIPE_NOT_SET;
   uint8_t twoFingerSwipeLeft = TWO_FINGER_SWIPE_NOT_SET;
   uint8_t twoFingerSwipeRight = TWO_FINGER_SWIPE_NOT_SET;
+  // One-finger slides along the screen edges. These can share action choices.
+  uint8_t leftEdgeUp = TWO_FINGER_SWIPE_NOT_SET;
+  uint8_t leftEdgeDown = TWO_FINGER_SWIPE_NOT_SET;
+  uint8_t rightEdgeUp = TWO_FINGER_SWIPE_NOT_SET;
+  uint8_t rightEdgeDown = TWO_FINGER_SWIPE_NOT_SET;
   // Short power button action behaviour
   uint8_t shortPwrBtn = IGNORE;
   // Long power button action behaviour

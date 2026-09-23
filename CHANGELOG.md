@@ -3,8 +3,11 @@
 ### Added
 
 - Reset a book's reader settings from the in-reader Settings tab.
+- Assign actions to upward and downward slides along either screen edge on touch devices.
 
 ### Changed
+
+- Brightness and warmth gestures now respond while you drag, with longer swipes making larger adjustments.
 
 ### Fixed
 

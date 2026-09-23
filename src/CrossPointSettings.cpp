@@ -632,6 +632,13 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc, bool importingCrossPoint
   normalizeFrontlightScheduleTime(frontlightScheduleEnd);
 
   if (normalizeTwoFingerSwipeActions(*this)) needsResave = true;
+  for (const auto field : {&CrossPointSettings::leftEdgeUp, &CrossPointSettings::leftEdgeDown,
+                           &CrossPointSettings::rightEdgeUp, &CrossPointSettings::rightEdgeDown}) {
+    if (!isTwoFingerSwipeActionAvailable(this->*field, Frontlight.present(), Frontlight.hasColorTemperature())) {
+      this->*field = TWO_FINGER_SWIPE_NOT_SET;
+      needsResave = true;
+    }
+  }
 
   // The web API shares the base catalog so it can receive raw value 26 even
   // on boards without a Home key. Never retain that reader-only action there.
