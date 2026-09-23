@@ -2,6 +2,8 @@
 
 ### Added
 
+- Reset a book's reader settings from the in-reader Settings tab.
+
 ### Changed
 
 ### Fixed
