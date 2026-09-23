@@ -3,20 +3,10 @@
 ### Added
 
 - Library replaces Recent Books with a searchable book list, title and author metadata, and sorting by date added, title, author last name, author first name, or recently opened.
-- Library settings can switch between compact and alphabetically grouped lists and show or hide EPUB, XTC/XTCH, TXT, and Markdown files separately.
 
 ### Changed
 
-- Library remembers the selected sort and direction, and its header icons have more room for touch controls.
-- Library now opens in Expanded view by default, leaves touch rows unselected until used, and has roomier settings rows and a distinct home icon.
-- Library Settings uses the same gray selection highlight as the main Settings list.
-
 ### Fixed
-
-- Library indexing now preserves the previous shelf after SD-card directory errors and refreshes metadata when books are replaced.
-- Library indexing now sorts long shared title and author prefixes correctly and preserves the previous shelf when a card exceeds the 4,096-book limit.
-- Button navigation in the Library now reaches the last visible book before scrolling to the next page.
-- Reopening an indexed Library no longer shows the scanning message when checking for changes.
 
 ## [v1.6.0] - 2026-09-21
 

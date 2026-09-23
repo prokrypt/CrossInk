@@ -581,7 +581,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t showHiddenFiles = 0;
   // Prefer embedded EPUB titles/authors in Library; disable for filename-only scans.
   uint8_t libraryUseMetadata = 1;
-  uint8_t librarySortMethod = 0;
+  uint8_t librarySortMethod = 4;
   uint8_t librarySortDescending = 1;
   uint8_t libraryListExpanded = 1;
   uint8_t libraryShowEpub = 1;

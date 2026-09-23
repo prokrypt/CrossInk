@@ -33,7 +33,7 @@ class LibraryActivity final : public Activity {
   freeink::ui::ListNav listNav;
   OptionPopup sortPopup;
   library::LibraryIndexFile index;
-  Sort sort = Sort::DateAdded;
+  Sort sort = Sort::RecentlyRead;
   bool descending = true;
   int selection = CONTROL_COUNT;
   bool showSelection = true;

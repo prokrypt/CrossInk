@@ -55,7 +55,7 @@ void LibraryActivity::onEnter() {
   applySharedUiTheme(app, uiTarget);
   sort = SETTINGS.librarySortMethod <= static_cast<uint8_t>(Sort::RecentlyRead)
              ? static_cast<Sort>(SETTINGS.librarySortMethod)
-             : Sort::DateAdded;
+             : Sort::RecentlyRead;
   descending = SETTINGS.librarySortDescending != 0;
   app.on(ACTION_ROW, &LibraryActivity::onRowEvent, this);
   app.on(ACTION_CONTROL, &LibraryActivity::onControlEvent, this);
