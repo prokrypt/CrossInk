@@ -16,6 +16,7 @@
 - OPDS downloads now use the first listed author for filename templates when a catalog also lists translators or other contributors.
 - Retain the CSS spacing supplied by empty inline spans.
 - Improve stability when connecting to Wi-Fi for update checks and KOReader authentication on X4 Pro.
+- Crash reports now identify the primary CPU core, show task names when available, preserve both cores' backtraces, and include the firmware ELF hash needed to decode them.
 
 ## [v1.6.0] - 2026-09-21
 
