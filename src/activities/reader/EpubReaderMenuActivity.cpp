@@ -654,8 +654,10 @@ void EpubReaderMenuActivity::buildMenuScreen(UiApp::ScreenType& screen) {
   const int tabBarHeight = readerMenuTabBarHeight(metrics.tabBarHeight, mappedInput.hasTouch());
   const bool tabsAtBottom = readerMenuTabsAtBottom(mappedInput);
   const int contentTop = safe.y + metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) +
+                         // cppcheck-suppress knownConditionTrueFalse ; constant only on some device builds
                          metrics.tabBarHeight + (tabsAtBottom ? 0 : tabBarHeight) + metrics.verticalSpacing;
   const int contentBottom =
+      // cppcheck-suppress knownConditionTrueFalse ; constant only on some device builds
       renderer.getScreenHeight() - (safe.y + safe.height) + (tabsAtBottom ? tabBarHeight + metrics.verticalSpacing : 0);
   // The legacy header, progress band, and icon tabs remain outside the app;
   // FreeInkUI owns the scalable list between them.
@@ -735,6 +737,7 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
                          screen.width, metrics.tabBarHeight},
                     progressLine.c_str());
 
+  // cppcheck-suppress knownConditionTrueFalse ; constant only on some device builds
   const int tabBarY = tabsAtBottom ? screen.y + screen.height - tabBarHeight
                                    : screen.y + metrics.topPadding +
                                          TouchHeaderBackButton::height(metrics, mappedInput) + metrics.tabBarHeight;
