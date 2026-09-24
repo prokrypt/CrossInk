@@ -19,6 +19,7 @@
 - Crash reports now identify the primary CPU core, show task names when available, preserve both cores' backtraces, and include the firmware ELF hash needed to decode them.
 - Release clipping index memory after closing a book or clearing its clippings.
 - Keep clipped text, exported excerpts, and chapter titles on complete characters when shortened.
+- Keep clipping-selection button hints from covering book text.
 
 ## [v1.6.0] - 2026-09-21
 
