@@ -79,7 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        environment: [default, x4-pro]
+        environment: [default, x4-pro, x4-pro-light-sleep]
     steps:
       - uses: actions/checkout@v6
         with:
