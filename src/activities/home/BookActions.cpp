@@ -7,6 +7,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Xtc.h>
 
 #include <cstdio>
@@ -15,8 +16,10 @@
 #include "ClippingStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "RecentBookProgress.h"
 #include "RecentBooksStore.h"
 #include "activities/reader/BookReadingStats.h"
+#include "activities/reader/BookStatsActivity.h"
 #include "activities/reader/EpubReaderActivity.h"
 #include "activities/reader/GlobalReadingStats.h"
 #include "components/UITheme.h"
@@ -46,7 +49,7 @@ std::string bookStatsCachePath(const std::string& path) {
 std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std::string& fullPath,
                                                                       const bool includeRemoveFromRecents) {
   std::vector<FileBrowserActionActivity::MenuItem> items;
-  items.reserve(includeRemoveFromRecents ? 7 : 6);
+  items.reserve(includeRemoveFromRecents ? 8 : 7);
   items.push_back({FileBrowserAction::Delete, StrId::STR_DELETE});
   if (hasClearableBookCache(fullPath)) {
     items.push_back({FileBrowserAction::DeleteCache, StrId::STR_DELETE_CACHE});
@@ -56,6 +59,7 @@ std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std:
     items.push_back({FileBrowserAction::ResetReaderSettings, StrId::STR_RESET_BOOK_READER_SETTINGS});
   }
   if (hasReadingStats(fullPath)) {
+    items.push_back({FileBrowserAction::ReadingStats, StrId::STR_READING_STATS});
     items.push_back({FileBrowserAction::DeleteStats, StrId::STR_DELETE_BOOK_STATS});
     items.push_back({FileBrowserAction::ToggleCompleted,
                      isBookCompleted(fullPath) ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
@@ -100,6 +104,31 @@ bool deleteBookStats(const std::string& fullPath) {
     return false;
   }
   return BookReadingStats::remove(cachePath);
+}
+
+std::unique_ptr<Activity> createReadingStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                                     const std::string& fullPath, const std::string& title) {
+  const std::string cachePath = bookStatsCachePath(fullPath);
+  if (cachePath.empty()) {
+    LOG_ERR("BookActions", "No reading stats for: %s", fullPath.c_str());
+    return {};
+  }
+  if (!Storage.exists(cachePath.c_str()) && !Storage.mkdir(cachePath.c_str())) {
+    LOG_ERR("BookActions", "Could not create stats cache for: %s", fullPath.c_str());
+    return {};
+  }
+
+  const RecentBook book{fullPath, title, {}, {}};
+  const float progress = FsHelpers::hasEpubExtension(fullPath) ? RecentBookProgress::loadCachedEpubPercent(book)
+                                                               : RecentBookProgress::loadPercent(book);
+  const BookReadingStats stats = BookReadingStats::load(cachePath);
+  const GlobalReadingStats global = GlobalReadingStats::load();
+  if (GlobalReadingStats::hasSyncedStats()) {
+    return makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, title, cachePath, stats, progress, false, 0,
+                                                global, GlobalReadingStats::loadAggregated(global));
+  }
+  return makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, title, cachePath, stats, progress, false, 0,
+                                              global);
 }
 
 bool resetBookReaderSettings(const std::string& fullPath) {
@@ -194,7 +223,10 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
     globalStats.completedBooks--;
   }
 
-  stats.save(cachePath);
+  if (!stats.save(cachePath)) {
+    LOG_ERR("BookActions", "Could not save completion for: %s", fullPath.c_str());
+    return false;
+  }
   globalStats.save();
 
   if (SETTINGS.removeReadBooksFromRecents) {

@@ -699,6 +699,10 @@ void LibraryActivity::showBookActionMenu(const size_t bookIndex, const bool igno
                }
 
                switch (static_cast<FileBrowserAction>(actionResult->action)) {
+                 case FileBrowserAction::ReadingStats:
+                   openDialog(BookActions::createReadingStatsActivity(renderer, mappedInput, book.path, book.title),
+                              [this](const ActivityResult&) { requestUpdate(); });
+                   return;
                  case FileBrowserAction::Delete:
                    promptDeleteBook(book);
                    return;
