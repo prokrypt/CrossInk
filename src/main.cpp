@@ -1091,52 +1091,52 @@ void enterDeepSleep(bool fromTimeout) {
   // will abort with the lock still held.
   {
     HalPowerManager::Lock powerLock;
-  APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
+    APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
 
-  const bool isQuickResumeSleep =
-      SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
-      (fromTimeout &&
-       SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
-  // Every sleep mode leaves a complete retained frame on the e-ink panel. Keep
-  // it visible until the first useful reader or Home paint replaces it.
-  APP_STATE.showBootScreen = false;
+    const bool isQuickResumeSleep =
+        SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
+        (fromTimeout &&
+         SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
+    // Every sleep mode leaves a complete retained frame on the e-ink panel. Keep
+    // it visible until the first useful reader or Home paint replaces it.
+    APP_STATE.showBootScreen = false;
 
-  APP_STATE.saveToFile();
+    APP_STATE.saveToFile();
 
-  // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
-  // a WiFi activity would otherwise silentRestart() here and reboot instead.
-  deepSleepInProgress = true;
-  activityManager.goToSleep(fromTimeout);
+    // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
+    // a WiFi activity would otherwise silentRestart() here and reboot instead.
+    deepSleepInProgress = true;
+    activityManager.goToSleep(fromTimeout);
 
-  if (isQuickResumeSleep) {
-    saveSleepFrameBuffer();
-  } else {
-    if (Storage.exists(SLEEP_FRAME_FILE)) {
-      // A stale Quick Resume frame must not replace the selected sleep screen during wake.
-      Storage.remove(SLEEP_FRAME_FILE);
+    if (isQuickResumeSleep) {
+      saveSleepFrameBuffer();
+    } else {
+      if (Storage.exists(SLEEP_FRAME_FILE)) {
+        // A stale Quick Resume frame must not replace the selected sleep screen during wake.
+        Storage.remove(SLEEP_FRAME_FILE);
+      }
+      delay(POST_SLEEP_SCREEN_SETTLE_MS);
     }
-    delay(POST_SLEEP_SCREEN_SETTLE_MS);
-  }
 
-  if (halClock.isAvailable() && SETTINGS.autoBackupStats != 0) {
-    ReadingStatsDateTime now;
-    if (getCurrentLocalReadingStatsDateTime(now) && !backupGlobalStats(false)) {
-      LOG_ERR("MAIN", "Automatic reading-stats backup failed before deep sleep");
+    if (halClock.isAvailable() && SETTINGS.autoBackupStats != 0) {
+      ReadingStatsDateTime now;
+      if (getCurrentLocalReadingStatsDateTime(now) && !backupGlobalStats(false)) {
+        LOG_ERR("MAIN", "Automatic reading-stats backup failed before deep sleep");
+      }
     }
-  }
 
-  // Last chance to sample: startDeepSleep() cuts the SD rail on X3, so nothing
-  // can be written again until the next wake.
-  BatteryDiagnosticLog::record(BatteryDiagnosticLog::Event::Sleep, BoardConfig::ACTIVE.name);
-  // All sleep-time file writes are complete. Stop SDMMC before the power path
-  // cuts peripheral rails and isolates the bus pads; SPI boards are a no-op.
-  Storage.shutdown();
+    // Last chance to sample: startDeepSleep() cuts the SD rail on X3, so nothing
+    // can be written again until the next wake.
+    BatteryDiagnosticLog::record(BatteryDiagnosticLog::Event::Sleep, BoardConfig::ACTIVE.name);
+    // All sleep-time file writes are complete. Stop SDMMC before the power path
+    // cuts peripheral rails and isolates the bus pads; SPI boards are a no-op.
+    Storage.shutdown();
 
-  putTiltSensorToSleepForDeepSleep();
-  display.deepSleep();
-  Frontlight.prepareForDeepSleep();
-  mirrorWakeShortPressToNvs();
-  LOG_DBG("MAIN", "Entering deep sleep");
+    putTiltSensorToSleepForDeepSleep();
+    display.deepSleep();
+    Frontlight.prepareForDeepSleep();
+    mirrorWakeShortPressToNvs();
+    LOG_DBG("MAIN", "Entering deep sleep");
 
   }  // Release powerLock before deep sleep entry
 

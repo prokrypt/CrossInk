@@ -18,7 +18,7 @@
 #include "util/BookCacheUtils.h"
 
 #if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && ARDUINO_USB_CDC_ON_BOOT && !ARDUINO_USB_MODE && \
-  !defined(SIMULATOR)
+    !defined(SIMULATOR)
 #define CROSSINK_USB_RX_OVERFLOW_ENABLED
 #include <USBCDC.h>
 #endif

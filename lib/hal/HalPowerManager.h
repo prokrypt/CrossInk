@@ -53,7 +53,7 @@ class HalPowerManager {
   // DFS floor when power management is enabled. 80 MHz keeps APB pinned at
   // 80 MHz across every mode, so SPI dividers computed at bus setup stay valid
   // no matter what the CPU clock is doing.
-  static constexpr int DFS_MIN_FREQ = 80;  // MHz
+  static constexpr int DFS_MIN_FREQ = 80;                      // MHz
   static constexpr unsigned long IDLE_POWER_SAVING_MS = 1000;  // ms
   static constexpr unsigned long BATTERY_POLL_MS = 6000;       // ms
 
