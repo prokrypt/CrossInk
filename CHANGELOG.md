@@ -17,6 +17,8 @@
 - Retain the CSS spacing supplied by empty inline spans.
 - Improve stability when connecting to Wi-Fi for update checks and KOReader authentication on X4 Pro.
 - Crash reports now identify the primary CPU core, show task names when available, preserve both cores' backtraces, and include the firmware ELF hash needed to decode them.
+- Release clipping index memory after closing a book or clearing its clippings.
+- Keep clipped text, exported excerpts, and chapter titles on complete characters when shortened.
 
 ## [v1.6.0] - 2026-09-21
 
