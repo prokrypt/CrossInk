@@ -3,6 +3,8 @@
 #include "SimulatorSmokeTest.h"
 
 #include <HalStorage.h>
+#include <LibraryBuilder.h>
+#include <LibraryIndexFile.h>
 #include <Logging.h>
 
 #include <algorithm>
@@ -35,7 +37,7 @@ enum class SmokeStep : uint8_t {
   Home,
   FileBrowser,
   FileBrowserSettings,
-  RecentBooks,
+  Library,
   Settings,
   ReaderOptions,
   ReaderMenu,
@@ -271,7 +273,6 @@ class SimulatorSmokeTest {
         SETTINGS.tapToHideStatusBar) {
       fail("Reader controls settings round-trip mismatch");
     }
-
     constexpr char CROSSINK_SETTINGS_FILE_BAK[] = "/.crosspoint/crossink-settings.json.bak";
     constexpr char LEGACY_SETTINGS_FILE_JSON[] = "/.crosspoint/settings.json";
     const char* const crossInkSettingsPath = CrossPointSettings::getFilePath();
@@ -350,6 +351,28 @@ class SimulatorSmokeTest {
       if (!Storage.writeFile(LEGACY_SETTINGS_FILE_JSON, savedLegacySettings)) fail("Could not restore legacy settings");
     } else if (Storage.exists(LEGACY_SETTINGS_FILE_JSON) && !Storage.remove(LEGACY_SETTINGS_FILE_JSON)) {
       fail("Could not remove legacy settings test fixture");
+    }
+
+    SETTINGS.librarySortMethod = 3;
+    SETTINGS.librarySortDescending = 0;
+    SETTINGS.libraryListExpanded = 1;
+    SETTINGS.libraryShowMarkdown = 0;
+    JsonDocument librarySaved;
+    SETTINGS.toJson(librarySaved);
+    SETTINGS.librarySortMethod = 0;
+    SETTINGS.librarySortDescending = 1;
+    SETTINGS.libraryListExpanded = 0;
+    SETTINGS.libraryShowMarkdown = 1;
+    SETTINGS.fromJson(librarySaved.as<JsonVariantConst>());
+    if (SETTINGS.librarySortMethod != 3 || SETTINGS.librarySortDescending || !SETTINGS.libraryListExpanded ||
+        SETTINGS.libraryShowMarkdown) {
+      fail("Library settings round-trip mismatch");
+    }
+    librarySaved["librarySortMethod"] = 99;
+    librarySaved["libraryShowTxt"] = 2;
+    SETTINGS.fromJson(librarySaved.as<JsonVariantConst>());
+    if (SETTINGS.librarySortMethod != 3 || SETTINGS.libraryShowTxt != 1) {
+      fail("Invalid Library settings were not rejected");
     }
     SETTINGS.fromJson(original.as<JsonVariantConst>());
   }
@@ -472,22 +495,31 @@ class SimulatorSmokeTest {
           break;
         }
 #endif
-        activityManager.goToRecentBooks();
-        queueStep("Recent Books", SmokeStep::RecentBooks);
+        activityManager.goToLibrary();
+        queueStep("Library", SmokeStep::Library);
         break;
 
       case SmokeStep::FileBrowserSettings:
-        activityManager.goToRecentBooks();
-        queueStep("Recent Books", SmokeStep::RecentBooks);
+        activityManager.goToLibrary();
+        queueStep("Library", SmokeStep::Library);
         break;
 
-      case SmokeStep::RecentBooks:
+      case SmokeStep::Library: {
+        // Rendering an error screen is not a successful Library smoke test.
+        // The script supplies an isolated card with at least one EPUB.
+        library::LibraryIndexFile shelf;
+        const bool hasFixture = std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK") != nullptr;
+        const bool readable = shelf.open(library::libraryIndexPath());
+        const bool populated = readable && (!hasFixture || shelf.bookCount() > 0);
+        shelf.close();
+        if (!populated) fail("Library did not publish a readable populated index");
         if (mappedInputManager.hasHomeKey()) {
           renderer.setOrientation(GfxRenderer::Orientation::LandscapeCounterClockwise);
         }
         activityManager.goToSettings();
         queueStep(mappedInputManager.hasHomeKey() ? "Settings landscape" : "Settings", SmokeStep::Settings);
         break;
+      }
 
       case SmokeStep::Settings:
         renderer.setOrientation(GfxRenderer::Orientation::Portrait);
