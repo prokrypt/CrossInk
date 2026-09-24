@@ -21,6 +21,7 @@ constexpr StrId triggerLabels[] = {
 std::vector<QuickActions::Trigger> availableTriggers() {
   std::vector<QuickActions::Trigger> triggers = {QuickActions::Trigger::None, QuickActions::Trigger::ShortPower,
                                                  QuickActions::Trigger::LongPower, QuickActions::Trigger::PowerUp};
+  // cppcheck-suppress knownConditionTrueFalse ; constant only on some device builds
   if (deviceSupportsSideButtonChord(gpio)) {
     triggers.push_back(QuickActions::Trigger::UpDown);
   }
