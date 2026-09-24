@@ -32,6 +32,7 @@
 
 ### Fixed
 
+- X3/X4 firmware builds again with automatic light sleep enabled. The build platform is updated to pioarduino 55.03.39 (Arduino-ESP32 3.3.9, ESP-IDF 5.5.4), which fixes a linker-script mismatch that stopped the image from being created.
 - X4 Pro firmware with automatic light sleep now enters deep sleep correctly when the frontlight is enabled.
 - Periodic memory telemetry now reports only when free heap or PSRAM changes, while checking for changes every 2 seconds.
 - The web EPUB optimizer now accepts books that use standard Adobe or IDPF font obfuscation, while leaving DRM-protected books unchanged.
