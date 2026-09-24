@@ -990,6 +990,22 @@ void SettingsActivity::loop() {
   }
 }
 
+bool SettingsActivity::handleHomeGesture() {
+  if (optionPopup.isActive()) {
+    optionPopup.dismiss(mappedInput, [this] { requestUpdate(); });
+  } else if (!isFileBrowserView() && activeSubmenu != SettingAction::None) {
+    closeSubmenu();
+    requestUpdate();
+  } else if (!isFileBrowserView() && selectedSettingIndex > 0) {
+    selectedSettingIndex = 0;
+    showSettingSelection = true;
+    requestUpdate();
+  } else {
+    closeRootSettings();
+  }
+  return true;
+}
+
 void SettingsActivity::toggleCurrentSetting() {
   int selectedSetting = selectedSettingIndex - 1;
   if (selectedSetting < 0 || selectedSetting >= settingsCount) {

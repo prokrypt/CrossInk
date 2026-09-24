@@ -323,6 +323,7 @@ class SettingsActivity final : public Activity {
   explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool dismissOnUpSwipe = false,
                             bool returnToParentOnClose = false, View view = View::Root);
   bool allowGlobalHomeSwipeGesture() const override { return false; }
+  bool handleHomeGesture() override;
   void onEnter() override;
   void onExit() override;
   void loop() override;

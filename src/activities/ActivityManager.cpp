@@ -741,6 +741,13 @@ bool ActivityManager::handleGlobalHomeGesture() {
     return false;
   }
 
+  // Touch-only devices use an edge swipe as a Home shortcut. Keep that
+  // shortcut separate from the X4 Pro's physical Back/Home key.
+  if (!mappedInput.hasHomeKey()) {
+    if (!currentActivity->handleHomeGesture()) goHome();
+    return true;
+  }
+
   return handleHomeButtonBackOrHome();
 }
 
@@ -750,6 +757,14 @@ bool ActivityManager::handleHomeButtonBackOrHome() {
   }
 
   if (currentActivity->handleHomeGesture()) {
+    return true;
+  }
+
+  if (!stackActivities.empty()) {
+    ActivityResult result;
+    result.isCancelled = true;
+    currentActivity->setResult(std::move(result));
+    popActivity();
     return true;
   }
 

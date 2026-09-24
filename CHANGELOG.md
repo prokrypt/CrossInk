@@ -16,6 +16,7 @@
 
 - Saved clipping lists now show a scrollbar when more clippings are available below the visible rows.
 - EPUB Safe Mode no longer pins inherited fonts and page layout as personal book settings.
+- The X4 Pro Home button now steps back through dictionary lookup, chapter selection, and nested settings instead of jumping to Home.
 - OPDS downloads now use the first listed author for filename templates when a catalog also lists translators or other contributors.
 - Retain the CSS spacing supplied by empty inline spans.
 - Improve stability when connecting to Wi-Fi for update checks and KOReader authentication on X4 Pro.
