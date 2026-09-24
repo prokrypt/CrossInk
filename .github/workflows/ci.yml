@@ -68,6 +68,11 @@ jobs:
       - name: Install PlatformIO Core
         run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
 
+      - name: Install cppcheck runtime dependency
+        # Platform 55.03.39 ships tool-cppcheck 2.20.1, linked against libpcre.so.3,
+        # which ubuntu-latest does not install; without it the check exits 127.
+        run: sudo apt-get update -q && sudo apt-get install -y -q libpcre3
+
       - name: Run cppcheck
         run: pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high
 
