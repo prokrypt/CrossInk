@@ -16,13 +16,13 @@ TEST(EdgeSlide, ScalesLightAdjustmentWithSwipeLength) {
 TEST(EdgeSlide, EdgeLightAdjustmentStepsByOnePoint) {
   EXPECT_EQ(SwipeAdjustment::edgeAmount(59, 800), 0);
   EXPECT_EQ(SwipeAdjustment::edgeAmount(60, 800), 1);
-  EXPECT_EQ(SwipeAdjustment::edgeAmount(67, 800), 1);
-  EXPECT_EQ(SwipeAdjustment::edgeAmount(68, 800), 2);
-  EXPECT_EQ(SwipeAdjustment::edgeAmount(429, 800), 50);
-  EXPECT_EQ(SwipeAdjustment::edgeAmount(799, 800), 100);
-  EXPECT_EQ(SwipeAdjustment::edgeAmount(1200, 800), 100);
+  EXPECT_EQ(SwipeAdjustment::edgeAmount(74, 800), 1);
+  EXPECT_EQ(SwipeAdjustment::edgeAmount(75, 800), 2);
+  EXPECT_EQ(SwipeAdjustment::edgeAmount(429, 800), 25);
+  EXPECT_EQ(SwipeAdjustment::edgeAmount(799, 800), 50);
+  EXPECT_EQ(SwipeAdjustment::edgeAmount(1200, 800), 50);
   EXPECT_EQ(SwipeAdjustment::edgeAmount(60, 480), 1);
-  EXPECT_EQ(SwipeAdjustment::edgeAmount(479, 480), 100);
+  EXPECT_EQ(SwipeAdjustment::edgeAmount(479, 480), 50);
 }
 
 TEST(EdgeSlide, LiveLightTargetFollowsFingerBackFromLimit) {

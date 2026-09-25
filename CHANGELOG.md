@@ -13,7 +13,7 @@
 ### Changed
 
 - Brightness and warmth gestures now respond while you drag, with longer swipes making larger adjustments.
-- Edge-slide brightness and warmth gestures now adjust in 1% steps instead of 5%, keeping the same swipe distance for the full 0-100% range.
+- Edge-slide brightness and warmth gestures now adjust in 1% steps instead of 5% and are half as sensitive: a full-length slide along the screen edge changes the level by about 50%.
 - Idle power saving now puts the device into automatic light sleep between loop ticks instead of only lowering the CPU clock, cutting idle draw while leaving buttons, touch, and the frontlight working exactly as before. The screen, Wi-Fi transfers, and USB sessions stay awake while they are in use.
 - GitHub workflows and release documentation links now follow the `development` default branch.
 - Idle power saving now engages after 1 second instead of 3, and battery level is polled every 6 seconds instead of every 1.5, trading slightly less frequent battery updates for lower average power draw.
