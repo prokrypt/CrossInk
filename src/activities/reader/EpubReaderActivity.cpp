@@ -6730,6 +6730,9 @@ bool EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageC
     lastSavedSpineIndex = spineIndex;
     lastSavedPage = currentPage;
     lastSavedPageCount = pageCount;
+    // Home reads this lightweight value instead of opening the EPUB, so keep it
+    // in sync with the position file written above.
+    RecentBookProgress::saveCachedEpubPercent(*epub, spineIndex, currentPage, pageCount);
     const uint32_t positionKey = (static_cast<uint32_t>(spineIndex) << 16) | static_cast<uint16_t>(currentPage);
     progressSaveDebouncer.markPersisted(positionKey, static_cast<uint32_t>(pageCount));
   }

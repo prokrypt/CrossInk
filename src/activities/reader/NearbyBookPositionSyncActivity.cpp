@@ -1224,6 +1224,7 @@ bool NearbyBookPositionSyncActivity::applyPeerPosition() {
     setError(tr(STR_SAVE_PROGRESS_FAILED));
     return false;
   }
+  RecentBookProgress::saveCachedEpubPercent(*epub_, peerCrossPoint_.spineIndex, peerCrossPoint_.pageNumber, pageCount);
   setState(State::SYNCED);
   return true;
 }

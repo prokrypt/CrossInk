@@ -56,8 +56,6 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   ~CrossPointState() = default;
 
   bool saveToFile() const;
-  // Saves to file if the state has been modified since the last save.
-  bool saveIfDirty();
 
   bool loadFromFile();
   static const char* getFilePath() { return "/.crosspoint/state.json"; }
@@ -77,8 +75,6 @@ class CrossPointState : public PersistableStore<CrossPointState> {
 
  private:
   bool loadFromBinaryFile();
-  // Tracks whether state has changed since last save. Defers writes to deep sleep.
-  mutable std::atomic<bool> _dirty{false};
 };
 
 // Helper macro to access settings
