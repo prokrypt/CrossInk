@@ -5,6 +5,15 @@ All POD fields are written in the ESP32 little-endian representation used by
 `Serialization.h`; strings are length-prefixed UTF-8 unless a format notes a
 fixed-size char buffer.
 
+## `/.crosspoint/ttf-rendering.json`
+
+This user-owned JSON file stores only custom TTF families whose raster settings
+differ from CrossInk's defaults. Each entry is keyed by the installed family name
+and contains numeric hinting, raster, interpreter, weight, and slant choices plus
+the stem-darkening toggle. Missing families use automatic hinting, grayscale
+output, the default interpreter, and no outline adjustments. The file currently
+keeps at most 24 modified family profiles to bound RAM use while settings are open.
+
 ## `/.crosspoint/sleep-image-index/<directory-hash>-{bmp,all}.idx`
 
 ### Version 1
@@ -887,16 +896,23 @@ internal-memory guards still apply. Rebuilding an invalid CSS cache also
 invalidates section caches through the existing EPUB-load path, so books that
 previously cached zero rules can restore hidden content and layout rules.
 
+## S3 scalable reader fonts
+
+Static TTF support uses font-content and backend identities to invalidate
+affected EPUB layouts. Section-cache serialization is unchanged. Existing
+`.cpfont` files remain supported; see [scalable fonts](scalable-fonts.md) for
+limits and lifecycle.
+
 ## `/.crosspoint/font-catalog.bin`
 
 ### Version 1
 
 Disposable font metadata cache, shared by reader, settings and web font controls.
 The 24-byte little-endian header contains magic `0x46434931`, version, a 64-bit
-inventory fingerprint, family count (maximum 128), and a reserved zero field.
+inventory fingerprint, family count (maximum 128), and scalable-font build mode.
 It is followed by 152-byte family summaries: a NUL-terminated 128-byte name,
 32-bit detail offset/byte count/FNV-1a hash, 16-bit file count, minimum/maximum
-point sizes, four reserved zero bytes, and a 32-bit FNV-1a
+point sizes, a scalable flag, three reserved zero bytes, and a 32-bit FNV-1a
 checksum of the preceding summary bytes. Detail blocks follow the summaries.
 Each detail is three bytes (point size, style, path length) followed by the
 UTF-8 path bytes. Paths are at most 255 bytes; families contain at most 256

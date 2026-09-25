@@ -1,5 +1,9 @@
 #include "ActivityManager.h"
 
+#if CROSSINK_SCALABLE_FONTS
+#include <HalScalableFont.h>
+#endif
+
 #include <CrossInkHalFrontlight.h>
 #include <Epub.h>
 #include <FontCacheManager.h>
@@ -423,6 +427,9 @@ bool applyTwoFingerRotation(Activity& activity, MappedInputManager& mappedInput)
 }  // namespace
 
 void ActivityManager::begin(const uint32_t renderTaskStackBytes) {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess::configure(renderingMutex);
+#endif
 #if defined(configNUM_CORES) && configNUM_CORES > 1
   constexpr BaseType_t renderTaskCore = 1;
 #else

@@ -120,7 +120,6 @@ class EpubReaderActivity final : public Activity {
   int cachedSpineIndex = 0;
   int cachedChapterPageNumber = 0;
   int cachedChapterTotalPageCount = 0;
-  int cachedChapterPageWatermark = 0;
   std::optional<uint32_t> cachedVisibleTextOffset;
   struct ChapterGroupEstimateCache {
     int currentSpineIndex = -1;

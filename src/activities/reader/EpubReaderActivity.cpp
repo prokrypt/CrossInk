@@ -38,6 +38,7 @@
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderClippingListActivity.h"
 #include "EpubReaderFootnotesActivity.h"
+#include "ReaderFontLoading.h"
 #if CROSSINK_APP_CAP_TOUCH
 #include "EpubReaderTouchMenuActivity.h"
 #endif
@@ -355,8 +356,12 @@ ReaderRenderSpec readerRenderSpecForProfile(const int fontId, const uint16_t vie
 
 void ensureReaderSdFontLoaded(GfxRenderer& renderer) {
   sdFontSystem.ensureLoaded(renderer);
-  // Layout only needs the active font. Release the settings-only family metadata
-  // before building a section so it does not consume reader heap headroom.
+  // S3 scalable faces are already kept in PSRAM. Keep their small catalog while
+  // reading too, so opening Font Size does not rescan the SD card. Bitmap/C3
+  // paths retain the previous heap-headroom behavior.
+#if CROSSINK_SCALABLE_FONTS
+  if (sdFontSystem.hasResidentScalableFamily(SETTINGS.sdFontFamilyName)) return;
+#endif
   sdFontSystem.releaseRegistry();
 }
 
@@ -2274,6 +2279,9 @@ void EpubReaderActivity::onEnter() {
 
 void EpubReaderActivity::onExit() {
   sdFontSystem.setSettingsPersistenceCallback(nullptr, nullptr);
+  // Drop the scalable-family catalog retained during reading. The active font
+  // and its PSRAM face lifetime remain managed by SdCardFontSystem.
+  sdFontSystem.releaseRegistry();
   clearPendingManualPageTurns(/*requestRecoveryRedraw=*/false);
   mappedInput.setReaderTouchscreenOverride(false);
 
@@ -3037,7 +3045,7 @@ void EpubReaderActivity::loop() {
       const bool isTop = topLongPressed;
       sideButtonLongPressHandled = !(isTop ? topReleased : bottomReleased);
       if (sideLongPressChangesFont) {
-        if (sdFontSystem.changeReaderFontSize(/*larger=*/isTop)) {
+        if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, /*larger=*/isTop)) {
           reindexCurrentSection();
         }
       } else {
@@ -3103,7 +3111,7 @@ void EpubReaderActivity::loop() {
       }
 
       if (frontLongPressChangesFont) {
-        if (sdFontSystem.changeReaderFontSize(/*larger=*/nextLongPressed)) {
+        if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, /*larger=*/nextLongPressed)) {
           reindexCurrentSection();
         }
         return;
@@ -3248,10 +3256,12 @@ bool EpubReaderActivity::handleTwoFingerSwipeAction(const CrossPointSettings::TW
 
   switch (action) {
     case CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_FONT_SIZE:
-      if (sdFontSystem.changeReaderFontSize(/*larger=*/true, FontSizeStepMode::Clamp)) reindexCurrentSection();
+      if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, /*larger=*/true, FontSizeStepMode::Clamp))
+        reindexCurrentSection();
       return true;
     case CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_FONT_SIZE:
-      if (sdFontSystem.changeReaderFontSize(/*larger=*/false, FontSizeStepMode::Clamp)) reindexCurrentSection();
+      if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, /*larger=*/false, FontSizeStepMode::Clamp))
+        reindexCurrentSection();
       return true;
     case CrossPointSettings::TWO_FINGER_SWIPE_NEXT_CHAPTER:
     case CrossPointSettings::TWO_FINGER_SWIPE_PREVIOUS_CHAPTER: {
@@ -3430,10 +3440,12 @@ bool EpubReaderActivity::handlePinchFontResize() {
 
   if (action == ReaderPinchGesture::Action::Increase) {
     mappedInput.suppressCurrentTouchContact();
-    if (sdFontSystem.changeReaderFontSize(/*larger=*/true, FontSizeStepMode::Clamp)) reindexCurrentSection();
+    if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, /*larger=*/true, FontSizeStepMode::Clamp))
+      reindexCurrentSection();
   } else if (action == ReaderPinchGesture::Action::Decrease) {
     mappedInput.suppressCurrentTouchContact();
-    if (sdFontSystem.changeReaderFontSize(/*larger=*/false, FontSizeStepMode::Clamp)) reindexCurrentSection();
+    if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, /*larger=*/false, FontSizeStepMode::Clamp))
+      reindexCurrentSection();
   }
   return true;
 }
@@ -4214,7 +4226,17 @@ void EpubReaderActivity::onFrontlightPanelClosed() {
 }
 
 bool EpubReaderActivity::handleFrontlightPanelResult(const FrontlightPanelResult& result) {
-  if (!epub || result.action == FrontlightPanelAction::None) return false;
+  if (!epub) return false;
+  bool handled = false;
+  if (result.ttfRenderingChanged) {
+    clearPendingManualPageTurns();
+    ensureReaderSdFontLoaded(renderer);
+    RenderLock lock(*this);
+    prepareCurrentSectionForRelayout();
+    section.reset();
+    handled = true;
+  }
+  if (result.action == FrontlightPanelAction::None) return handled;
   if (result.action != FrontlightPanelAction::SyncProgress &&
       result.action != FrontlightPanelAction::NearbyPositionSync &&
       result.action != FrontlightPanelAction::SendNearbyBook) {
@@ -4706,10 +4728,10 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       enterDeepSleep();
       break;
     case CrossPointSettings::LONG_MENU_CHANGE_FONT: {
-      const CrossPointSettings::FONT_SIZE effectiveSize = SETTINGS.getEffectiveReaderFontSize();
+      const uint8_t pointSize = closestBuiltinReaderPointSize(SETTINGS.readerFontPointSize);
       SETTINGS.fontFamily = (SETTINGS.fontFamily + 1) % CrossPointSettings::FONT_FAMILY_COUNT;
       SETTINGS.sdFontFamilyName[0] = '\0';
-      SETTINGS.readerFontPointSize = CrossPointSettings::getReaderFontPointSize(effectiveSize);
+      SETTINGS.readerFontPointSize = pointSize;
       reindexCurrentSection();
       break;
     }
@@ -5902,8 +5924,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                 }
               }
               if (!buildFailed && pendingRelayoutReposition && section->isBuilding() && isRelayoutCatchUpComplete()) {
-                LOG_DBG("ERS", "Incremental relayout reached prior watermark: pages=%u target=%d", section->pageCount,
-                        cachedChapterPageWatermark);
+                LOG_DBG("ERS", "Incremental relayout reached reading position: pages=%u target=%d", section->pageCount,
+                        cachedChapterPageNumber);
               }
               attemptLayoutAbortedForLowMemory =
                   attemptLayoutAbortedForLowMemory || section->lastBuildLayoutAbortedForLowMemory();
@@ -6599,7 +6621,6 @@ bool EpubReaderActivity::isRelayoutCatchUpComplete() const {
     return !pendingRelayoutReposition;
   }
 
-  const bool watermarkReached = static_cast<int>(section->pageCount) >= std::max(1, cachedChapterPageWatermark);
   bool positionResolved = static_cast<int>(section->pageCount) > cachedChapterPageNumber;
   if (cachedVisibleTextOffset) {
     positionResolved = section->getPageForVisibleTextOffset(*cachedVisibleTextOffset).has_value();
@@ -6607,7 +6628,10 @@ bool EpubReaderActivity::isRelayoutCatchUpComplete() const {
     positionResolved = section->isBuilding() ? section->findParagraphDuringBuild(cachedPageParagraphIndex).has_value()
                                              : section->getPageForParagraphIndex(cachedPageParagraphIndex).has_value();
   }
-  return watermarkReached && positionResolved;
+  // A previous finalized cache may cover the entire chapter. Wait only until
+  // the current reading position is available; incremental indexing then keeps
+  // its usual small look-ahead window instead of rebuilding the old page count.
+  return positionResolved;
 }
 
 bool EpubReaderActivity::applyDeferredReposition() {
@@ -6687,7 +6711,6 @@ bool EpubReaderActivity::applyDeferredReposition() {
 
   cachedChapterPageNumber = 0;
   cachedChapterTotalPageCount = 0;
-  cachedChapterPageWatermark = 0;
   cachedVisibleTextOffset.reset();
   pendingRelayoutReposition = false;
   cachedPageParagraphIndex = UINT16_MAX;
@@ -6828,7 +6851,6 @@ void EpubReaderActivity::cacheCurrentSectionPosition() {
   cachedSpineIndex = currentSpineIndex;
   cachedChapterPageNumber = section->currentPage;
   cachedChapterTotalPageCount = section->estimatedTotalPages();
-  cachedChapterPageWatermark = section->pageCount;
   cachedVisibleTextOffset.reset();
   pendingRelayoutReposition = true;
   cachedPageParagraphIndex = UINT16_MAX;
@@ -6929,7 +6951,8 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   const bool pageHasImages = page->hasImages();
   const bool foregroundBlack = ReaderUtils::readerForegroundBlack();
   bool needsImageGrayscale = pageHasImages;
-  bool needsTextGrayscale = SETTINGS.textAntiAliasing && foregroundBlack;
+  bool needsTextGrayscale = SETTINGS.textAntiAliasing && foregroundBlack &&
+                            !sdFontSystem.fontUsesMonochromeRaster(renderer, fontId, SETTINGS.sdFontFamilyName);
   const int contentBottom = renderer.getScreenHeight() - orientedMarginBottom;
 
   // The pending count excludes the page currently being rendered. Decide

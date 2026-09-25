@@ -9,6 +9,7 @@
 #include <Logging.h>
 #include <ObfuscationUtils.h>
 #include <PersistableStore.h>
+#include <ScalableBuiltins.h>
 #include <Serialization.h>
 
 #include <algorithm>
@@ -71,12 +72,6 @@ constexpr CrossPointSettings::FONT_SIZE READER_FONT_SIZE_STORAGE_ORDER[] = {
     CrossPointSettings::MEDIUM,
     CrossPointSettings::LARGE,
 };
-constexpr CrossPointSettings::FONT_SIZE READER_FONT_SIZE_CYCLE_ORDER[] = {
-    CrossPointSettings::TINY,
-    CrossPointSettings::SMALL,
-    CrossPointSettings::MEDIUM,
-    CrossPointSettings::LARGE,
-};
 constexpr uint8_t SD_FONT_RANGE_POINT_SIZES[CrossPointSettings::SD_FONT_SIZE_RANGE_COUNT]
                                            [CrossPointSettings::SD_FONT_MAX_SIZE_STEPS] = {
                                                {8, 9, 10, 12},
@@ -127,6 +122,7 @@ CrossPointSettings::FONT_SIZE firstAvailableReaderFontSize() {
   return (it != std::end(READER_FONT_SIZE_STORAGE_ORDER)) ? *it : CrossPointSettings::TINY;
 }
 
+#if !CROSSINK_SCALABLE_FONTS
 int getFallbackReaderFontIdForFamily(const CrossPointSettings::FONT_FAMILY family) {
   switch (family) {
     case CrossPointSettings::BITTER:
@@ -136,6 +132,8 @@ int getFallbackReaderFontIdForFamily(const CrossPointSettings::FONT_FAMILY famil
       return LEXENDDECA_10_FONT_ID;
   }
 }
+
+#endif
 
 // Convert legacy front button layout into explicit logical->hardware mapping.
 void applyLegacyFrontButtonLayout(CrossPointSettings& settings) {
@@ -1193,12 +1191,8 @@ CrossPointSettings::FONT_SIZE CrossPointSettings::getEffectiveReaderFontSize() c
 uint8_t CrossPointSettings::getSdFontTargetPointSize() const { return readerFontPointSize; }
 
 bool CrossPointSettings::changeReaderFontSize(const bool larger, const FontSizeStepMode mode) {
-  uint8_t sizes[FONT_SIZE_COUNT] = {};
-  size_t count = 0;
-  for (const FONT_SIZE size : READER_FONT_SIZE_CYCLE_ORDER) {
-    if (isReaderFontSizeAvailable(size)) sizes[count++] = getReaderFontPointSize(size);
-  }
-  return changeReaderFontSizeStep(sizes, count, readerFontPointSize, larger, mode);
+  return changeReaderFontSizeStep(BUILTIN_READER_FONT_SIZES, std::size(BUILTIN_READER_FONT_SIZES), readerFontPointSize,
+                                  larger, mode);
 }
 
 int CrossPointSettings::getReaderFontId() const {
@@ -1213,6 +1207,9 @@ int CrossPointSettings::getReaderFontId() const {
 }
 
 int CrossPointSettings::getBuiltInReaderFontId() const {
+#if CROSSINK_SCALABLE_FONTS
+  return scalableBuiltinReaderFontId(fontFamily == BITTER ? 1 : 0, closestBuiltinReaderPointSize(readerFontPointSize));
+#else
   const FONT_SIZE effectiveSize = getEffectiveReaderFontSize();
 
   switch (fontFamily) {
@@ -1245,4 +1242,5 @@ int CrossPointSettings::getBuiltInReaderFontId() const {
       return getFallbackReaderFontIdForFamily(BITTER);
   }
   return getFallbackReaderFontIdForFamily(static_cast<FONT_FAMILY>(fontFamily));
+#endif
 }

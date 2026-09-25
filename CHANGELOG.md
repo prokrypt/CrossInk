@@ -6,6 +6,7 @@
 - Library replaces Recent Books with a searchable book list, title and author metadata, and sorting by date added, title, author last name, author first name, or recently opened.
 - Reset a book's reader settings from the in-reader Settings tab.
 - Assign actions to upward and downward slides along either screen edge on touch devices.
+- TTF font support on ESP32-S3 devices. Whole-point sizes from 8pt to 22pt will be automatically available.
 
 ### Changed
 
@@ -21,6 +22,7 @@
 - Release clipping index memory after closing a book or clearing its clippings.
 - Keep clipped text, exported excerpts, and chapter titles on complete characters when shortened.
 - Keep clipping-selection button hints from covering book text.
+- Changing a reader font with incremental indexing now returns after the current reading position is ready, instead of waiting for the whole chapter to be re-indexed.
 
 ## [v1.6.0] - 2026-09-21
 
