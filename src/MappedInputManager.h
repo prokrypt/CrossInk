@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 
+#include "util/EdgeSlide.h"
 #include "util/ReleaseSuppression.h"
 
 class GfxRenderer;
@@ -14,6 +15,12 @@ class MappedInputManager {
   enum class Button { Back, Confirm, Left, Right, Up, Down, Power, PageBack, PageForward };
   static constexpr size_t BUTTON_COUNT = static_cast<size_t>(Button::PageForward) + 1;
   enum class SwipeDir { None, Left, Right, Up, Down };
+  using EdgeSlide = ::EdgeSlide::Direction;
+  struct EdgeSlideProgress {
+    EdgeSlide direction = EdgeSlide::None;
+    int distance = 0;
+    bool finished = false;
+  };
 
   struct CompletedSwipe {
     uint8_t contactCount = 0;
@@ -71,6 +78,7 @@ class MappedInputManager {
 #if CROSSINK_APP_CAP_TOUCH
   void setReaderTouchscreenOverride(bool enabled) { readerTouchscreenOverride = enabled; }
 #else
+  // cppcheck-suppress functionStatic ; no-touch stub mirrors the touch-build instance API
   constexpr void setReaderTouchscreenOverride(bool) {}
 #endif
 
@@ -103,6 +111,9 @@ class MappedInputManager {
   bool getTwoFingerTouch(int& x1, int& y1, int& x2, int& y2) const;
   bool wasCompletedMultiTouchSwipe(CompletedSwipe& swipe) const;
   bool wasCompletedMultiTouchRotation(CompletedRotation& rotation) const;
+  // Report a side-band drag while held and once on release/cancellation.
+  bool getEdgeSlideProgress(EdgeSlideProgress& progress);
+  void resetEdgeSlide() { edgeSlideSide = EdgeSlide::None; }
   // True on boards with a capacitive home key (X4 Pro), where the bottom-edge
   // up-swipe is the reader-menu gesture rather than the exit-to-home gesture.
   // The Home key has its own reader lock setting, so it remains available when
@@ -177,12 +188,15 @@ class MappedInputManager {
   // Reader-menu shortcut: a long press of the capacitive home key.
   bool wasReaderMenuHold() const;
 #else
+  // cppcheck-suppress-begin functionStatic ; no-touch stubs mirror the touch-build instance API
   constexpr bool hasTouch() const { return false; }
   constexpr bool hasTouchHardware() const { return false; }
   constexpr bool supportsMultiTouch() const { return false; }
   constexpr bool getTwoFingerTouch(int&, int&, int&, int&) const { return false; }
   constexpr bool wasCompletedMultiTouchSwipe(CompletedSwipe&) const { return false; }
   constexpr bool wasCompletedMultiTouchRotation(CompletedRotation&) const { return false; }
+  constexpr bool getEdgeSlideProgress(EdgeSlideProgress&) { return false; }
+  constexpr void resetEdgeSlide() {}
   constexpr bool hasHomeKey() const { return false; }
   constexpr bool isHomeButtonLockedInReader() const { return false; }
   constexpr bool wasScreenTapped(int&, int&) const { return false; }
@@ -224,6 +238,7 @@ class MappedInputManager {
   constexpr bool wasReaderHomeGesture() const { return false; }
   constexpr bool wasReaderLightPanelGesture() const { return false; }
   constexpr bool wasReaderMenuHold() const { return false; }
+  // cppcheck-suppress-end functionStatic
 #endif
   bool wasAnyPressed() const;
   bool wasAnyReleased() const;
@@ -259,6 +274,12 @@ class MappedInputManager {
   bool powerAsConfirmInReaderMode = false;
 #if CROSSINK_APP_CAP_TOUCH
   bool readerTouchscreenOverride = false;
+  EdgeSlide edgeSlideSide = EdgeSlide::None;
+  int edgeSlideStartX = 0;
+  int edgeSlideStartY = 0;
+  int edgeSlideLastX = 0;
+  int edgeSlideLastY = 0;
+  bool edgeSlideQualified = false;
 #endif
   mutable ReleaseSuppression releaseSuppression;
   static constexpr size_t LABEL_BUFFER_SIZE = 128;
@@ -317,8 +338,10 @@ class MappedInputManager {
   mutable unsigned long touchHeldOverrideMs = 0;
   mutable unsigned long touchHeldOverrideAt = 0;
 #else
+  // cppcheck-suppress-begin functionStatic ; no-touch stubs mirror the touch-build instance API
   constexpr bool wasBackGesture() const { return false; }
   constexpr bool wasFrontButtonHintTapped(uint8_t) const { return false; }
   constexpr bool wasFrontButtonHintTouchedDown(uint8_t) const { return false; }
+  // cppcheck-suppress-end functionStatic
 #endif
 };

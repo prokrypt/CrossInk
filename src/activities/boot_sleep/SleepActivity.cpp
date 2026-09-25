@@ -11,7 +11,8 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <PNGdec.h>
-#undef local  // zlib's zutil.h #defines local to static; leaks into catalog.h's `local` variable
+// PNGdec's bundled zlib internals leak this macro into later FreeInkUI headers.
+#undef local
 #include <Xtc.h>
 
 #include <algorithm>

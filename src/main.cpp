@@ -1313,7 +1313,8 @@ void setup() {
 #endif
 #endif
 
-  LOG_INF("BOOT", "Wake route: %s", wakeupRouteName(wakeupReason));
+  LOG_INF("BOOT", "Wake route: %s (reset reason %d, wakeup cause %d)", wakeupRouteName(wakeupReason),
+          static_cast<int>(esp_reset_reason()), static_cast<int>(esp_sleep_get_wakeup_cause()));
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton:
       wakePowerReleasePending = true;

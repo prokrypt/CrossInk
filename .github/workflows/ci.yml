@@ -142,6 +142,16 @@ jobs:
             grep -E "RAM:\s|Flash:\s" pio-${{ matrix.environment }}.log | while read -r line; do echo "- ${line}"; done
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Upload ${{ matrix.environment }} firmware
+        # Flashable app image for testing PR builds; the release workflows publish
+        # the same renamed firmware-<device>.bin.
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmware-${{ matrix.environment }}
+          path: .pio/build/${{ matrix.environment }}/firmware-*.bin
+          if-no-files-found: error
+          retention-days: 14
+
   # This job is used as the PR required actions check, allows for changes to other steps in the future without breaking
   # PR requirements.
   test-status:
