@@ -2340,6 +2340,13 @@ void EpubReaderActivity::onExit() {
     }
   }
 
+  // Home reads this lightweight value instead of opening the EPUB. Written once
+  // here rather than on every debounced save; a crash mid-session leaves it stale
+  // until the next reader exit.
+  if (epub && lastSavedSpineIndex >= 0) {
+    RecentBookProgress::saveCachedEpubPercent(*epub, lastSavedSpineIndex, lastSavedPage, lastSavedPageCount);
+  }
+
   BOOKMARKS.unload();
   CLIPPINGS.unload();
   section.reset();
@@ -6730,9 +6737,6 @@ bool EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageC
     lastSavedSpineIndex = spineIndex;
     lastSavedPage = currentPage;
     lastSavedPageCount = pageCount;
-    // Home reads this lightweight value instead of opening the EPUB, so keep it
-    // in sync with the position file written above.
-    RecentBookProgress::saveCachedEpubPercent(*epub, spineIndex, currentPage, pageCount);
     const uint32_t positionKey = (static_cast<uint32_t>(spineIndex) << 16) | static_cast<uint16_t>(currentPage);
     progressSaveDebouncer.markPersisted(positionKey, static_cast<uint32_t>(pageCount));
   }
