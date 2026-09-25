@@ -190,6 +190,12 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
   // and arm the board-configured power pin immediately before sleeping.
   freeink::PowerManager::waitForPowerButtonRelease();
   esp_sleep_config_gpio_isolate();
+  // Auto light sleep (CONFIG_PM_ENABLE builds) enables a timer wakeup before
+  // every idle nap and never disables it again. A timer wakeup left armed here
+  // fires within milliseconds of deep sleep entry and comes back as a
+  // DEEPSLEEP/TIMER reset instead of staying asleep. Only the power button
+  // should wake the device, so clear every source before arming it.
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
   freeink::PowerManager::armPowerButtonWakeup();
   gpio_deep_sleep_hold_en();
   esp_deep_sleep_start();
