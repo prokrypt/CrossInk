@@ -159,10 +159,9 @@ void DictionaryRegistry::clear() {
 
 int DictionaryRegistry::indexOf(const std::string& basePath) const {
   if (basePath.empty()) return -1;
-  for (size_t i = 0; i < entries_.size(); i++) {
-    if (entries_[i].basePath == basePath) return static_cast<int>(i);
-  }
-  return -1;
+  const auto match =
+      std::find_if(entries_.begin(), entries_.end(), [&](const auto& entry) { return entry.basePath == basePath; });
+  return match == entries_.end() ? -1 : static_cast<int>(match - entries_.begin());
 }
 
 void DictionaryRegistry::maybeAutoSelectDefaultDictionary() const {

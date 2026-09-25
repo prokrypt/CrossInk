@@ -267,7 +267,7 @@ void ReaderOptionsActivity::moveSelection(bool forward) {
   }
 }
 
-bool ReaderOptionsActivity::currentSettingUsesOptionMenu(const SettingInfo& setting) const {
+bool ReaderOptionsActivity::currentSettingUsesOptionMenu(const SettingInfo& setting) {
   return setting.nameId != StrId::STR_FONT_FAMILY && setting.type == SettingType::ENUM &&
          settingEnumOptionCount(setting) > 2 &&
          (setting.valuePtr != nullptr || (setting.valueGetter && setting.valueSetter));
@@ -773,7 +773,6 @@ void ReaderOptionsActivity::render(RenderLock&&) {
 
   renderer.clearScreen();
 
-  const auto& metrics = UITheme::getInstance().getMetrics();
   Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, !mappedInput.hasTouchHardware(), false);
   header.x = safe.x;

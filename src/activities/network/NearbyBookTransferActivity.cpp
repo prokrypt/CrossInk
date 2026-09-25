@@ -253,8 +253,9 @@ void NearbyBookTransferActivity::handlePacket(const nearby::EspNowTransport::Eve
   if (mode_ == Mode::Send && packet.sessionId == sessionId_) {
     if (packet.type == nearby::PacketType::Advertise && (state_ == State::Discovering || state_ == State::DeviceList) &&
         packet.payloadLength >= 2 && packet.payloadLength <= CrossPointSettings::MAX_DEVICE_NAME_LENGTH) {
-      for (uint8_t i = 0; i < peerCount_; ++i) {
-        if (sameMac(peers_[i].mac, event.sourceMac.data())) return;
+      if (std::any_of(peers_.begin(), peers_.begin() + peerCount_,
+                      [&](const Peer& known) { return sameMac(known.mac, event.sourceMac.data()); })) {
+        return;
       }
       if (peerCount_ >= MAX_PEERS) return;
       Peer& peer = peers_[peerCount_++];

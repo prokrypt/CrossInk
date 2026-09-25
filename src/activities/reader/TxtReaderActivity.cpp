@@ -35,7 +35,7 @@ constexpr uint32_t MAX_CACHE_PAGES = 65535;   // Sanity cap to prevent unbounded
 // Parses and word-wraps lines from a file chunk into outLines.
 // Returns the number of bytes consumed from the start of buffer.
 size_t parseAndWrapLines(const uint8_t* buffer, size_t chunkSize, size_t fileOffset, size_t fileSize, int linesPerPage,
-                         GfxRenderer& renderer, int fontId, int vw, std::vector<std::string>& outLines) {
+                         const GfxRenderer& renderer, int fontId, int vw, std::vector<std::string>& outLines) {
   size_t pos = 0;
   while (pos < chunkSize && static_cast<int>(outLines.size()) < linesPerPage) {
     size_t lineEnd = pos;

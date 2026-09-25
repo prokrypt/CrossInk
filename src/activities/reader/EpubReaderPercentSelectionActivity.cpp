@@ -263,9 +263,8 @@ void EpubReaderPercentSelectionActivity::loop() {
   // Touch goes through the FreeInkApp: render() registered the keypad grid and its
   // backspace icon. Runs before the Back handler for the same reason as elsewhere in
   // this codebase: a release routed to a UI control must not also read as a gesture.
-  fui::InputSnapshot snap{};
   if (uiReady) {
-    snap = touchSnapshotFrom(mappedInput);
+    const fui::InputSnapshot snap = touchSnapshotFrom(mappedInput);
     if (snap.touchPressed || snap.touchHeld || snap.touchReleased) {
       const auto event = app.route(snap);
       if (app.invalidated()) requestUpdate();

@@ -118,7 +118,7 @@ ReaderSettingsChangeMask classifyReaderSettingsChange(const ReaderLayoutSettings
   ReaderSettingsChangeMask changeMask = ReaderSettingsChangeMask::None;
 
   if (before.textAntiAliasing != after.textAntiAliasing) {
-    changeMask = changeMask | ReaderSettingsChangeMask::NonLayout;
+    changeMask = ReaderSettingsChangeMask::NonLayout;
   }
   if (before.orientation != after.orientation) {
     changeMask = changeMask | ReaderSettingsChangeMask::Orientation;
@@ -652,6 +652,7 @@ void EpubReaderMenuActivity::buildMenuScreen(UiApp::ScreenType& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, !mappedInput.hasTouch(), false);
   const int tabBarHeight = readerMenuTabBarHeight(metrics.tabBarHeight, mappedInput.hasTouch());
+  // cppcheck-suppress knownConditionTrueFalse ; constant only on some device builds
   const bool tabsAtBottom = readerMenuTabsAtBottom(mappedInput);
   const int contentTop = safe.y + metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) +
                          // cppcheck-suppress knownConditionTrueFalse ; constant only on some device builds
@@ -708,6 +709,7 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   const bool hasTouch = mappedInput.hasTouch();
   Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, !hasTouch, false);
   const int tabBarHeight = readerMenuTabBarHeight(metrics.tabBarHeight, hasTouch);
+  // cppcheck-suppress knownConditionTrueFalse ; constant only on some device builds
   const bool tabsAtBottom = readerMenuTabsAtBottom(mappedInput);
 
   // The menu is a system screen, not reading content: its status indicators

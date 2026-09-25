@@ -32,13 +32,13 @@ class FileBrowserActivity final : public Activity {
   void showDirectoryActionMenu(const std::string& entry, bool ignoreInitialConfirmRelease = false);
   void pinSleepFavorite(const std::string& fullPath);
   void unpinSleepFavorite();
-  bool isPinnedSleepFavorite(const std::string& fullPath) const;
+  static bool isPinnedSleepFavorite(const std::string& fullPath);
   void setPreferredSleepFolder(const std::string& fullPath);
   void clearPreferredSleepFolder();
-  bool isPreferredSleepFolder(const std::string& fullPath) const;
+  static bool isPreferredSleepFolder(const std::string& fullPath);
   void pinBootFavorite(const std::string& fullPath);
   void unpinBootFavorite();
-  bool isPinnedBootFavorite(const std::string& fullPath) const;
+  static bool isPinnedBootFavorite(const std::string& fullPath);
   void showFileActionMenu(const std::string& entry, bool ignoreInitialConfirmRelease = false);
   void startRenameFile(const std::string& fullPath, const std::string& entry);
   void renameFile(const std::string& oldPath, const std::string& oldEntry, const std::string& newStem,

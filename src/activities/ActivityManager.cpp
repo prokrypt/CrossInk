@@ -144,7 +144,7 @@ bool openFrontlightPanel(Activity& activity, GfxRenderer& renderer, MappedInputM
   return true;
 }
 
-bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInput, GfxRenderer& renderer,
+bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInput, const GfxRenderer& renderer,
                                ActivityManager& activityManager) {
   MappedInputManager::CompletedSwipe completed;
   if (!mappedInput.wasCompletedMultiTouchSwipe(completed)) return false;
@@ -413,6 +413,7 @@ void ActivityManager::loop() {
       lock.unlock();  // onEnter may acquire its own lock
       currentActivity->onEnter();
 
+      // cppcheck-suppress knownConditionTrueFalse ; onEnter() above may queue another navigation
       if (pendingAction == PendingAction::None && pendingReaderMenuAction >= 0 &&
           currentActivity->isEpubReaderActivity()) {
         const uint8_t action = static_cast<uint8_t>(pendingReaderMenuAction);
@@ -420,6 +421,7 @@ void ActivityManager::loop() {
         currentActivity->handleExternalReaderMenuAction(action);
       }
 
+      // cppcheck-suppress knownConditionTrueFalse ; onEnter() above may queue another navigation
       if (pendingAction == PendingAction::None && APP_STATE.pendingOverlayResume.valid()) {
         const PendingOverlayResume resume = APP_STATE.pendingOverlayResume;
         if (resume.returnHomeAfterReaderFlow && currentActivity->isEpubReaderActivity() &&
@@ -599,14 +601,17 @@ void ActivityManager::goToNearbyBookReceive() {
   replaceActivity(std::move(activity));
 }
 
+// cppcheck-suppress functionStatic ; per-instance navigation API, delegates to the ActivityManager singleton
 void ActivityManager::goToCalibreWireless(const std::string& returnBookPath) {
   restartToFileTransfer(NetworkMode::CONNECT_CALIBRE, returnBookPath);
 }
 
+// cppcheck-suppress functionStatic ; per-instance navigation API, delegates to the ActivityManager singleton
 void ActivityManager::goToJoinNetworkFileTransfer(const std::string& returnBookPath) {
   restartToFileTransfer(NetworkMode::JOIN_NETWORK, returnBookPath);
 }
 
+// cppcheck-suppress functionStatic ; per-instance navigation API, delegates to the ActivityManager singleton
 void ActivityManager::goToHotspotFileTransfer(const std::string& returnBookPath) {
   restartToFileTransfer(NetworkMode::CREATE_HOTSPOT, returnBookPath);
 }

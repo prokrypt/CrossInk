@@ -60,7 +60,7 @@ void drawToast(const GfxRenderer& renderer, const char* msg) {
 enum class XtchRenderPass { Base, Lsb, Msb };
 
 bool streamXtchRenderPass(const Xtc& xtc, const uint32_t pageIndex, const uint16_t pageWidth, const uint16_t pageHeight,
-                          GfxRenderer& renderer, const XtchRenderPass pass) {
+                          const GfxRenderer& renderer, const XtchRenderPass pass) {
   const size_t planeSize = (static_cast<size_t>(pageWidth) * pageHeight + 7) / 8;
   const size_t colBytes = (pageHeight + 7) / 8;
   const xtc::XtcError error =
@@ -1366,7 +1366,7 @@ void XtcReaderActivity::loadProgress() {
   }
 }
 
-bool XtcReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, GfxRenderer& renderer) {
+bool XtcReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, const GfxRenderer& renderer) {
   Xtc xtc(filePath, "/.crosspoint");
   if (!xtc.load()) {
     LOG_DBG("SLP", "XTC: failed to load %s", filePath.c_str());

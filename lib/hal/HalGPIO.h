@@ -129,6 +129,7 @@ class HalGPIO {
   bool wasSwipe(float& nxStart, float& nyStart, float& nxEnd, float& nyEnd) const;
   bool wasTouchActivity() const;
 #else
+  // cppcheck-suppress-begin functionStatic ; stubs mirror the touch-build instance API
   constexpr bool hasTouch() const { return false; }
   constexpr bool supportsMultiTouch() const { return false; }
   constexpr TouchSnapshot getTouchSnapshot() const { return {}; }
@@ -138,6 +139,7 @@ class HalGPIO {
   constexpr bool wasHomeKeyPressed() const { return false; }
   constexpr bool wasHomeKeyTapped() const { return false; }
   constexpr bool wasHomeKeyLongPressed() const { return false; }
+  // cppcheck-suppress-end functionStatic
 #endif
   void setSharedConfirmPowerShortPressEmitsPower(bool enabled);
 

@@ -36,8 +36,6 @@ void EpubReaderBookmarkListActivity::onEnter() {
   requestUpdate();
 }
 
-void EpubReaderBookmarkListActivity::onExit() { Activity::onExit(); }
-
 void EpubReaderBookmarkListActivity::deleteSelectedBookmark() {
   if (bookmarks.empty() || selectedIndex < 0 || selectedIndex >= static_cast<int>(bookmarks.size())) return;
   if (!BOOKMARKS.removeBookmarkAt(static_cast<size_t>(selectedIndex))) return;

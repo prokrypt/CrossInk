@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <numeric>
 
 #include "MappedInputManager.h"
 #include "components/CompactHeader.h"
@@ -268,10 +269,9 @@ void drawHorizontalBars(GfxRenderer& renderer, const int x, const int y, const i
   const int rowGap = layout.barGap + extraPerSlot;
   const int contentTop = y + layout.sectionTitleH + topPadding;
   const int rowStride = rowContentH + rowGap;
-  int maxLabelW = 0;
-  for (size_t i = 0; i < N; ++i) {
-    maxLabelW = std::max(maxLabelW, renderer.getTextWidth(layout.chartLabelFontId, I18N.get(labels[i])));
-  }
+  const int maxLabelW = std::accumulate(labels.begin(), labels.end(), 0, [&](const int widest, const auto label) {
+    return std::max(widest, renderer.getTextWidth(layout.chartLabelFontId, I18N.get(label)));
+  });
   const int labelColumnW = std::max(layout.chartLabelW, labelLeftPadding + maxLabelW + labelRightPadding);
   const int barX = x + labelColumnW + barLeftGap;
   const int barW = std::max(0, w - labelColumnW - barLeftGap - rightPadding);
@@ -287,7 +287,7 @@ void drawHorizontalBars(GfxRenderer& renderer, const int x, const int y, const i
   }
 }
 
-void drawPerBookStatsCard(GfxRenderer& renderer, const int x, const int y, const int w, const int h,
+void drawPerBookStatsCard(const GfxRenderer& renderer, const int x, const int y, const int w, const int h,
                           const std::string& bookTitle, const BookReadingStats& stats, const float progressPercent,
                           const bool hasEstimatedTimeLeft, const uint32_t estimatedTimeLeftSeconds,
                           const StatsLayout& layout) {
@@ -384,8 +384,8 @@ void drawPerBookStatsCard(GfxRenderer& renderer, const int x, const int y, const
                finished ? tr(STR_STATS_FINISHED_DATE) : tr(STR_STATS_EST_FINISH_DATE));
 }
 
-void drawGlobalStatsCard(GfxRenderer& renderer, const int x, const int y, const int w, const int h, const char* title,
-                         const GlobalReadingStats& stats, const StatsLayout& layout) {
+void drawGlobalStatsCard(const GfxRenderer& renderer, const int x, const int y, const int w, const int h,
+                         const char* title, const GlobalReadingStats& stats, const StatsLayout& layout) {
   renderer.drawRect(x, y, w, h);
   renderer.drawLine(x, y + layout.topCardTitleH, x + w, y + layout.topCardTitleH);
   const bool showRtcStats = shouldShowRtcBasedStats();
@@ -657,6 +657,7 @@ void renderEditBookDatesPage(GfxRenderer& renderer, const MappedInputManager* ma
     CompactHeader::drawTitle(renderer, tr(STR_READING_STATS));
   }
 
+  // cppcheck-suppress unreadVariable ; only read in touch builds
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
   const int cardW = pageWidth - 120;

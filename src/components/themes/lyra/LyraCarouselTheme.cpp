@@ -357,7 +357,6 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   const int titleBlockHeight = titleLineHeight * static_cast<int>(titleLines.size());
   const int reservedTitleBlockHeight = titleLineHeight * 2;
   const int titleY = rect.y + kTitleTopClearance;
-  const int centerTileY = std::max(rect.y + kCoverTopPad, titleY + reservedTitleBlockHeight + kTitleBottomGap);
   const int sideMaxHeight = std::max(kNearSideInnerH, kNearSideOuterH);
   const Rect centerCoverSlotRect = computeCenterCoverSlotRect(renderer, rect, recentBooks);
   const int centerDrawY = centerCoverSlotRect.y;
@@ -424,7 +423,6 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     const int iconY = outRect.y + outRect.height / 3 + 14;
     renderer.drawIcon(CoverIcon, iconX, iconY, 32, 32);
 
-    const int fallbackTitleX = outRect.x + kFallbackTitlePadX;
     const int fallbackTitleY = iconY + 32 + kFallbackIconGap;
     const int fallbackTitleW = outRect.width - kFallbackTitlePadX * 2;
     const int fallbackTitleH = outRect.y + outRect.height - kFallbackTitlePadBottom - fallbackTitleY;

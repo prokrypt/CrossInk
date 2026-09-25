@@ -55,6 +55,7 @@ class TouchRegistry {
     return instance;
   }
 
+  // cppcheck-suppress-begin functionStatic ; stubs mirror the touch-build instance API
   constexpr void setEnabled(bool) {}
   constexpr bool isEnabled() const { return false; }
   constexpr void beginFrame() {}
@@ -62,5 +63,6 @@ class TouchRegistry {
   constexpr void publish() {}
   constexpr void clear() {}
   constexpr bool hitTest(int, int, Kind, int&) const { return false; }
+  // cppcheck-suppress-end functionStatic
 };
 #endif

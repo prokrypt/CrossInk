@@ -220,7 +220,7 @@ class DictionaryDefinitionActivity final : public Activity {
   bool hasModalBackground() const { return backgroundContext_ && backgroundRender_; }
   void sizeModalForCurrentPage();
   void drawModalFrame() const;
-  int getMixedWidth(std::vector<IpaTextSpan>& ipaRuns, const char* text, EpdFontFamily::Style style);
+
   bool definitionTextNeedsApproximation(const char* text) const;
   std::string approximateDefinitionText(const char* text, bool inEtymologyTree) const;
   bool shouldApproximateDefinitionCodepoint(uint32_t cp) const;

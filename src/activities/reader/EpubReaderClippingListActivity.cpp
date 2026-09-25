@@ -177,6 +177,7 @@ int EpubReaderClippingListActivity::getDetailTextWidth() const {
 
 int EpubReaderClippingListActivity::getDetailLinesPerPage() const {
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  // cppcheck-suppress unreadVariable ; only read in touch builds
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int lineStep = renderer.getLineHeight(UI_10_FONT_ID) + DETAIL_LINE_GAP;
 #if CROSSINK_APP_CAP_TOUCH
@@ -541,6 +542,7 @@ void EpubReaderClippingListActivity::renderDetail() {
   const int contentX = safe.x;
   const int contentWidth = safe.width;
   const int contentY = safe.y;
+  // cppcheck-suppress unreadVariable ; only read in touch builds
   const auto& metrics = UITheme::getInstance().getMetrics();
 
   const char* chapter = tr(STR_CLIPPINGS);

@@ -32,12 +32,12 @@ class ReaderActivity final : public Activity {
   // refresh before the reader paints its first page.
   static bool shouldShowLoadingPopup(const std::string& path);
 
-  void goToLibrary(const std::string& fromBookPath = "");
+  static void goToLibrary(const std::string& fromBookPath = "");
   void onGoToEpubReader(std::unique_ptr<Epub> epub, EpubReaderActivity::BookReaderSettingsData readerSettings);
   void onGoToXtcReader(std::unique_ptr<Xtc> xtc);
   void onGoToTxtReader(std::unique_ptr<Txt> txt);
   void onGoToBmpViewer(const std::string& path);
-  void queueEpubOpenAlert(Epub::OpenFailure failure);
+  static void queueEpubOpenAlert(Epub::OpenFailure failure);
 
   void onGoBack();
   int initialRefreshCountdown() const;
