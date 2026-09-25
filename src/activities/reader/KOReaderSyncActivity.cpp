@@ -181,7 +181,6 @@ void KOReaderSyncActivity::saveProgressAndReturn(const CrossPointPosition& posit
     requestUpdate(true);
     return;
   }
-  RecentBookProgress::saveCachedEpubPercent(*epub, position.spineIndex, position.pageNumber, pageCount);
   returnToReader();
 }
 
