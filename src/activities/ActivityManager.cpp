@@ -256,7 +256,7 @@ uint8_t actionForTwoFingerDirection(const TwoFingerSwipe::Direction direction) {
 }
 
 #if CROSSINK_APP_CAP_TOUCH
-bool applyLiveTwoFingerLightSwipe(Activity& activity, MappedInputManager& mappedInput, GfxRenderer& renderer,
+bool applyLiveTwoFingerLightSwipe(Activity& activity, MappedInputManager& mappedInput, const GfxRenderer& renderer,
                                   ActivityManager& activityManager, LiveLightSwipeState& state,
                                   LiveLightSwipeState& edgeState) {
   int x1 = 0;
@@ -336,7 +336,7 @@ bool applyLiveTwoFingerLightSwipe(Activity& activity, MappedInputManager& mapped
 }
 #endif
 
-bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInput, GfxRenderer& renderer,
+bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInput, const GfxRenderer& renderer,
                                ActivityManager& activityManager) {
   MappedInputManager::CompletedSwipe completed;
   if (!mappedInput.wasCompletedMultiTouchSwipe(completed)) return false;

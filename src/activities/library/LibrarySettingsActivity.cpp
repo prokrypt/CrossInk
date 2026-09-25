@@ -135,15 +135,15 @@ void LibrarySettingsActivity::buildScreen(UiApp::ScreenType& screen) {
   const bool checks[] = {SETTINGS.libraryShowEpub != 0, SETTINGS.libraryShowXtc != 0, SETTINGS.libraryShowTxt != 0,
                          SETTINGS.libraryShowMarkdown != 0};
   for (int i = 0; i < 4; ++i) {
-    fui::ToggleRowProps toggle;
-    toggle.row.label = I18N.get(labels[i]);
-    toggle.row.action = ACTION_ROW;
-    toggle.row.valueId = static_cast<int16_t>(i + 1);
-    toggle.row.labelText = screen.theme().bodyText;
-    toggle.row.styles = rowStyles;
-    toggle.row.state = showSelection && selection == i + 1 ? fui::StateSelected : fui::StateNormal;
-    toggle.checked = checks[i];
-    screen.toggleRow(toggle, 44);
+    fui::ToggleRowProps toggleProps;
+    toggleProps.row.label = I18N.get(labels[i]);
+    toggleProps.row.action = ACTION_ROW;
+    toggleProps.row.valueId = static_cast<int16_t>(i + 1);
+    toggleProps.row.labelText = screen.theme().bodyText;
+    toggleProps.row.styles = rowStyles;
+    toggleProps.row.state = showSelection && selection == i + 1 ? fui::StateSelected : fui::StateNormal;
+    toggleProps.checked = checks[i];
+    screen.toggleRow(toggleProps, 44);
   }
 }
 

@@ -655,6 +655,7 @@ void EpubReaderMenuActivity::buildMenuScreen(UiApp::ScreenType& screen) {
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, !mappedInput.hasTouch(), false);
   const int tabBarHeight = readerMenuTabBarHeight(metrics.tabBarHeight, mappedInput.hasTouch());
 #if CROSSINK_APP_CAP_TOUCH
+  // cppcheck-suppress knownConditionTrueFalse ; compile-time false on Sticky (touch, no frontlight)
   const bool tabsAtBottom = readerMenuTabsAtBottom(mappedInput);
   // Sticky has touch but no frontlight, so this is compile-time false there;
   // X4 Pro still evaluates the runtime placement check.
@@ -720,6 +721,7 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, !hasTouch, false);
   const int tabBarHeight = readerMenuTabBarHeight(metrics.tabBarHeight, hasTouch);
 #if CROSSINK_APP_CAP_TOUCH
+  // cppcheck-suppress knownConditionTrueFalse ; compile-time false on Sticky (touch, no frontlight)
   const bool tabsAtBottom = readerMenuTabsAtBottom(mappedInput);
 #endif
 

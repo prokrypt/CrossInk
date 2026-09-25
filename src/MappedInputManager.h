@@ -78,6 +78,7 @@ class MappedInputManager {
 #if CROSSINK_APP_CAP_TOUCH
   void setReaderTouchscreenOverride(bool enabled) { readerTouchscreenOverride = enabled; }
 #else
+  // cppcheck-suppress functionStatic ; no-touch stub mirrors the touch-build instance API
   constexpr void setReaderTouchscreenOverride(bool) {}
 #endif
 
@@ -187,6 +188,7 @@ class MappedInputManager {
   // Reader-menu shortcut: a long press of the capacitive home key.
   bool wasReaderMenuHold() const;
 #else
+  // cppcheck-suppress-begin functionStatic ; no-touch stubs mirror the touch-build instance API
   constexpr bool hasTouch() const { return false; }
   constexpr bool hasTouchHardware() const { return false; }
   constexpr bool supportsMultiTouch() const { return false; }
@@ -236,6 +238,7 @@ class MappedInputManager {
   constexpr bool wasReaderHomeGesture() const { return false; }
   constexpr bool wasReaderLightPanelGesture() const { return false; }
   constexpr bool wasReaderMenuHold() const { return false; }
+  // cppcheck-suppress-end functionStatic
 #endif
   bool wasAnyPressed() const;
   bool wasAnyReleased() const;
@@ -335,8 +338,10 @@ class MappedInputManager {
   mutable unsigned long touchHeldOverrideMs = 0;
   mutable unsigned long touchHeldOverrideAt = 0;
 #else
+  // cppcheck-suppress-begin functionStatic ; no-touch stubs mirror the touch-build instance API
   constexpr bool wasBackGesture() const { return false; }
   constexpr bool wasFrontButtonHintTapped(uint8_t) const { return false; }
   constexpr bool wasFrontButtonHintTouchedDown(uint8_t) const { return false; }
+  // cppcheck-suppress-end functionStatic
 #endif
 };
