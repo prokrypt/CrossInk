@@ -38,12 +38,12 @@ void CrossPointState::clearRecentSleepHistory() {
 
 void CrossPointState::setPendingOverlayResume(PendingOverlayResume value) {
   pendingOverlayResume = std::move(value);
-  saveToFile();
+  _dirty = true;
 }
 
 bool CrossPointState::consumePendingOverlayResume(PendingOverlayResume& value) {
   if (!consumePendingOverlayResumeOnce(pendingOverlayResume, value)) return false;
-  saveToFile();
+  _dirty = true;
   return true;
 }
 
@@ -58,7 +58,18 @@ bool CrossPointState::saveToFile() const {
   std::lock_guard<std::mutex> stateLock(_mutex);
   JsonDocument doc;
   toJson(doc);
-  return PersistableStoreBase::writeDocToFile(STATE_FILE_JSON, doc);
+  const bool ok = PersistableStoreBase::writeDocToFile(STATE_FILE_JSON, doc);
+  if (ok) {
+    _dirty = false;
+  }
+  return ok;
+}
+
+bool CrossPointState::saveIfDirty() {
+  if (_dirty) {
+    return saveToFile();
+  }
+  return true;
 }
 
 bool CrossPointState::loadFromFile() {
@@ -68,7 +79,11 @@ bool CrossPointState::loadFromFile() {
     JsonDocument doc;
     if (PersistableStoreBase::readDocFromFile(STATE_FILE_JSON, doc)) {
       std::lock_guard<std::mutex> stateLock(_mutex);
-      return fromJson(doc.as<JsonVariantConst>());
+      if (fromJson(doc.as<JsonVariantConst>())) {
+        _dirty = false;
+        return true;
+      }
+      return false;
     }
   }
 
