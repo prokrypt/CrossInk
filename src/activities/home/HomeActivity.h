@@ -91,7 +91,7 @@ class HomeActivity final : public Activity {
   const HomeMenuItem initialMenuItem;
   std::string initialBookPath;
 
-  void onSelectBook(const std::string& path);
+  void openBook(const std::string& path);
   void onFileBrowserOpen();
   void onContinueReading();
   void onRecentsOpen();

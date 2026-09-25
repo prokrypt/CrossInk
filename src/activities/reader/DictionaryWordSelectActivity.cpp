@@ -808,6 +808,7 @@ void DictionaryWordSelectActivity::finishTouchLookupOnCurrentPage(const std::str
   controller.lookupOrPopup(phrase, wordCount);
 }
 
+// cppcheck-suppress unusedPrivateFunction ; used only in touch builds
 bool DictionaryWordSelectActivity::continueTouchSelectionOnNextPage() {
   // Clipping preloads three pages, but dictionary lookup intentionally owns
   // just one page working set. Retain the first endpoint and switch to page
@@ -881,6 +882,7 @@ bool DictionaryWordSelectActivity::continueTouchSelectionOnNextPage() {
   return true;
 }
 
+// cppcheck-suppress unusedPrivateFunction ; used only in touch builds
 std::string DictionaryWordSelectActivity::finishTouchLookupPhrase() {
   std::string phrase = navigator.finishTouchMultiSelect();
   if (!hasCrossPageSelection_) return phrase;

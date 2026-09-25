@@ -560,7 +560,7 @@ int getHomeMenuSelectionOffset(const std::vector<RecentBook>& recentBooks) {
 // ---------------------------------------------------------------------------
 // Static carousel frame cache — survives HomeActivity re-creation so that
 // returning to home (e.g. after settings) doesn't re-read covers from SD.
-// Freed explicitly in onSelectBook() before entering the reader.
+// Freed explicitly in openBook() before entering the reader.
 // ---------------------------------------------------------------------------
 namespace {
 class CarouselCache {
@@ -1830,7 +1830,7 @@ void HomeActivity::loop() {
   auto activateSelectedHomeItem = [this, visibleBookCount, &activateHomeMenuAction]() {
     const auto& metrics = UITheme::getInstance().getMetrics();
     if (!metrics.homeContinueReadingInMenu && selectorIndex < visibleBookCount) {
-      onSelectBook(recentBooks[selectorIndex].path);
+      openBook(recentBooks[selectorIndex].path);
       return;
     }
 
@@ -2337,7 +2337,7 @@ void HomeActivity::updateSlidingWindowCache(int centerIdx, int bookCount) {
   // from the SD snapshot cache on demand in render().
 }
 
-void HomeActivity::onSelectBook(const std::string& path) {
+void HomeActivity::openBook(const std::string& path) {
   // renderCarouselFrame() uses the same static cache on the render task. Hold
   // its lock while invalidating so a book selection cannot free a destination
   // buffer midway through the snapshot copy.
@@ -2361,7 +2361,7 @@ void HomeActivity::onContinueReading() {
       static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL;
   const int bookIndex = isCarousel ? getHighlightedBookIndex() : 0;
   if (bookIndex >= 0 && bookIndex < static_cast<int>(recentBooks.size())) {
-    onSelectBook(recentBooks[bookIndex].path);
+    openBook(recentBooks[bookIndex].path);
   }
 }
 

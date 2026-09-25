@@ -38,7 +38,7 @@ class EpubReaderTouchMenuActivity final : public Activity {
       void* endGlobalSettingsEditContext, const char* dictionaryFontFamilyName, uint8_t dictionaryFontPointSize,
       bool hasDictionaryFontOverride,
       ReaderOptionsActivity::DictionaryFontChangedCallback dictionaryFontChangedCallback,
-      void* dictionaryFontChangedContext, ReaderDrawerState initialState = {});
+      void* dictionaryFontChangedContext, const ReaderDrawerState& initialState = {});
 
   void onEnter() override;
   void onExit() override;
@@ -48,7 +48,7 @@ class EpubReaderTouchMenuActivity final : public Activity {
   bool allowFrontlightPanelGesture() const override { return false; }
   bool requiresFreshBackdrop() const override { return true; }
   bool allowPowerAsConfirmInReaderMode() const override { return true; }
-  bool allowGlobalHomeGesture() const override { return true; }
+
   // Route the touch-screen edge swipe through loop() so it can go Home while
   // preserving the capacitive Home key's existing drawer-back behavior.
   bool allowGlobalHomeSwipeGesture() const override { return false; }
@@ -224,7 +224,7 @@ class EpubReaderTouchMenuActivity final : public Activity {
   bool saveBookDictionary(const std::string& path);
   const char* rowLabel(RowId row) const;
   const char* rowValue(RowId row, char* buffer, size_t bufferSize) const;
-  bool rowIsToggle(RowId row) const;
+  static bool rowIsToggle(RowId row);
   bool rowShowsNavigationCaret(RowId row) const;
   bool rowToggleValue(RowId row) const;
   const char* paneTitle() const;

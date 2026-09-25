@@ -273,7 +273,6 @@ void OpdsSettingsActivity::buildListScreen(UiApp::ScreenType& screen) {
 void OpdsSettingsActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
-  const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
   // Reuse STR_OPDS_BROWSER as the "edit existing server" title.
   // New server creation uses STR_ADD_SERVER.

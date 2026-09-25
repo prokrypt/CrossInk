@@ -163,7 +163,7 @@ struct SettingInfo {
     return s;
   }
 
-  static SettingInfo String(StrId nameId, char* ptr, size_t maxLen, const char* key = nullptr,
+  static SettingInfo String(StrId nameId, const char* ptr, size_t maxLen, const char* key = nullptr,
                             StrId category = StrId::STR_NONE_OPT) {
     SettingInfo s;
     s.nameId = nameId;
@@ -298,7 +298,7 @@ class SettingsActivity final : public Activity {
   StrId activeSubmenuTitleId() const;
   void openSubmenu(SettingAction action);
   void closeSubmenu();
-  bool currentSettingUsesOptionMenu(const SettingInfo& setting) const;
+  static bool currentSettingUsesOptionMenu(const SettingInfo& setting);
   void openEnumOptionPicker(const SettingInfo& setting);
   void openScreenMarginPicker(const SettingInfo& setting);
   void openWordSpacingPicker();

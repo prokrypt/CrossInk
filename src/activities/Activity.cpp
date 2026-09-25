@@ -10,8 +10,10 @@ void Activity::requestUpdate(bool immediate) { activityManager.requestUpdate(imm
 
 RequestUpdateResult Activity::requestUpdateAndWait() { return activityManager.requestUpdateAndWait(); }
 
+// cppcheck-suppress functionStatic ; per-instance navigation API, delegates to the ActivityManager singleton
 void Activity::onGoHome(HomeMenuItem item) { activityManager.goHome(item); }
 
+// cppcheck-suppress functionStatic ; per-instance navigation API, delegates to the ActivityManager singleton
 void Activity::onSelectBook(const std::string& path) { activityManager.goToReader(path); }
 
 void Activity::startActivityForResult(std::unique_ptr<Activity>&& activity, ActivityResultHandler resultHandler) {
@@ -26,4 +28,5 @@ void Activity::finishAfterBackPress() {
   finish();
 }
 
+// cppcheck-suppress functionStatic ; per-instance navigation API, delegates to the ActivityManager singleton
 void Activity::finish() { activityManager.popActivity(); }

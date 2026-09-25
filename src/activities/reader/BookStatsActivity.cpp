@@ -180,7 +180,7 @@ void BookStatsActivity::clearEditedDate(const bool finishedField) {
 }
 
 bool BookStatsActivity::shouldClearDateOnAdjust(const ReadingStatsDate& date, const bool finishedField,
-                                                const int fieldIndex, const int delta) const {
+                                                const int fieldIndex, const int delta) {
   if (!date.isValid()) {
     return false;
   }

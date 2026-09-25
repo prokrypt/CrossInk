@@ -72,7 +72,7 @@ inline bool loadProgress(const Epub& epub, Progress& progress, const char* modul
 }
 
 // Persists reader progress for an EPUB to its cache directory. Returns true on success.
-inline bool saveProgress(Epub& epub, int spineIndex, int pageNumber, int pageCount,
+inline bool saveProgress(const Epub& epub, int spineIndex, int pageNumber, int pageCount,
                          const std::optional<uint32_t> visibleTextOffset = std::nullopt) {
   if (spineIndex < 0 || spineIndex > 0xFFFF || pageNumber < 0 || pageNumber > 0xFFFF || pageCount < 0 ||
       pageCount > 0xFFFF) {

@@ -601,7 +601,7 @@ void FileBrowserActivity::unpinSleepFavorite() {
   requestUpdate();
 }
 
-bool FileBrowserActivity::isPinnedSleepFavorite(const std::string& fullPath) const {
+bool FileBrowserActivity::isPinnedSleepFavorite(const std::string& fullPath) {
   return APP_STATE.favoriteSleepImagePath == fullPath;
 }
 
@@ -641,7 +641,7 @@ void FileBrowserActivity::clearPreferredSleepFolder() {
   requestUpdate();
 }
 
-bool FileBrowserActivity::isPreferredSleepFolder(const std::string& fullPath) const {
+bool FileBrowserActivity::isPreferredSleepFolder(const std::string& fullPath) {
   return APP_STATE.preferredSleepFolderPath == normalizeDirectoryPath(fullPath);
 }
 
@@ -669,7 +669,7 @@ void FileBrowserActivity::unpinBootFavorite() {
   requestUpdate();
 }
 
-bool FileBrowserActivity::isPinnedBootFavorite(const std::string& fullPath) const {
+bool FileBrowserActivity::isPinnedBootFavorite(const std::string& fullPath) {
   return APP_STATE.favoriteBootImagePath == fullPath;
 }
 
@@ -889,8 +889,8 @@ void FileBrowserActivity::renameFile(const std::string& oldPath, const std::stri
   }
 
   std::string title = getFileName(oldEntry);
-  std::string author;
   if (bookType) {
+    std::string author;
     const auto& recentBooks = RECENT_BOOKS.getBooks();
     const auto recent = std::find_if(recentBooks.begin(), recentBooks.end(),
                                      [&oldPath](const RecentBook& book) { return book.path == oldPath; });
@@ -1534,7 +1534,6 @@ size_t FileBrowserActivity::findEntry(const std::string& name) {
     return row == SIZE_MAX ? 0 : row;
   }
 
-  for (size_t i = 0; i < files.size(); i++)
-    if (files[i] == name) return i;
-  return 0;
+  const auto match = std::find(files.begin(), files.end(), name);
+  return match == files.end() ? 0 : static_cast<size_t>(match - files.begin());
 }

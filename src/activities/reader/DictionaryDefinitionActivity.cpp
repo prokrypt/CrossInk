@@ -810,15 +810,6 @@ void DictionaryDefinitionActivity::collectLineSink(void* ctx, const DictLayout::
 // Shared helper: measure text width accounting for mixed IPA/non-IPA runs
 // ---------------------------------------------------------------------------
 
-int DictionaryDefinitionActivity::getMixedWidth(std::vector<IpaTextSpan>& ipaRuns, const char* text,
-                                                EpdFontFamily::Style style) {
-  ipaRuns.clear();
-  splitIpaRuns(text, ipaRuns);
-  return std::accumulate(ipaRuns.begin(), ipaRuns.end(), 0, [&](int sum, const IpaTextSpan& run) {
-    return sum + renderer.getTextWidth(getDefinitionFontId(run.isIpa), run.text.c_str(), style);
-  });
-}
-
 // ---------------------------------------------------------------------------
 // HTML path: run DictHtmlRenderer, lay out spans into LayoutLines
 // ---------------------------------------------------------------------------

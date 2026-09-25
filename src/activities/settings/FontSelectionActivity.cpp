@@ -69,10 +69,10 @@ uint8_t currentFontPointSize(const SdCardFontRegistry* registry) {
 int findCurrentFontIndex(const SdCardFontRegistry* registry, const char* sdFontFamilyName, uint8_t fontFamily) {
   if (sdFontFamilyName[0] != '\0' && registry) {
     const auto& families = registry->getFamilies();
-    for (int i = 0; i < static_cast<int>(families.size()); i++) {
-      if (families[i].name == sdFontFamilyName) {
-        return CrossPointSettings::BUILTIN_FONT_COUNT + i;
-      }
+    const auto match = std::find_if(families.begin(), families.end(),
+                                    [&](const auto& family) { return family.name == sdFontFamilyName; });
+    if (match != families.end()) {
+      return CrossPointSettings::BUILTIN_FONT_COUNT + static_cast<int>(match - families.begin());
     }
   }
 

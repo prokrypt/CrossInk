@@ -304,9 +304,8 @@ void FrontlightPanelActivity::loop() {
     return;
   }
 
-  fui::InputSnapshot snap{};
   if (uiReady) {
-    snap = touchSnapshotFrom(mappedInput);
+    const fui::InputSnapshot snap = touchSnapshotFrom(mappedInput);
     if (snap.touchPressed || snap.touchHeld || snap.touchReleased) {
       const auto event = app.route(snap);
       if (app.invalidated()) requestUpdate();

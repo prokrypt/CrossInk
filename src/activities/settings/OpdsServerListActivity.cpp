@@ -254,7 +254,6 @@ void OpdsServerListActivity::render(RenderLock&&) {
 
   renderer.clearScreen();
 
-  const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
 
   const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput);

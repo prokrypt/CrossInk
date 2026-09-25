@@ -515,7 +515,7 @@ void SettingsActivity::closeSubmenu() {
   showSettingSelection = true;
 }
 
-bool SettingsActivity::currentSettingUsesOptionMenu(const SettingInfo& setting) const {
+bool SettingsActivity::currentSettingUsesOptionMenu(const SettingInfo& setting) {
   return setting.nameId != StrId::STR_FONT_FAMILY && setting.type == SettingType::ENUM &&
          settingEnumOptionCount(setting) > 2 &&
          (setting.valuePtr != nullptr || (setting.valueGetter && setting.valueSetter));
