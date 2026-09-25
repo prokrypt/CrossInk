@@ -2,6 +2,7 @@
 
 ### Added
 
+- View a selected book's reading stats from its Library or File Browser action menu.
 - Library replaces Recent Books with a searchable book list, title and author metadata, and sorting by date added, title, author last name, author first name, or recently opened.
 - Reset a book's reader settings from the in-reader Settings tab.
 - Assign actions to upward and downward slides along either screen edge on touch devices.
@@ -9,6 +10,7 @@
 - Add the continuous **IncreMENTAL** EPUB indexing method for background chapter indexing.
 - A new **Extend** sleep screen cover mode fills the empty margins around a cover that doesn't match the screen's aspect ratio by repeating its edge pixels instead of leaving them blank.
 - A new **Extend Mirror** sleep screen cover mode fills those same margins by reflecting the cover's edge content instead of repeating a single edge pixel.
+- TTF font support on ESP32-S3 devices. Whole-point sizes from 8pt to 22pt will be automatically available.
 
 ### Changed
 
@@ -19,6 +21,9 @@
 
 ### Fixed
 
+- Saved clipping lists now show a scrollbar when more clippings are available below the visible rows.
+- EPUB Safe Mode no longer pins inherited fonts and page layout as personal book settings.
+- The X4 Pro Home button now steps back through dictionary lookup, chapter selection, and nested settings instead of jumping to Home.
 - OPDS downloads now use the first listed author for filename templates when a catalog also lists translators or other contributors.
 - Retain the CSS spacing supplied by empty inline spans.
 - X3/X4 firmware builds again with automatic light sleep enabled. The build platform is updated to pioarduino 55.03.39 (Arduino-ESP32 3.3.9, ESP-IDF 5.5.4), which fixes a linker-script mismatch that stopped the image from being created.
@@ -28,6 +33,12 @@
 - Rapid queued EPUB page turns skip rendering intermediate pages until the final destination.
 - Devices with only Up/Down navigation buttons (e.g. X4 Pro) can now reach every book in the Recent Books grid view, with Up/Down walking left-to-right, line by line, instead of only moving between rows.
 - Automatic light sleep can no longer engage while the e-ink panel is mid-refresh, closing a latent waveform/SPI timing risk on devices with idle power saving enabled.
+- Improve stability when connecting to Wi-Fi for update checks and KOReader authentication on X4 Pro.
+- Crash reports now identify the primary CPU core, show task names when available, preserve both cores' backtraces, and include the firmware ELF hash needed to decode them.
+- Release clipping index memory after closing a book or clearing its clippings.
+- Keep clipped text, exported excerpts, and chapter titles on complete characters when shortened.
+- Keep clipping-selection button hints from covering book text.
+- Changing a reader font with incremental indexing now returns after the current reading position is ready, instead of waiting for the whole chapter to be re-indexed.
 
 ## [v1.6.0] - 2026-09-21
 

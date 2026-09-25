@@ -55,10 +55,12 @@ enum class ReaderDrawerPane : uint8_t {
   Dictionary,
   DictionaryFont,
   EnumOptions,
+  TtfRendering,
 };
 
 enum class ReaderDrawerCatalogItem : uint8_t {
   ReaderFont,
+  TtfRendering,
   DictionaryFont,
   Spacing,
   TextAa,
@@ -100,6 +102,13 @@ enum class ReaderDrawerCatalogItem : uint8_t {
   FontSize,
   DictionaryFontFamily,
   DictionaryFontSize,
+  TtfHinting,
+  TtfRaster,
+  TtfInterpreter,
+  TtfWeight,
+  TtfSlant,
+  TtfStemDarkening,
+  TtfReset,
   ResetBookReaderSettings,
 };
 
@@ -113,7 +122,7 @@ struct ReaderDrawerAvailability {
 };
 
 struct ReaderDrawerTabCatalog {
-  std::array<ReaderDrawerCatalogItem, 12> items{};
+  std::array<ReaderDrawerCatalogItem, 13> items{};
   uint8_t count = 0;
 
   constexpr void add(const ReaderDrawerCatalogItem item) { items[count++] = item; }
@@ -202,6 +211,11 @@ constexpr bool shouldRenderReaderDrawerAntiAliasing(const bool previewRendered, 
 constexpr bool readerDrawerNeedsTallLandscapeSheet(const ReaderDrawerPane pane) {
   return readerDrawerSliderPreviewsText(pane) || pane == ReaderDrawerPane::Percent ||
          pane == ReaderDrawerPane::StablePage;
+}
+
+constexpr bool readerDrawerNeedsExternalBackdrop(const bool previewDirty, const bool previewModelValid,
+                                                 const bool activeFontChanged) {
+  return !previewDirty || (!previewModelValid && !activeFontChanged);
 }
 
 constexpr bool isReaderDrawerRowFocused(const bool buttonFocusActive, const int16_t selectedIndex,

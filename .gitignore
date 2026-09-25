@@ -52,3 +52,4 @@ dist-publish/
 
 
 /.platformio-core
+lib/ScalableFont/*.generated.h
