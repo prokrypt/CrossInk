@@ -46,11 +46,13 @@ int readerMenuTabBarHeight(const int baseTabBarHeight, const bool hasTouch) {
   return baseTabBarHeight * (hasTouch ? touchReaderMenuTabBarHeightScale : 1);
 }
 
+#if CROSSINK_APP_CAP_TOUCH
 bool readerMenuTabsAtBottom(const MappedInputManager& mappedInput) {
   // Frontlight boards reserve the top-edge down-swipe for the quick panel, so
   // the reader menu opens from the bottom and its tabs should stay thumb-close.
   return mappedInput.hasTouch() && Frontlight.present();
 }
+#endif
 
 Rect readerMenuHeaderRect(const GfxRenderer& renderer, const MappedInputManager& mappedInput) {
   const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, !mappedInput.hasTouch(), false);
@@ -652,14 +654,22 @@ void EpubReaderMenuActivity::buildMenuScreen(UiApp::ScreenType& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, !mappedInput.hasTouch(), false);
   const int tabBarHeight = readerMenuTabBarHeight(metrics.tabBarHeight, mappedInput.hasTouch());
-  // cppcheck-suppress knownConditionTrueFalse ; constant only on some device builds
+#if CROSSINK_APP_CAP_TOUCH
   const bool tabsAtBottom = readerMenuTabsAtBottom(mappedInput);
+  // Sticky has touch but no frontlight, so this is compile-time false there;
+  // X4 Pro still evaluates the runtime placement check.
   const int contentTop = safe.y + metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) +
-                         // cppcheck-suppress knownConditionTrueFalse ; constant only on some device builds
-                         metrics.tabBarHeight + (tabsAtBottom ? 0 : tabBarHeight) + metrics.verticalSpacing;
-  const int contentBottom =
-      // cppcheck-suppress knownConditionTrueFalse ; constant only on some device builds
-      renderer.getScreenHeight() - (safe.y + safe.height) + (tabsAtBottom ? tabBarHeight + metrics.verticalSpacing : 0);
+                         metrics.tabBarHeight +
+                         // cppcheck-suppress knownConditionTrueFalse
+                         (tabsAtBottom ? 0 : tabBarHeight) + metrics.verticalSpacing;
+  const int contentBottom = renderer.getScreenHeight() - (safe.y + safe.height) +
+                            // cppcheck-suppress knownConditionTrueFalse
+                            (tabsAtBottom ? tabBarHeight + metrics.verticalSpacing : 0);
+#else
+  const int contentTop = safe.y + metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) +
+                         metrics.tabBarHeight + tabBarHeight + metrics.verticalSpacing;
+  const int contentBottom = renderer.getScreenHeight() - (safe.y + safe.height);
+#endif
   // The legacy header, progress band, and icon tabs remain outside the app;
   // FreeInkUI owns the scalable list between them.
   screen.setContentMargin(fui::Insets{static_cast<int16_t>(contentTop),
@@ -709,8 +719,9 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   const bool hasTouch = mappedInput.hasTouch();
   Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, !hasTouch, false);
   const int tabBarHeight = readerMenuTabBarHeight(metrics.tabBarHeight, hasTouch);
-  // cppcheck-suppress knownConditionTrueFalse ; constant only on some device builds
+#if CROSSINK_APP_CAP_TOUCH
   const bool tabsAtBottom = readerMenuTabsAtBottom(mappedInput);
+#endif
 
   // The menu is a system screen, not reading content: its status indicators
   // stay visible unless their setting is Hide Always.
@@ -739,12 +750,20 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
                          screen.width, metrics.tabBarHeight},
                     progressLine.c_str());
 
-  // cppcheck-suppress knownConditionTrueFalse ; constant only on some device builds
-  const int tabBarY = tabsAtBottom ? screen.y + screen.height - tabBarHeight
-                                   : screen.y + metrics.topPadding +
-                                         TouchHeaderBackButton::height(metrics, mappedInput) + metrics.tabBarHeight;
+  const int topTabBarY =
+      screen.y + metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) + metrics.tabBarHeight;
+#if CROSSINK_APP_CAP_TOUCH
+  // cppcheck-suppress knownConditionTrueFalse
+  const int tabBarY = tabsAtBottom ? screen.y + screen.height - tabBarHeight : topTabBarY;
+#else
+  const int tabBarY = topTabBarY;
+#endif
   const Rect tabRect{screen.x, tabBarY, screen.width, tabBarHeight};
+#if CROSSINK_APP_CAP_TOUCH
   drawIconTabBar(tabRect, !tabsAtBottom);
+#else
+  drawIconTabBar(tabRect, true);
+#endif
 
   uiReady = false;
   app.render();

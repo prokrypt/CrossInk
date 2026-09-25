@@ -2,23 +2,47 @@
 
 ### Added
 
+- Library replaces Recent Books with a searchable book list, title and author metadata, and sorting by date added, title, author last name, author first name, or recently opened.
+- Reset a book's reader settings from the in-reader Settings tab.
+- Assign actions to upward and downward slides along either screen edge on touch devices.
 - Automatic light sleep is available in the X4 Pro light-sleep firmware profiles, reducing idle power while retaining normal button, touch, and frontlight behavior. USB serial stays available while a computer is connected, because the device skips light sleep for as long as a USB host is attached.
 - Add the continuous **IncreMENTAL** EPUB indexing method for background chapter indexing.
+- A new **Extend** sleep screen cover mode fills the empty margins around a cover that doesn't match the screen's aspect ratio by repeating its edge pixels instead of leaving them blank.
+- A new **Extend Mirror** sleep screen cover mode fills those same margins by reflecting the cover's edge content instead of repeating a single edge pixel.
+
+### Changed
+
+- Brightness and warmth gestures now respond while you drag, with longer swipes making larger adjustments.
+- Idle power saving now puts the device into automatic light sleep between loop ticks instead of only lowering the CPU clock, cutting idle draw while leaving buttons, touch, and the frontlight working exactly as before. The screen, Wi-Fi transfers, and USB sessions stay awake while they are in use.
+- GitHub workflows and release documentation links now follow the `development` default branch.
+- Idle power saving now engages after 1 second instead of 3, and battery level is polled every 6 seconds instead of every 1.5, trading slightly less frequent battery updates for lower average power draw.
+
+### Fixed
+
+- OPDS downloads now use the first listed author for filename templates when a catalog also lists translators or other contributors.
+- Retain the CSS spacing supplied by empty inline spans.
+- X3/X4 firmware builds again with automatic light sleep enabled. The build platform is updated to pioarduino 55.03.39 (Arduino-ESP32 3.3.9, ESP-IDF 5.5.4), which fixes a linker-script mismatch that stopped the image from being created.
+- X4 Pro firmware with automatic light sleep now enters deep sleep correctly when the frontlight is enabled.
+- Periodic memory telemetry now reports only when free heap or PSRAM changes, while checking for changes every 2 seconds.
+- Incremental EPUB indexing resumes after skipping chapters and refreshes the status bar when indexing completes.
+- Rapid queued EPUB page turns skip rendering intermediate pages until the final destination.
+- Devices with only Up/Down navigation buttons (e.g. X4 Pro) can now reach every book in the Recent Books grid view, with Up/Down walking left-to-right, line by line, instead of only moving between rows.
+- Automatic light sleep can no longer engage while the e-ink panel is mid-refresh, closing a latent waveform/SPI timing risk on devices with idle power saving enabled.
+
+## [v1.6.0] - 2026-09-21
+
+### Added
+
 - EPUBs with stable page numbers can jump directly to a specific stable page from the reader menu.
 - Hidden folders can be created using the web file manager now when prefixed with a dot.
 - Choose whole numbers, one decimal, or two decimals for the book progress percentage in status bar settings.
 - Two-finger Screen Rotation can be turned off in Settings > Controls > Taps & Gestures on multi-touch devices.
-- A new **Extend** sleep screen cover mode fills the empty margins around a cover that doesn't match the screen's aspect ratio by repeating its edge pixels instead of leaving them blank.
-- A new **Extend Mirror** sleep screen cover mode fills those same margins by reflecting the cover's edge content instead of repeating a single edge pixel.
 - Go to % and Go to Stable Page use a numeric keypad for typing an exact destination, including decimal percentages. Touch devices use the keypad exclusively; button-only devices keep the slider by default and hold Confirm/Select to switch to the keypad.
 - Files can be renamed from the File Browser action menu while keeping reading progress, bookmarks, clippings, and recent-book entries linked to the new name.
 - Firmware builds can include only selected UI languages to reduce flash usage while preserving English fallback.
 
 ### Changed
 
-- Idle power saving now puts the device into automatic light sleep between loop ticks instead of only lowering the CPU clock, cutting idle draw while leaving buttons, touch, and the frontlight working exactly as before. The screen, Wi-Fi transfers, and USB sessions stay awake while they are in use.
-- GitHub workflows and release documentation links now follow the `development` default branch.
-- Idle power saving now engages after 1 second instead of 3, and battery level is polled every 6 seconds instead of every 1.5, trading slightly less frequent battery updates for lower average power draw.
 - PNG, XTC, and image-dithering scratch buffers use fewer heap allocations to reduce fragmentation.
 - The shared settings catalog keeps its initial allocation instead of retaining unused vector capacity.
 - SPI SD-card transfers are batched through the ESP32 hardware FIFO for faster reads.
@@ -32,9 +56,6 @@
 
 ### Fixed
 
-- X3/X4 firmware builds again with automatic light sleep enabled. The build platform is updated to pioarduino 55.03.39 (Arduino-ESP32 3.3.9, ESP-IDF 5.5.4), which fixes a linker-script mismatch that stopped the image from being created.
-- X4 Pro firmware with automatic light sleep now enters deep sleep correctly when the frontlight is enabled.
-- Periodic memory telemetry now reports only when free heap or PSRAM changes, while checking for changes every 2 seconds.
 - The web EPUB optimizer now accepts books that use standard Adobe or IDPF font obfuscation, while leaving DRM-protected books unchanged.
 - Frontlight schedule time pickers now use the compact number keypad from Go To screens.
 - X4 Classic's left/right tilt direction labels now match the physical page-turn direction.
@@ -48,13 +69,9 @@
 - Saved clipping highlights now retain Focus Reading's custom-font glyphs instead of showing replacement characters.
 - EPUB dictionary lookup can select an individual part of a hyphenated word.
 - Short Power-button frontlight and touchscreen shortcuts in EPUB books no longer run the configured long-press action.
-- Incremental EPUB indexing resumes after skipping chapters and refreshes the status bar when indexing completes.
-- Rapid queued EPUB page turns skip rendering intermediate pages until the final destination.
 - Silent restarts now preserve the frontlight state instead of applying wake or schedule settings.
-- Devices with only Up/Down navigation buttons (e.g. X4 Pro) can now reach every book in the Recent Books grid view, with Up/Down walking left-to-right, line by line, instead of only moving between rows.
 - The Home button now returns from Customize Status Bar to the previous menu instead of leaving the reader.
 - OPDS book downloads can follow secure redirects without sharing catalog credentials with the download host.
-- Automatic light sleep can no longer engage while the e-ink panel is mid-refresh, closing a latent waveform/SPI timing risk on devices with idle power saving enabled.
 - Larger EPUB stylesheets work on PSRAM readers, including rules that hide duplicate images.
 - JPEG-heavy EPUBs can use PSRAM for decoding on supported readers, leaving internal memory available for reading.
 - Importing CrossPoint settings preserves tap and swipe modes without carrying over a stale reader touchscreen lock.

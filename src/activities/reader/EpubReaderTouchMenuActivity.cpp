@@ -1292,6 +1292,9 @@ void EpubReaderTouchMenuActivity::activateRow(const RowId row) {
         });
       }
       return;
+    case RowId::ResetBookReaderSettings:
+      closeAndReturn(false, EpubReaderMenuAction::RESET_BOOK_READER_SETTINGS);
+      return;
     case RowId::TextAa:
     case RowId::Focus:
     case RowId::GuideDots:
@@ -2118,6 +2121,8 @@ const char* EpubReaderTouchMenuActivity::rowLabel(const RowId row) const {
       return tr(STR_CAT_CONTROLS);
     case RowId::ResetReadingPace:
       return tr(STR_RESET_READING_PACE);
+    case RowId::ResetBookReaderSettings:
+      return tr(STR_RESET_BOOK_READER_SETTINGS);
     case RowId::DeleteCache:
       return tr(STR_DELETE_CACHE);
     case RowId::DeleteStats:
@@ -2229,6 +2234,7 @@ bool EpubReaderTouchMenuActivity::rowShowsNavigationCaret(const RowId row) const
     case RowId::Lookup:
     case RowId::SaveClipping:
     case RowId::ResetReadingPace:
+    case RowId::ResetBookReaderSettings:
     case RowId::DeleteBookmarks:
     case RowId::DeleteCache:
     case RowId::DeleteStats:

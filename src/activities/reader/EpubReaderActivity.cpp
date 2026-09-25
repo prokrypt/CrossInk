@@ -3804,6 +3804,67 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       requestUpdate();
       break;
     }
+    case EpubReaderMenuActivity::MenuAction::RESET_BOOK_READER_SETTINGS: {
+      pauseReadingPaceTimer("reset_reader_settings_confirm");
+      auto confirmation = makeUniqueNoThrow<ConfirmationActivity>(
+          renderer, mappedInput, confirmationHeading(StrId::STR_RESET_BOOK_READER_SETTINGS),
+          epub ? epub->getTitle() : std::string{}, false, true);
+      if (!confirmation) {
+        LOG_ERR("ERS", "Could not allocate reader settings reset confirmation");
+        resumeReadingPaceTimer("reset_reader_settings_alloc_failed");
+        if (returnToReaderMenu && mappedInput.hasTouchHardware())
+          openReaderMenu();
+        else
+          requestUpdate();
+        break;
+      }
+      startActivityForResult(std::move(confirmation), [this, returnToReaderMenu](const ActivityResult& result) {
+        if (result.isCancelled) {
+          resumeReadingPaceTimer("reset_reader_settings_cancelled");
+          if (returnToReaderMenu && mappedInput.hasTouchHardware())
+            openReaderMenu();
+          else
+            requestUpdate();
+          return;
+        }
+
+        bool settingsReset = false;
+        if (epub) {
+          {
+            RenderLock lock(*this);
+            settingsReset = resetBookReaderSettings(epub->getPath());
+            if (settingsReset) {
+              if (section) prepareCurrentSectionForRelayout();
+              applyReaderSettings(globalReaderSettingsBeforeBook);
+              initialBookReaderSettings = ActiveBookReaderSettingsData{};
+              loadBookReaderSettings();
+              if (automaticPageTurnActive) {
+                lastPageTurnTime = millis();
+                pageTurnDuration = static_cast<unsigned long>(getAutoPageTurnIntervalSeconds()) * 1000UL;
+              }
+              ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+              section.reset();
+            }
+          }
+
+          if (settingsReset) {
+            ensureReaderSdFontLoaded(renderer);
+            drawToast(renderer, tr(STR_BOOK_READER_SETTINGS_RESET));
+            delay(1000);
+          } else {
+            LOG_ERR("ERS", "Failed to reset reader settings for current book");
+          }
+        } else {
+          LOG_ERR("ERS", "Could not reset reader settings without an open book");
+        }
+        resumeReadingPaceTimer("reset_reader_settings_return");
+        if (!settingsReset && returnToReaderMenu && mappedInput.hasTouchHardware())
+          openReaderMenu();
+        else
+          requestUpdate();
+      });
+      break;
+    }
     case EpubReaderMenuActivity::MenuAction::SCREENSHOT: {
       {
         RenderLock lock(*this);

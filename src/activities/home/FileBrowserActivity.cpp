@@ -888,8 +888,8 @@ void FileBrowserActivity::renameFile(const std::string& oldPath, const std::stri
     bookType = "txt";
   }
 
-  std::string title = getFileName(oldEntry);
   if (bookType) {
+    std::string title = getFileName(oldEntry);
     std::string author;
     const auto& recentBooks = RECENT_BOOKS.getBooks();
     const auto recent = std::find_if(recentBooks.begin(), recentBooks.end(),
