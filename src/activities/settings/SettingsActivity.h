@@ -50,6 +50,7 @@ enum class SettingAction {
   Language,
   KeyboardLayouts,
   DownloadFonts,
+  TtfRendering,
   ClockSync,
 };
 
@@ -218,7 +219,7 @@ inline std::string settingEnumOptionLabel(const SettingInfo& setting, const uint
 
 inline bool settingShowsNavigationCaret(const SettingInfo& setting) {
   return setting.type == SettingType::SUBMENU || setting.action == SettingAction::CustomiseStatusBar ||
-         setting.action == SettingAction::QuickActions;
+         setting.action == SettingAction::QuickActions || setting.action == SettingAction::TtfRendering;
 }
 
 class SettingsActivity final : public Activity {
@@ -269,6 +270,7 @@ class SettingsActivity final : public Activity {
   // renderer before this activity enters, so retain the requested layout.
   GfxRenderer::Orientation entryOrientation;
   bool showSettingSelection = true;
+  bool ttfRenderingChanged = false;
   SettingAction activeSubmenu = SettingAction::None;
   SettingAction parentSubmenu = SettingAction::None;
 
@@ -314,12 +316,14 @@ class SettingsActivity final : public Activity {
   void rebuildSettingsLists();
   void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
   void closeRootSettings();
+  void finishToParent();
   bool isFileBrowserView() const { return view == View::FileBrowser; }
 
  public:
   explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool dismissOnUpSwipe = false,
                             bool returnToParentOnClose = false, View view = View::Root);
   bool allowGlobalHomeSwipeGesture() const override { return false; }
+  bool handleHomeGesture() override;
   void onEnter() override;
   void onExit() override;
   void loop() override;
