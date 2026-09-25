@@ -183,6 +183,13 @@ bool HalDisplay::shouldSkipImageBlanking() const {
          einkDisplay.supportsAsyncRefresh();
 }
 
+bool HalDisplay::displayGrayscaleBaseAsync(HalDisplay::RefreshMode fallback) {
+  HalSpiBus::Lock spiLock;
+  return einkDisplay.displayGrayscaleBaseAsync(convertRefreshMode(fallback));
+}
+
+bool HalDisplay::supportsDeferredGrayscaleBase() const { return einkDisplay.supportsDeferredGrayscaleBase(); }
+
 bool HalDisplay::supportsStripGrayscale() const { return einkDisplay.supportsStripGrayscale(); }
 
 uint16_t HalDisplay::getDisplayWidth() const { return einkDisplay.getDisplayWidth(); }

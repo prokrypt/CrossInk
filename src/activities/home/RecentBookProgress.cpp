@@ -27,26 +27,29 @@ float clampProgressPercent(const float progress) { return std::clamp(progress, 0
 
 std::string epubPercentCachePath(const std::string& cachePath) { return cachePath + EPUB_PERCENT_CACHE_FILE; }
 
-float loadCachedEpubPercentFromCachePath(const std::string& cachePath) {
+bool readCachedEpubBasisPoints(const std::string& cachePath, uint16_t& basisPoints) {
   if (cachePath.empty()) {
-    return -1.0f;
+    return false;
   }
 
   FsFile file;
   if (!Storage.openFileForRead("RBPR", epubPercentCachePath(cachePath), file)) {
-    return -1.0f;
+    return false;
   }
 
   uint32_t magic = 0;
   uint8_t version = 0;
-  uint16_t basisPoints = 0;
   const bool readOk = serialization::tryReadPod(file, magic) && serialization::tryReadPod(file, version) &&
                       serialization::tryReadPod(file, basisPoints);
   file.close();
-  if (!readOk || magic != EPUB_PERCENT_CACHE_MAGIC || version != EPUB_PERCENT_CACHE_VERSION || basisPoints > 10000) {
+  return readOk && magic == EPUB_PERCENT_CACHE_MAGIC && version == EPUB_PERCENT_CACHE_VERSION && basisPoints <= 10000;
+}
+
+float loadCachedEpubPercentFromCachePath(const std::string& cachePath) {
+  uint16_t basisPoints = 0;
+  if (!readCachedEpubBasisPoints(cachePath, basisPoints)) {
     return -1.0f;
   }
-
   return static_cast<float>(basisPoints) / 100.0f;
 }
 
@@ -57,6 +60,13 @@ void saveCachedEpubPercentToCachePath(const std::string& cachePath, const float 
 
   const float clamped = clampProgressPercent(progress);
   const uint16_t basisPoints = static_cast<uint16_t>((clamped * 100.0f) + 0.5f);
+
+  // Home and the sleep screen recompute this on every visit; a read is cheaper
+  // on the card than rewriting an identical value.
+  uint16_t existing = 0;
+  if (readCachedEpubBasisPoints(cachePath, existing) && existing == basisPoints) {
+    return;
+  }
 
   FsFile file;
   if (!Storage.openFileForWrite("RBPR", epubPercentCachePath(cachePath), file)) {

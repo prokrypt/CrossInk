@@ -40,6 +40,8 @@ class HalDisplay {
   bool supportsAsyncRefresh() const { return true; }
   bool supportsAsyncGrayscaleBase() const { return true; }
   void displayGrayscaleBase(RefreshMode, bool) {}
+  bool displayGrayscaleBaseAsync(RefreshMode) { return false; }
+  bool supportsDeferredGrayscaleBase() const { return false; }
   void preconditionGrayscale() {}
   void preconditionGrayscale(uint16_t, uint16_t, uint16_t, uint16_t) {}
   void copyGrayscaleLsbBuffers(const uint8_t*) {}

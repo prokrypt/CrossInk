@@ -64,6 +64,8 @@ class EpubReaderActivity final : public Activity {
     bool hasAutoPageTurnInterval = false;
     uint16_t autoPageTurnSeconds = 0;
     bool hasCustomReaderSettings = false;
+    uint32_t readerSettingsOverrideMask = 0;
+    bool hasSafeModeOverride = false;
     bool hasRenderModeOverride = false;
     bool hasDictionaryFontOverride = false;
     uint8_t renderMode = 0;
@@ -84,6 +86,8 @@ class EpubReaderActivity final : public Activity {
     bool hasAutoPageTurnInterval = false;
     uint16_t autoPageTurnSeconds = 0;
     bool hasCustomReaderSettings = false;
+    uint32_t readerSettingsOverrideMask = 0;
+    bool hasSafeModeOverride = false;
     bool hasRenderModeOverride = false;
     uint8_t renderMode = 0;
     ReaderSettingsSnapshot readerSettings;
@@ -93,6 +97,8 @@ class EpubReaderActivity final : public Activity {
         : hasAutoPageTurnInterval(source.hasAutoPageTurnInterval),
           autoPageTurnSeconds(source.autoPageTurnSeconds),
           hasCustomReaderSettings(source.hasCustomReaderSettings),
+          readerSettingsOverrideMask(source.readerSettingsOverrideMask),
+          hasSafeModeOverride(source.hasSafeModeOverride),
           hasRenderModeOverride(source.hasRenderModeOverride),
           renderMode(source.renderMode),
           readerSettings(source.readerSettings) {}
@@ -120,7 +126,6 @@ class EpubReaderActivity final : public Activity {
   int cachedSpineIndex = 0;
   int cachedChapterPageNumber = 0;
   int cachedChapterTotalPageCount = 0;
-  int cachedChapterPageWatermark = 0;
   std::optional<uint32_t> cachedVisibleTextOffset;
   struct ChapterGroupEstimateCache {
     int currentSpineIndex = -1;
@@ -495,6 +500,7 @@ class EpubReaderActivity final : public Activity {
   }
   bool backgroundSectionBuildHasHeap();
   void idlePrewarmNextPage();
+  void prewarmNextPageFonts(const char* when);
   bool skipLoopDelay() override {
     return sectionBuildWantsTick() && !backgroundBuildPausedForLowMemory &&
            !backgroundBuildYieldForInput.load(std::memory_order_relaxed);

@@ -92,6 +92,10 @@ class HalDisplay {
   // whenever `fallback` isn't FAST_REFRESH, so a HALF/FULL caller gets a clean
   // base instead of ghosting through the differential waveform.
   void displayGrayscaleBase(RefreshMode fallback = HALF_REFRESH, bool turnOffScreen = false);
+  // Deferred base (X4 Pro): true while the base waveform still runs; finish it
+  // with waitRefreshComplete() and keep the framebuffer untouched until then.
+  bool displayGrayscaleBaseAsync(RefreshMode fallback = FAST_REFRESH);
+  bool supportsDeferredGrayscaleBase() const;
 
   void copyGrayscaleBuffers(const uint8_t* lsbBuffer, const uint8_t* msbBuffer);
   void copyGrayscaleLsbBuffers(const uint8_t* lsbBuffer);

@@ -4,9 +4,12 @@
 #include <Logging.h>
 #include <PersistableStore.h>
 #include <Serialization.h>
+#include <uzlib.h>
 
 #include <algorithm>
 #include <mutex>
+
+#include "util/WriteTiming.h"
 
 namespace {
 constexpr uint8_t STATE_FILE_VERSION = 5;
@@ -56,9 +59,29 @@ void CrossPointState::pushRecentBoot(uint16_t idx) {
 bool CrossPointState::saveToFile() const {
   std::lock_guard<std::mutex> storeLock(storeMutex);
   std::lock_guard<std::mutex> stateLock(_mutex);
+  ScopedWriteTimer timer("state.json");
   JsonDocument doc;
   toJson(doc);
-  return PersistableStoreBase::writeDocToFile(STATE_FILE_JSON, doc);
+  String json;
+  serializeJson(doc, json);
+
+  // Many callers save unconditionally; skip rewriting what is already on disk.
+  // Every external edit of the card (web, WebDAV, USB Drive) ends in a reboot,
+  // which resets this, so it cannot mask a deleted file.
+  const uint32_t crc = uzlib_crc32(json.c_str(), json.length(), 0);
+  const bool unchanged = lastSavedCrcValid && crc == lastSavedCrc;
+  timer.markChecked(unchanged);
+  if (unchanged) return true;
+
+  Storage.mkdir("/.crosspoint");
+  if (!Storage.writeFile(STATE_FILE_JSON, json)) {
+    LOG_ERR("CPS", "Failed to write %s", STATE_FILE_JSON);
+    lastSavedCrcValid = false;
+    return false;
+  }
+  lastSavedCrc = crc;
+  lastSavedCrcValid = true;
+  return true;
 }
 
 bool CrossPointState::loadFromFile() {

@@ -1,4 +1,7 @@
 #include "GfxRenderer.h"
+#if CROSSINK_SCALABLE_FONTS
+#include <HalScalableFont.h>
+#endif
 
 #include <BidiUtils.h>
 #include <BuildScratch.h>
@@ -106,6 +109,9 @@ void appendShapedRtlTokens(const char* text, std::string& shapedOut) {
 }  // namespace
 
 const uint8_t* GfxRenderer::getGlyphBitmap(const EpdFontData* fontData, const EpdGlyph* glyph) const {
+#if CROSSINK_SCALABLE_FONTS
+  if (fontData->bitmapHandler) return fontData->bitmapHandler(fontData->glyphMissCtx, glyph);
+#endif
   if (fontData->groups != nullptr) {
     auto* fd = fontCacheManager_ ? fontCacheManager_->getDecompressor() : nullptr;
     if (!fd) {
@@ -854,6 +860,39 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
       innerBase = cursorX + left;  // screenX = innerBase + glyphX
     }
 
+    // Hot path: an unclipped horizontal glyph writes straight into the target
+    // with incremental physical coordinates. Same pixel decisions as below.
+    if constexpr (rotation == TextRotation::None) {
+      GfxRenderer::GlyphTarget target;
+      if (renderer.glyphFastTarget(innerBase, outerBase, width, height, target)) {
+        int pixelPosition = 0;
+        for (int glyphY = 0; glyphY < height; glyphY++) {
+          int px = target.phyX + glyphY * target.rowDX;
+          int py = target.phyY + glyphY * target.rowDY;
+          for (int glyphX = 0; glyphX < width; glyphX++, pixelPosition++, px += target.colDX, py += target.colDY) {
+            bool draw = false;
+            bool state = false;
+            if (is2Bit) {
+              const uint8_t bmpVal = 3 - ((bitmap[pixelPosition >> 2] >> ((3 - (pixelPosition & 3)) * 2)) & 0x3);
+              if (renderMode == GfxRenderer::BW) {
+                draw = bmpVal < 3;
+                state = pixelState;
+              } else if (renderMode == GfxRenderer::GRAYSCALE_MSB) {
+                draw = bmpVal == 1 || bmpVal == 2;
+              } else if (renderMode == GfxRenderer::GRAYSCALE_LSB) {
+                draw = bmpVal == 1;
+              }
+            } else {
+              draw = ((bitmap[pixelPosition >> 3] >> (7 - (pixelPosition & 7))) & 1) != 0;
+              state = pixelState;
+            }
+            if (draw) target.set(px, py, state);
+          }
+        }
+        return;
+      }
+    }
+
     if (is2Bit) {
       int pixelPosition = 0;
       for (int glyphY = 0; glyphY < height; glyphY++) {
@@ -938,6 +977,32 @@ bool GfxRenderer::isPixelBlack(const int x, const int y) const {
   const uint32_t byteIndex = rowY * panelWidthBytes + (phyX / 8);
   const uint8_t bitPosition = 7 - (phyX % 8);
   return (target[byteIndex] & (1 << bitPosition)) == 0;
+}
+
+bool GfxRenderer::glyphFastTarget(const int x0, const int y0, const int w, const int h, GlyphTarget& out) const {
+  if (w <= 0 || h <= 0 || frameBuffer == nullptr) return false;
+  if (x0 < 0 || y0 < 0 || x0 + w > getScreenWidth() || y0 + h > getScreenHeight()) return false;
+  if (textClipActive_ &&
+      (x0 < textClipLeft_ || x0 + w > textClipRight_ || y0 < textClipTop_ || y0 + h > textClipBottom_)) {
+    return false;
+  }
+  out.buf = frameBuffer;
+  if (_stripActive) {
+    // Only a whole-panel "strip" (the deferred-base AA planes) maps 1:1.
+    if (_stripY0 != 0 || _stripRows != static_cast<int>(panelHeight)) return false;
+    out.buf = _stripBuf;
+  }
+  out.widthBytes = panelWidthBytes;
+  rotateCoordinates(orientation, x0, y0, &out.phyX, &out.phyY, panelWidth, panelHeight);
+  int nx = 0;
+  int ny = 0;
+  rotateCoordinates(orientation, x0 + 1, y0, &nx, &ny, panelWidth, panelHeight);
+  out.colDX = nx - out.phyX;
+  out.colDY = ny - out.phyY;
+  rotateCoordinates(orientation, x0, y0 + 1, &nx, &ny, panelWidth, panelHeight);
+  out.rowDX = nx - out.phyX;
+  out.rowDY = ny - out.phyY;
+  return true;
 }
 
 void GfxRenderer::drawPixel(const int x, const int y, const bool state) const {
@@ -1043,6 +1108,9 @@ const char* resolveVisualText(const char* text, std::string& visualBuffer, const
 
 int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style,
                               const BidiUtils::BidiBaseDir baseDir) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   if (text == nullptr || *text == '\0') {
     return 0;
   }
@@ -2665,6 +2733,9 @@ bool GfxRenderer::copyBufferToRegion(int lx, int ly, int lw, int lh, const uint8
 }
 
 int GfxRenderer::getSpaceWidth(const int fontId, const EpdFontFamily::Style style) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   // Advance table fast-path for SD card fonts during layout
   auto sdIt = sdCardFonts_.find(fontId);
   if (sdIt != sdCardFonts_.end() && sdIt->second->hasAdvanceTable()) {
@@ -2688,6 +2759,9 @@ int GfxRenderer::getSpaceWidth(const int fontId, const EpdFontFamily::Style styl
 
 int GfxRenderer::getSpaceAdvance(const int fontId, const uint32_t leftCp, const uint32_t rightCp,
                                  const EpdFontFamily::Style style) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   // Advance table fast-path for SD card fonts during layout.
   // Kern data is not loaded during layout (consistent with previous metadataOnly behavior),
   // so we return just the space advance without kerning.
@@ -2715,6 +2789,9 @@ int GfxRenderer::getSpaceAdvance(const int fontId, const uint32_t leftCp, const 
 
 int GfxRenderer::getKerning(const int fontId, const uint32_t leftCp, const uint32_t rightCp,
                             const EpdFontFamily::Style style) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) return 0;
   const int kernFP = fontIt->second.getKerning(leftCp, rightCp, style);  // 4.4 fixed-point
@@ -2723,6 +2800,9 @@ int GfxRenderer::getKerning(const int fontId, const uint32_t leftCp, const uint3
 
 int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFontFamily::Style style,
                                  const uint32_t followingCp) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   // Match the font drawText would use for CJK-bearing strings (see resolveTextFontId).
   const int resolvedFontId = resolveTextFontId(fontId, text, style);
   // Measure the exact codepoint stream drawText renders: bidi-reordered and
@@ -2880,6 +2960,9 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
 }
 
 int GfxRenderer::getFontAscenderSize(const int fontId) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", fontId);
@@ -2890,6 +2973,9 @@ int GfxRenderer::getFontAscenderSize(const int fontId) const {
 }
 
 int GfxRenderer::getLineHeight(const int fontId) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", fontId);
@@ -2900,6 +2986,9 @@ int GfxRenderer::getLineHeight(const int fontId) const {
 }
 
 int GfxRenderer::getTextHeight(const int fontId) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", fontId);
@@ -3042,6 +3131,24 @@ size_t GfxRenderer::getBufferSize() const { return frameBufferSize; }
 void GfxRenderer::displayGrayscaleBase(HalDisplay::RefreshMode fallback, const bool turnOffScreen) const {
   absoluteGrayPlanes = false;
   display.displayGrayscaleBase(fallback, fadingFix || turnOffScreen);
+}
+
+bool GfxRenderer::displayGrayscaleBaseAsync(const HalDisplay::RefreshMode fallback) const {
+  absoluteGrayPlanes = false;
+  if (fadingFix) {
+    display.displayGrayscaleBase(fallback, true);
+    return false;
+  }
+  return display.displayGrayscaleBaseAsync(fallback);
+}
+
+bool GfxRenderer::supportsDeferredGrayscaleBase() const {
+  return !fadingFix && display.supportsDeferredGrayscaleBase();
+}
+
+void GfxRenderer::copyGrayscalePlanes(const uint8_t* lsb, const uint8_t* msb) const {
+  display.copyGrayscaleLsbBuffers(lsb);
+  display.copyGrayscaleMsbBuffers(msb);
 }
 
 void GfxRenderer::preconditionGrayscale() const { display.preconditionGrayscale(); }
