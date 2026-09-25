@@ -12,8 +12,7 @@ class ScopedWriteTimer {
   ScopedWriteTimer& operator=(const ScopedWriteTimer&) = delete;
 
   ~ScopedWriteTimer() {
-    LOG_INF("WTIME", "%s %s check=%luus total=%luus", label_, skipped_ ? "skip" : "write", checkUs_,
-            micros() - start_);
+    LOG_INF("WTIME", "%s %s check=%luus total=%luus", label_, skipped_ ? "skip" : "write", checkUs_, micros() - start_);
   }
 
   void markChecked(const bool skipped) {

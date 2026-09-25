@@ -104,6 +104,16 @@ bool promoteSectionCache(const std::string& tmpPath, const std::string& filePath
 }
 }  // namespace
 
+namespace {
+// Landscape layouts keep their own section caches, so rotating the reader and
+// back reuses both layouts instead of re-indexing the chapter each time.
+const char* orientationCacheSuffix(const GfxRenderer& renderer) {
+  const auto orientation = renderer.getOrientation();
+  return orientation == GfxRenderer::LandscapeClockwise || orientation == GfxRenderer::LandscapeCounterClockwise ? "-l"
+                                                                                                                 : "";
+}
+}  // namespace
+
 Section::Section(const std::shared_ptr<Epub>& epub, const int spineIndex, GfxRenderer& renderer,
                  const char* cacheSuffix)
     : Section(*epub, spineIndex, renderer, cacheSuffix) {
@@ -115,7 +125,7 @@ Section::Section(Epub& epub, const int spineIndex, GfxRenderer& renderer, const 
       spineIndex(spineIndex),
       renderer(renderer),
       filePath(epub.getCachePath() + "/sections/" + std::to_string(spineIndex) + (cacheSuffix ? cacheSuffix : "") +
-               ".bin") {
+               orientationCacheSuffix(renderer) + ".bin") {
   recoverSectionCacheBackup(filePath);
 }
 

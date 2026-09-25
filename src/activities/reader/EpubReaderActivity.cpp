@@ -844,6 +844,23 @@ uint16_t resolveClippingJumpPage(Section& section, const Clipping& clipping, con
   return resolvedPage;
 }
 
+// Both whole AA planes for the X4 Pro deferred-base pass, from PSRAM only.
+bool allocateDeferredGrayscalePlanes(const GfxRenderer& renderer, HeapByteBuffer& lsb, HeapByteBuffer& msb) {
+  if (!psramHeapAvailable()) return false;
+  constexpr size_t PSRAM_PLANE_RESERVE = 128 * 1024;
+  const size_t planeBytes = static_cast<size_t>(renderer.getDisplayWidthBytes()) * renderer.getDisplayHeight();
+  const auto psram = MemoryBudget::psramSnapshot();
+  if (psram.freeHeap < 2 * planeBytes + PSRAM_PLANE_RESERVE || psram.maxAllocHeap < planeBytes) return false;
+  lsb = makePsramByteBufferNoThrow(planeBytes);
+  if (lsb) msb = makePsramByteBufferNoThrow(planeBytes);
+  if (!lsb || !msb) {
+    lsb.reset();
+    msb.reset();
+    return false;
+  }
+  return true;
+}
+
 ToastRect computeToastRect(const GfxRenderer& renderer, const char* msg) {
   constexpr int toastPadX = 20;
   constexpr int toastPadY = 12;
@@ -2561,6 +2578,14 @@ void EpubReaderActivity::idlePrewarmNextPage() {
       (millis() - lastRenderCompleteMs) < IDLE_SD_FONT_PREWARM_DELAY_MS) {
     return;
   }
+  RenderLock lock(*this);
+  prewarmNextPageFonts("Idle");
+}
+
+// Scans the next page's text so its SD-font glyphs are resident before the turn.
+// Callers hold the render lock (idle path) or run inside a render.
+void EpubReaderActivity::prewarmNextPageFonts(const char* when) {
+  if (!section || section->isBuilding()) return;
 
   const int renderFontId = activeSectionFontId != 0 ? activeSectionFontId : SETTINGS.getReaderFontId();
   if (!renderer.isSdCardFont(renderFontId) ||
@@ -2585,16 +2610,15 @@ void EpubReaderActivity::idlePrewarmNextPage() {
   idlePrewarmPage = section->currentPage;
   idlePrewarmFontId = renderFontId;
 
-  RenderLock lock(*this);
   auto page = section->loadPage(nextPage);
   if (!page) {
-    LOG_DBG("ERS", "Idle SD font prewarm skipped: failed to load spine=%d page=%d", currentSpineIndex, nextPage);
+    LOG_DBG("ERS", "%s SD font prewarm skipped: failed to load spine=%d page=%d", when, currentSpineIndex, nextPage);
     return;
   }
 
   auto* fcm = renderer.getFontCacheManager();
   if (!fcm) {
-    LOG_DBG("ERS", "Idle SD font prewarm skipped: no font cache manager");
+    LOG_DBG("ERS", "%s SD font prewarm skipped: no font cache manager", when);
     return;
   }
 
@@ -2602,7 +2626,8 @@ void EpubReaderActivity::idlePrewarmNextPage() {
   auto scope = fcm->createPrewarmScope();
   page->renderText(renderer, renderFontId, 0, 0);
   scope.endScanAndPrewarm();
-  LOG_DBG("ERS", "Idle SD font prewarm: spine=%d page=%d in %lums", currentSpineIndex, nextPage, millis() - startedAt);
+  LOG_DBG("ERS", "%s SD font prewarm: spine=%d page=%d in %lums", when, currentSpineIndex, nextPage,
+          millis() - startedAt);
 }
 
 // One dismissal rule for every transient reader confirmation: it clears when its
@@ -7079,6 +7104,15 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   const bool tiledGrayscale = needsAnyGrayscale && renderer.supportsStripGrayscale();
   const bool overlapRefresh =
       tiledGrayscale && !pageHasImages && pagesUntilFullRefresh > 1 && renderer.supportsAsyncGrayscaleBase();
+  // X4 Pro (UC8179): no strip uploads, but its base transition can run in the
+  // background. Render both AA planes into PSRAM while it does, so the BW
+  // snapshot/restore and the post-base plane renders drop out of the turn.
+  HeapByteBuffer deferredLsbPlane;
+  HeapByteBuffer deferredMsbPlane;
+  const bool deferredGrayscaleBase = needsTextGrayscale && !tiledGrayscale && !pageHasImages &&
+                                     pagesUntilFullRefresh > 1 && renderer.supportsDeferredGrayscaleBase() &&
+                                     allocateDeferredGrayscalePlanes(renderer, deferredLsbPlane, deferredMsbPlane);
+  bool baseRefreshPending = false;
   if (pageHasImages && !deferImageLoading) {
     // Keep the legacy blank/base sequence unless the controller can transition
     // directly to the complete image base.
@@ -7126,6 +7160,10 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
     } else if (overlapRefresh) {
       ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh, /*async=*/true);
+    } else if (deferredGrayscaleBase) {
+      // Same base waveform as below, left running while the AA planes render.
+      baseRefreshPending = renderer.displayGrayscaleBaseAsync(HalDisplay::FAST_REFRESH);
+      pagesUntilFullRefresh--;
     } else {
       // Use the grayscale-aware base waveform so the first visible pass is
       // closer to the final anti-aliased result instead of flashing darker
@@ -7135,6 +7173,40 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
     }
   } else {
     ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
+  }
+  if (deferredGrayscaleBase) {
+    const auto queuedTurnPending = [this]() { return pendingManualPageTurns.hasPending(); };
+    // Planes carry page text only, like the tiled pass: the framebuffer must
+    // stay untouched until the base refresh finishes.
+    const auto renderDeferredPlane = [&](const GfxRenderer::RenderMode mode, uint8_t* plane) {
+      renderer.setRenderMode(mode);
+      renderer.beginStripTarget(plane, 0, renderer.getDisplayHeight());
+      renderer.clearScreen(0x00);
+      page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack);
+      renderer.endStripTarget();
+    };
+    bool cancelled = queuedTurnPending();
+    if (!cancelled) {
+      renderDeferredPlane(GfxRenderer::GRAYSCALE_LSB, deferredLsbPlane.get());
+      cancelled = queuedTurnPending();
+    }
+    if (!cancelled) {
+      renderDeferredPlane(GfxRenderer::GRAYSCALE_MSB, deferredMsbPlane.get());
+      cancelled = queuedTurnPending();
+    }
+    renderer.setRenderMode(GfxRenderer::BW);
+    // Most of the ~670 ms base waveform is still running: warm the next page's
+    // SD-font glyphs now rather than after the idle delay.
+    if (baseRefreshPending && !activeFootnotePreview && !automaticPageTurnActive) {
+      prewarmNextPageFonts("Refresh");
+    }
+    renderer.waitRefreshComplete();
+    if (!cancelled && !queuedTurnPending()) {
+      renderer.copyGrayscalePlanes(deferredLsbPlane.get(), deferredMsbPlane.get());
+      renderer.displayGrayBuffer();
+    }
+    renderer.cleanupGrayscaleWithFrameBuffer();
+    return true;
   }
   if (needsAnyGrayscale) {
     ensureGrayscaleStripScratch();
@@ -7147,6 +7219,12 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
     return true;
   }
 
+  // A turn queued during the base refresh cancels AA anyway: skip the ~60 ms BW
+  // snapshot and only re-sync the controller baseline, as restoreBwBuffer() would.
+  if (needsAnyGrayscale && pendingManualPageTurns.hasPending()) {
+    renderer.cleanupGrayscaleWithFrameBuffer();
+    return true;
+  }
   // Save bw buffer to reset buffer state after grayscale data sync
   const bool storedBwBuffer = needsAnyGrayscale && renderer.storeBwBuffer();
   const bool canApplyGrayscale = needsAnyGrayscale && storedBwBuffer;
