@@ -7270,13 +7270,18 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
     int16_t imgX, imgY, imgW, imgH;
     if (page->getImageBoundingBox(imgX, imgY, imgW, imgH)) {
       const bool directImageBase = renderer.shouldSkipImageBlanking();
+      // A countdown at or below one means the previous page asked for a
+      // cleanup: an earlier image page leaves gray residue (#2190), or the
+      // refresh cadence is due. Image pages bypass the cadence below, so run
+      // the strong cleanup here instead of fading straight to the new image.
+      const bool cleanBase = cleanImageBasePending || pagesUntilFullRefresh <= 1;
       // UC8179's base waveform transitions directly from the displayed page.
       // Keep blanking for other controllers and for a pending strong cleanup.
-      const bool blankImage = !directImageBase || cleanImageBasePending;
+      const bool blankImage = !directImageBase || cleanBase;
       if (blankImage) {
         renderer.fillRect(imgX + orientedMarginLeft, imgY + orientedMarginTop, imgW, imgH, false);
       }
-      if (cleanImageBasePending) {
+      if (cleanBase) {
         renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);
         cleanImageBasePending = false;
       }
