@@ -404,7 +404,7 @@ void EpubReaderTouchMenuActivity::onExit() {
 
 void EpubReaderTouchMenuActivity::discoverFonts() {
   RenderLock lock;
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP), true);
+  if (sdFontSystem.registryScanPending()) GUI.drawPopup(renderer, tr(STR_LOADING_POPUP), true);
   sdFontSystem.refreshIfDirty();
   const auto& families = sdFontSystem.registry().getFamilies();
   fontLabels.clear();

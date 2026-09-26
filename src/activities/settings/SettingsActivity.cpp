@@ -524,7 +524,7 @@ void SettingsActivity::openSubmenu(SettingAction action) {
   activeSubmenu = action;
   if (action == SettingAction::ReaderFontOptions) {
     RenderLock lock;
-    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP), true);
+    if (sdFontSystem.registryScanPending()) GUI.drawPopup(renderer, tr(STR_LOADING_POPUP), true);
     rebuildSettingsLists();
   }
   setCurrentSettingsForCategory();

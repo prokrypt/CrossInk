@@ -123,6 +123,12 @@ class SdCardFontSystem {
   /// without waiting for the reader activity to run ensureLoaded().
   void refreshIfDirty() { ensureRegistry(); }
 
+  /// True when refreshIfDirty() will rescan the SD card. Callers show the
+  /// "Loading" popup only then, since the popup itself costs a panel refresh.
+  bool registryScanPending() const {
+    return !registryLoaded_ || registryDirty_.load(std::memory_order_acquire) || registry_.needsRefresh();
+  }
+
  private:
   void persistSettingsChange() const;
 
