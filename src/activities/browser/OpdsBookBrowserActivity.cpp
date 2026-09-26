@@ -9,6 +9,7 @@
 #include <Memory.h>
 #include <OpdsStream.h>
 #include <WiFi.h>
+#include <ZipFile.h>
 
 #include <utility>
 
@@ -678,6 +679,13 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   downloadOptions.transport = HttpDownloader::Transport::WOLFSSL;
   downloadOptions.authorizationOrigin = authorizationOrigin;
   downloadOptions.stageAsPart = true;
+  // A response with no Content-Length can end early and still look complete;
+  // a truncated EPUB has no central directory to find container.xml in.
+  downloadOptions.validate = [](const std::string& path) {
+    ZipFile zip(path);
+    size_t size = 0;
+    return zip.getInflatedFileSize("META-INF/container.xml", &size);
+  };
   int lastRenderedPercent = -1;
   unsigned long lastProgressUpdateMs = 0;
 

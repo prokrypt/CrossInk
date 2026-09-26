@@ -589,6 +589,12 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
     return HTTP_ERROR;
   }
 
+  if (options.validate && !options.validate(writePath)) {
+    LOG_ERR("HTTP", "Downloaded file failed validation: %s", writePath.c_str());
+    Storage.remove(writePath.c_str());
+    return HTTP_ERROR;
+  }
+
   if (options.stageAsPart) {
     // FAT rename will not replace an existing file, so the old copy goes first.
     if (Storage.exists(destPath.c_str()) && !Storage.remove(destPath.c_str())) {

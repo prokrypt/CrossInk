@@ -55,6 +55,10 @@ class HttpDownloader {
     // (or deletes) an existing file and never leaves a truncated one behind
     // under the real name.
     bool stageAsPart = false;
+    // Checks the finished file before it is accepted (and, with stageAsPart,
+    // before it replaces destPath). Returning false fails the download and
+    // removes the file. Catches bodies cut short without a Content-Length.
+    std::function<bool(const std::string& path)> validate;
   };
 
   /**
