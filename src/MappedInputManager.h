@@ -129,6 +129,11 @@ class MappedInputManager {
   bool wasScreenLongPress(int& x, int& y) const;
   bool isInVerticalEdgeGestureZone(int y) const;
   bool wasScreenTouchDown(int& x, int& y) const;
+  // Touch-down for row/item selection feedback. Fires once the contact has
+  // held still for SELECT_PRESS_DELAY_MS, so a drag or scroll never
+  // highlights the row it started on. Quick taps skip it and arrive as taps.
+  // Sliders and other drag widgets keep using wasScreenTouchDown.
+  bool wasSelectionTouchDown(int& x, int& y) const;
   bool isScreenTouchTapCandidate(int& x, int& y, unsigned long& heldMs) const;
   bool isScreenTouchHeld(int& x, int& y) const;
   // Ignore the remainder of the active contact when a touch-down action
@@ -205,6 +210,7 @@ class MappedInputManager {
   constexpr bool wasScreenLongPress(int&, int&) const { return false; }
   constexpr bool isInVerticalEdgeGestureZone(int) const { return false; }
   constexpr bool wasScreenTouchDown(int&, int&) const { return false; }
+  constexpr bool wasSelectionTouchDown(int&, int&) const { return false; }
   constexpr bool isScreenTouchTapCandidate(int&, int&, unsigned long&) const { return false; }
   constexpr bool isScreenTouchHeld(int&, int&) const { return false; }
   constexpr void suppressCurrentTouchContact() {}
@@ -290,6 +296,13 @@ class MappedInputManager {
 #if CROSSINK_APP_CAP_TOUCH
   mutable bool suppressTouchTap = false;
   mutable bool deferredHomeGesture = false;
+  static constexpr unsigned long SELECT_PRESS_DELAY_MS = 200;
+  static constexpr int SELECT_PRESS_SLOP_PX = 20;
+  mutable bool selectPressPending = false;
+  mutable bool selectPressThisFrame = false;
+  mutable int selectPressX = 0;
+  mutable int selectPressY = 0;
+  void updateSelectionTouchDown() const;
 #endif
 #ifdef SIMULATOR
   std::array<bool, BUTTON_COUNT> simulatorPressed{};

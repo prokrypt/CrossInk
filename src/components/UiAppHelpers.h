@@ -221,7 +221,8 @@ inline freeink::ui::InputSnapshot touchSnapshotFrom(const MappedInputManager& ma
     snap.touchX = static_cast<int16_t>(tx);
     snap.touchY = static_cast<int16_t>(ty);
   }
-  if (mappedInput.wasScreenTouchDown(tx, ty)) {
+  // Pressed-row highlight waits until the contact is clearly not a drag.
+  if (mappedInput.wasSelectionTouchDown(tx, ty)) {
     snap.touchPressed = true;
     snap.touchX = static_cast<int16_t>(tx);
     snap.touchY = static_cast<int16_t>(ty);

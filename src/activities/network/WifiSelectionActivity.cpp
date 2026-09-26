@@ -944,7 +944,7 @@ void WifiSelectionActivity::loop() {
       const auto actions = promptActionLayout(screen, UITheme::getInstance().getMetrics(), height);
       int tx = 0;
       int ty = 0;
-      if (mappedInput.wasScreenTouchDown(tx, ty)) {
+      if (mappedInput.wasSelectionTouchDown(tx, ty)) {
         const int touchedOption = TouchActionButtons::indexAt(actions, tx, ty);
         if (touchedOption >= 0 && savePromptSelection != touchedOption) {
           savePromptSelection = touchedOption;
@@ -1001,7 +1001,7 @@ void WifiSelectionActivity::loop() {
       const auto actions = promptActionLayout(screen, UITheme::getInstance().getMetrics(), height);
       int tx = 0;
       int ty = 0;
-      if (mappedInput.wasScreenTouchDown(tx, ty)) {
+      if (mappedInput.wasSelectionTouchDown(tx, ty)) {
         const int touchedOption = TouchActionButtons::indexAt(actions, tx, ty);
         const int selectedOption = touchedOption == 0 ? 1 : 0;
         if (touchedOption >= 0 && forgetPromptSelection != selectedOption) {
