@@ -48,6 +48,8 @@ class XtcReaderActivity final : public Activity {
   ReaderProgressSaveDebouncer progressSaveDebouncer;
   // The end screen owns these UI resources only while it is visible.
   std::unique_ptr<EndOfBookOptions> endOfBookOptions;
+  // First menu press made while the end-of-book menu was still loading (main loop only).
+  EndOfBookOptions::MenuKey queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
 
   enum class StatusBarOverlayPosition { Bottom, Top };
   struct StatusBarInfo {

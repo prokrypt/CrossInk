@@ -217,32 +217,60 @@ void XtcReaderActivity::loop() {
     return;
   }
 
+  const bool atEndOfBook = currentPage >= xtc->getPageCount();
   // Paged back into the book: release the end screen app and its theme tokens.
-  {
+  if (!atEndOfBook) {
+    queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
     RenderLock lock(*this);
-    if (currentPage < xtc->getPageCount() && endOfBookOptions) {
+    if (endOfBookOptions) {
       endOfBookOptions.reset();
     }
+  }
+
+  // On the end screen, load the suggestions here while the render task is idle.
+  // While it is busy (it loads the same menu before drawing it), don't block on
+  // it, so this loop keeps polling buttons during the end-screen refresh.
+  if (atEndOfBook && !RenderLock::peek()) {
+    RenderLock lock(*this);
+    if (!endOfBookOptions) {
+      endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);
+      if (!endOfBookOptions) {
+        LOG_ERR("XTR", "OOM: EndOfBookOptions (%u bytes)", static_cast<unsigned>(sizeof(EndOfBookOptions)));
+      }
+    }
+    if (endOfBookOptions) {
+      endOfBookOptions->loadOnce(xtc->getPath());
+    }
+  }
+  if (atEndOfBook && RenderLock::peek() && !(endOfBookOptions && endOfBookOptions->loaded())) {
+    // The render task is still loading the suggestions. Keep the first menu press
+    // for the menu instead of dropping it or letting it reach the plain end-screen
+    // page-turn handling (which goes Home).
+    const auto key = EndOfBookOptions::readMenuKey(mappedInput);
+    if (key != EndOfBookOptions::MenuKey::None && queuedEndOfBookKey == EndOfBookOptions::MenuKey::None) {
+      queuedEndOfBookKey = key;
+    }
+    return;
   }
 
   // While the end screen suggestion menu is showing it owns Confirm/Back/navigation
   // input. Anything it doesn't handle (e.g. long-press Back to the file browser) falls
   // through to the regular handlers below; page turns are absorbed by the end-of-book
-  // block.
+  // block. Menu input runs alongside a repaint (the menu's selection is atomic), so
+  // only the page change back into the book takes the render lock.
   EndOfBookOptions::Action endOfBookAction = EndOfBookOptions::Action::None;
   std::string openPath;
-  bool endOfBookNeedsUpdate = false;
-  {
-    RenderLock lock(*this);
-    if (currentPage >= xtc->getPageCount() && endOfBookOptions && endOfBookOptions->menuActive()) {
-      endOfBookAction = endOfBookOptions->handleMenuInput(mappedInput, &openPath);
-      if (endOfBookAction == EndOfBookOptions::Action::LastPage) {
-        const uint32_t pageCount = xtc->getPageCount();
-        currentPage = pageCount > 0 ? pageCount - 1 : 0;
-        endOfBookNeedsUpdate = true;
-      } else if (endOfBookAction == EndOfBookOptions::Action::Redraw) {
-        endOfBookNeedsUpdate = true;
-      }
+  const bool endOfBookMenuOpen = atEndOfBook && endOfBookOptions && endOfBookOptions->menuActive();
+  const auto queuedKey = queuedEndOfBookKey;
+  queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
+  if (endOfBookMenuOpen) {
+    endOfBookAction = queuedKey != EndOfBookOptions::MenuKey::None
+                          ? endOfBookOptions->applyMenuKey(queuedKey, &openPath)
+                          : endOfBookOptions->handleMenuInput(mappedInput, &openPath);
+    if (endOfBookAction == EndOfBookOptions::Action::LastPage) {
+      RenderLock lock(*this);
+      const uint32_t pageCount = xtc->getPageCount();
+      currentPage = pageCount > 0 ? pageCount - 1 : 0;
     }
   }
   switch (endOfBookAction) {
@@ -254,9 +282,7 @@ void XtcReaderActivity::loop() {
       return;
     case EndOfBookOptions::Action::LastPage:
     case EndOfBookOptions::Action::Redraw:
-      if (endOfBookNeedsUpdate) {
-        requestUpdate();
-      }
+      requestUpdate();
       return;
     case EndOfBookOptions::Action::None:
       break;
@@ -1087,7 +1113,7 @@ void XtcReaderActivity::render(RenderLock&&) {
 
   const uint32_t pageToRender = currentPage;
   if (pageToRender >= xtc->getPageCount()) {
-    // This is the sole creation and load site: its app and theme tokens are
+    // Created here or by loop() only on the end screen: its app and theme tokens are
     // absent during normal reading and allocation failure leaves an empty end screen.
     if (!endOfBookOptions) {
       endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);

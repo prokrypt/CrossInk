@@ -48,6 +48,7 @@
 - Keep clipping-selection button hints from covering book text.
 - Changing a reader font with incremental indexing now returns after the current reading position is ready, instead of waiting for the whole chapter to be re-indexed.
 - On the first page of an EPUB or XTC book, previous page and previous chapter (including the chapter-skip long press) now do nothing instead of redrawing or reloading the page.
+- A button press made while the end-of-book "Continue with" menu is still appearing is no longer lost: it moves the selection, opens the book, or goes back once the menu is ready.
 
 ## [v1.6.0] - 2026-09-21
 
