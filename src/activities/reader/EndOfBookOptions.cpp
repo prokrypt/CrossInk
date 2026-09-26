@@ -101,21 +101,18 @@ EndOfBookOptions::Action EndOfBookOptions::handleMenuInput(const MappedInputMana
     }
   }
 
-  const int selectedIndex = selector.load(std::memory_order_relaxed);
+  return applyMenuKey(readMenuKey(input), openPath);
+}
+
+EndOfBookOptions::MenuKey EndOfBookOptions::readMenuKey(const MappedInputManager& input) {
   if (input.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (selectedIndex < static_cast<int>(names.size())) {
-      if (openPath) {
-        *openPath = fullPath(selectedIndex);
-      }
-      return Action::OpenBook;
-    }
-    return Action::GoHome;  // "Home" entry selected
+    return MenuKey::Confirm;
   }
 
   // Short-press Back returns to the last page; a long press falls through to the
   // reader's own handler (file browser). Home is reached through the list's Home entry.
   if (input.wasReleased(MappedInputManager::Button::Back) && input.getHeldTime() < ReaderUtils::GO_HOME_MS) {
-    return Action::LastPage;
+    return MenuKey::Back;
   }
 
   // Selection movement follows reader page-turn buttons: side buttons honor the
@@ -124,16 +121,39 @@ EndOfBookOptions::Action EndOfBookOptions::handleMenuInput(const MappedInputMana
   const auto sideTriggered = [&](const MappedInputManager::Button button) {
     return sideUsePress ? input.wasPressed(button) : input.wasReleased(button);
   };
-  const int itemCount = static_cast<int>(names.size()) + 1;  // + "Home" entry
   if (sideTriggered(MappedInputManager::Button::PageBack) || input.wasReleased(MappedInputManager::Button::Left)) {
-    selector.store(ButtonNavigator::previousIndex(selectedIndex, itemCount),
-                   std::memory_order_relaxed);  // wraps to the bottom
-    return Action::Redraw;
+    return MenuKey::Previous;
   }
   if (sideTriggered(MappedInputManager::Button::PageForward) || input.wasReleased(MappedInputManager::Button::Right)) {
-    selector.store(ButtonNavigator::nextIndex(selectedIndex, itemCount),
-                   std::memory_order_relaxed);  // wraps to the top
-    return Action::Redraw;
+    return MenuKey::Next;
+  }
+  return MenuKey::None;
+}
+
+EndOfBookOptions::Action EndOfBookOptions::applyMenuKey(const MenuKey key, std::string* openPath) {
+  const int selectedIndex = selector.load(std::memory_order_relaxed);
+  const int itemCount = static_cast<int>(names.size()) + 1;  // + "Home" entry
+  switch (key) {
+    case MenuKey::Confirm:
+      if (selectedIndex < static_cast<int>(names.size())) {
+        if (openPath) {
+          *openPath = fullPath(selectedIndex);
+        }
+        return Action::OpenBook;
+      }
+      return Action::GoHome;  // "Home" entry selected
+    case MenuKey::Back:
+      return Action::LastPage;
+    case MenuKey::Previous:
+      selector.store(ButtonNavigator::previousIndex(selectedIndex, itemCount),
+                     std::memory_order_relaxed);  // wraps to the bottom
+      return Action::Redraw;
+    case MenuKey::Next:
+      selector.store(ButtonNavigator::nextIndex(selectedIndex, itemCount),
+                     std::memory_order_relaxed);  // wraps to the top
+      return Action::Redraw;
+    case MenuKey::None:
+      break;
   }
   return Action::None;
 }
