@@ -501,17 +501,18 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   (void)wifiPowerSaveGuard;
 
   const size_t bufferSize = options.bufferSize > 0 ? options.bufferSize : DEFAULT_DOWNLOAD_BUFFER_SIZE;
+  const std::string writePath = options.stageAsPart ? destPath + ".part" : destPath;
   size_t resumeOffset = 0;
-  if (options.resumePartial && Storage.exists(destPath.c_str())) {
+  if (options.resumePartial && Storage.exists(writePath.c_str())) {
     FsFile existingFile;
-    if (Storage.openFileForRead("HTTP", destPath.c_str(), existingFile)) {
+    if (Storage.openFileForRead("HTTP", writePath.c_str(), existingFile)) {
       resumeOffset = existingFile.fileSize();
       existingFile.close();
     }
   }
 
-  if (resumeOffset == 0 && Storage.exists(destPath.c_str())) {
-    Storage.remove(destPath.c_str());
+  if (resumeOffset == 0 && Storage.exists(writePath.c_str())) {
+    Storage.remove(writePath.c_str());
   }
 
   Sink sink;
@@ -525,9 +526,9 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   auto openOutputFile = [&]() {
     if (fileOpen) return true;
     if (sink.resumeOffset > 0) {
-      file = Storage.open(destPath.c_str(), O_WRONLY | O_APPEND);
+      file = Storage.open(writePath.c_str(), O_WRONLY | O_APPEND);
     } else {
-      fileOpen = Storage.openFileForWrite("HTTP", destPath.c_str(), file);
+      fileOpen = Storage.openFileForWrite("HTTP", writePath.c_str(), file);
       if (!fileOpen) {
         LOG_ERR("HTTP", "Failed to open file for writing");
         return false;
@@ -549,7 +550,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
       file.close();
       fileOpen = false;
     }
-    Storage.remove(destPath.c_str());
+    Storage.remove(writePath.c_str());
     sink.rangeIgnored = false;
     sink.resumeOffset = 0;
     sink.downloaded = 0;
@@ -567,7 +568,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
     LOG_ERR("HTTP", "Transfer failed: error=%d downloaded=%zu expected=%zu preservePartial=%d resumePartial=%d",
             static_cast<int>(result), sink.downloaded, sink.total, options.preservePartial, options.resumePartial);
     if (result == ABORTED || !options.preservePartial) {
-      Storage.remove(destPath.c_str());
+      Storage.remove(writePath.c_str());
     }
     return result;
   }
@@ -575,7 +576,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   if (sink.downloaded == 0) {
     LOG_ERR("HTTP", "Download failed: no data received");
     if (!options.preservePartial) {
-      Storage.remove(destPath.c_str());
+      Storage.remove(writePath.c_str());
     }
     return HTTP_ERROR;
   }
@@ -583,9 +584,23 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   if (sink.total > 0 && sink.downloaded != sink.total) {
     LOG_ERR("HTTP", "Size mismatch: got %zu, expected %zu", sink.downloaded, sink.total);
     if (!options.preservePartial) {
-      Storage.remove(destPath.c_str());
+      Storage.remove(writePath.c_str());
     }
     return HTTP_ERROR;
+  }
+
+  if (options.stageAsPart) {
+    // FAT rename will not replace an existing file, so the old copy goes first.
+    if (Storage.exists(destPath.c_str()) && !Storage.remove(destPath.c_str())) {
+      LOG_ERR("HTTP", "Could not replace %s", destPath.c_str());
+      Storage.remove(writePath.c_str());
+      return FILE_ERROR;
+    }
+    if (!Storage.rename(writePath.c_str(), destPath.c_str())) {
+      LOG_ERR("HTTP", "Could not rename %s to %s", writePath.c_str(), destPath.c_str());
+      Storage.remove(writePath.c_str());
+      return FILE_ERROR;
+    }
   }
 
   return OK;

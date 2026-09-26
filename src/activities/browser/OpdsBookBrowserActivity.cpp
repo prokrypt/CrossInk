@@ -677,6 +677,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   downloadOptions.bufferSize = OPDS_DOWNLOAD_BUFFER_SIZE;
   downloadOptions.transport = HttpDownloader::Transport::WOLFSSL;
   downloadOptions.authorizationOrigin = authorizationOrigin;
+  downloadOptions.stageAsPart = true;
   int lastRenderedPercent = -1;
   unsigned long lastProgressUpdateMs = 0;
 
