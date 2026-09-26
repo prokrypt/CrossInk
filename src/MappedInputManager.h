@@ -19,6 +19,9 @@ class MappedInputManager {
   struct EdgeSlideProgress {
     EdgeSlide direction = EdgeSlide::None;
     int distance = 0;
+    // Signed vertical travel from the touch-down point (positive = down), set
+    // whenever a position is known, even inside the recognition dead zone.
+    int deltaY = 0;
     bool finished = false;
   };
 

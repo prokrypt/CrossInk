@@ -699,6 +699,7 @@ bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
     } else {
       edgeSlideLastX = x;
       edgeSlideLastY = y;
+      progress.deltaY = y - edgeSlideStartY;
       progress.direction = ::EdgeSlide::directionFor(edgeSlideStartX, edgeSlideStartY, x, y, width, height);
       edgeSlideQualified = progress.direction != EdgeSlide::None;
       if (edgeSlideQualified) progress.distance = std::abs(y - edgeSlideStartY);
@@ -715,6 +716,7 @@ bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
   int startY = 0;
   if (!decodeSwipe(startX, startY, x, y)) {
     if (!edgeSlideQualified) {
+      progress.deltaY = edgeSlideLastY - edgeSlideStartY;
       edgeSlideSide = EdgeSlide::None;
       return true;
     }
@@ -729,6 +731,7 @@ bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
     edgeSlideSide = EdgeSlide::None;
     return true;
   }
+  progress.deltaY = y - edgeSlideStartY;
   progress.direction = ::EdgeSlide::directionFor(edgeSlideStartX, edgeSlideStartY, x, y, width, height);
   if (progress.direction != EdgeSlide::None) progress.distance = std::abs(y - edgeSlideStartY);
   edgeSlideSide = EdgeSlide::None;

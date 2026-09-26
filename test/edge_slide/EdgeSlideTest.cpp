@@ -48,3 +48,13 @@ TEST(EdgeSlide, LeavesCenterAndDiagonalGesturesAlone) {
   EXPECT_EQ(EdgeSlide::directionFor(10, 400, 60, 340, 800, 480), EdgeSlide::Direction::None);
   EXPECT_EQ(EdgeSlide::directionFor(790, 500, 720, 350, 800, 800), EdgeSlide::Direction::None);
 }
+
+TEST(EdgeSlide, SignedEdgeAmountTracksReversal) {
+  EXPECT_EQ(SwipeAdjustment::signedEdgeAmount(0, 800), 0);
+  EXPECT_EQ(SwipeAdjustment::signedEdgeAmount(75, 800), 2);
+  EXPECT_EQ(SwipeAdjustment::signedEdgeAmount(-75, 800), -2);
+  EXPECT_EQ(SwipeAdjustment::signedEdgeAmount(-59, 800), 0);
+  // Start at 20%, slide down to decrease, then back up past the touch-down point.
+  EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::signedEdgeAmount(429, 800)), 0);
+  EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::signedEdgeAmount(-429, 800)), 45);
+}
