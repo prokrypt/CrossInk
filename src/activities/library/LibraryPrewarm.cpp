@@ -25,7 +25,7 @@ void pause() {}
 void stop(bool) {}
 bool active() { return false; }
 bool working() { return false; }
-void finishForLibrary() {}
+bool finishForLibrary(uint32_t) { return true; }
 
 #else
 
@@ -48,6 +48,14 @@ uint32_t startGeneration = 0;
 bool useMetadata = false;
 bool buildOk = false;
 bool buildCancelled = false;
+// Timing for the finish log, so a slow walk on a device can be told apart from
+// one that was held off by Home. pausedMs is written by the build task only.
+uint32_t startedAtMs = 0;
+uint32_t pausedMs = 0;
+library::BuildStats lastStats;
+// Why the last tick() did not start a build, logged once per change.
+enum class SkipReason : uint8_t { None, LowHeap };
+SkipReason lastSkip = SkipReason::None;
 // A build that failed on its own (not stopped) is not retried until the next
 // boot; the Library still scans in the foreground and reports the problem.
 bool gaveUp = false;
@@ -55,13 +63,13 @@ bool gaveUp = false;
 bool serviceBuild(void*) {
   // Blocks instead of polling so a paused build costs no wakeups and the chip
   // can stay in light sleep. resume/cancel send a notification.
-  while (paused.load(std::memory_order_acquire) && !cancelRequested.load(std::memory_order_acquire)) {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  if (paused.load(std::memory_order_acquire) && !cancelRequested.load(std::memory_order_acquire)) {
+    const uint32_t pausedAtMs = millis();
+    while (paused.load(std::memory_order_acquire) && !cancelRequested.load(std::memory_order_acquire)) {
+      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    }
+    pausedMs += millis() - pausedAtMs;
   }
-  // Give up the card for a tick between entries. On a dual-core chip the walk
-  // can otherwise retake the storage mutex before a waiting Home task on the
-  // other core wakes, starving it for a whole directory.
-  vTaskDelay(1);
   return !cancelRequested.load(std::memory_order_acquire);
 }
 
@@ -71,6 +79,7 @@ void buildTask(void*) {
   control.service = &serviceBuild;
   buildOk = library::buildLibraryIndex("/", stats, useMetadata, &control);
   buildCancelled = stats.cancelled;
+  lastStats = stats;
   xSemaphoreGive(doneSem);
   // The owner deletes this task after collecting the result. Parking here
   // rather than self-deleting keeps a late notification from the owner safe.
@@ -88,9 +97,12 @@ void finalize() {
     // The generation read before the walk: a change made during it leaves the
     // counter ahead, so the Library rescans.
     Storage.noteLibraryScanned(startGeneration);
-    LOG_INF("LIBPW", "Library index ready in the background");
+    LOG_INF("LIBPW", "Library index ready in the background: %u books, %u parsed, %ums total, %ums paused",
+            static_cast<unsigned>(lastStats.books), static_cast<unsigned>(lastStats.parsed),
+            static_cast<unsigned>(millis() - startedAtMs), static_cast<unsigned>(pausedMs));
   } else if (buildCancelled) {
-    LOG_DBG("LIBPW", "Background Library build stopped; will retry when Home is idle");
+    LOG_INF("LIBPW", "Background Library build stopped after %ums; will retry on Home",
+            static_cast<unsigned>(millis() - startedAtMs));
   } else {
     gaveUp = true;
     LOG_ERR("LIBPW", "Background Library build failed; leaving it to the Library");
@@ -120,21 +132,27 @@ void start() {
   useMetadata = SETTINGS.libraryUseMetadata != 0;
   buildOk = false;
   buildCancelled = false;
+  startedAtMs = millis();
+  pausedMs = 0;
   paused.store(false, std::memory_order_release);
   cancelRequested.store(false, std::memory_order_release);
-  // Idle priority: the walk only gets the CPU when the loop and render tasks
-  // have nothing to do. Mutex priority inheritance covers the card lock. On
-  // dual-core chips it stays off the loop's core.
-  const BaseType_t core = portNUM_PROCESSORS > 1 ? 0 : tskNO_AFFINITY;
-  if (xTaskCreatePinnedToCore(&buildTask, "LibPrewarm", kStackBytes, nullptr, tskIDLE_PRIORITY, &task, core) !=
-      pdPASS) {
+  // Dual-core: priority 1 on core 0, which the loop and render tasks do not
+  // use. At idle priority it would time-slice with IDLE0 (which does not yield)
+  // and get about half the core. Single-core: idle priority, so the walk only
+  // gets the CPU when the loop and render tasks have nothing to do. Mutex
+  // priority inheritance covers the card lock either way.
+  const bool dualCore = portNUM_PROCESSORS > 1;
+  const BaseType_t core = dualCore ? 0 : tskNO_AFFINITY;
+  const UBaseType_t priority = dualCore ? tskIDLE_PRIORITY + 1 : tskIDLE_PRIORITY;
+  if (xTaskCreatePinnedToCore(&buildTask, "LibPrewarm", kStackBytes, nullptr, priority, &task, core) != pdPASS) {
     task = nullptr;
     gaveUp = true;
     LOG_ERR("LIBPW", "Cannot start background Library build (%u free, %u max alloc)", ESP.getFreeHeap(),
             ESP.getMaxAllocHeap());
     return;
   }
-  LOG_DBG("LIBPW", "Background Library build started");
+  LOG_INF("LIBPW", "Background Library build started (%u free, %u max alloc)", ESP.getFreeHeap(),
+          ESP.getMaxAllocHeap());
 }
 }  // namespace
 
@@ -150,7 +168,15 @@ void tick(const bool idle) {
     return;
   }
   if (!idle || gaveUp || Storage.libraryScanCurrent()) return;
-  if (ESP.getFreeHeap() < kMinFreeHeap || ESP.getMaxAllocHeap() < kMinMaxAlloc) return;
+  if (ESP.getFreeHeap() < kMinFreeHeap || ESP.getMaxAllocHeap() < kMinMaxAlloc) {
+    if (lastSkip != SkipReason::LowHeap) {
+      lastSkip = SkipReason::LowHeap;
+      LOG_INF("LIBPW", "Background Library build waiting for heap (%u free, %u max alloc)", ESP.getFreeHeap(),
+              ESP.getMaxAllocHeap());
+    }
+    return;
+  }
+  lastSkip = SkipReason::None;
   start();
 }
 
@@ -176,12 +202,18 @@ bool active() { return task != nullptr; }
 
 bool working() { return task != nullptr && !paused.load(std::memory_order_relaxed); }
 
-void finishForLibrary() {
+bool finishForLibrary(const uint32_t waitMs) {
   collectIfDone();
-  if (!task) return;
+  if (!task) return true;
   paused.store(false, std::memory_order_release);
   wake();
+  if (waitMs != UINT32_MAX) {
+    if (xSemaphoreTake(doneSem, pdMS_TO_TICKS(waitMs)) != pdTRUE) return false;
+    finalize();
+    return true;
+  }
   waitForDone();
+  return true;
 }
 
 #endif
