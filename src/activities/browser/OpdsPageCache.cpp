@@ -1,6 +1,8 @@
 #include "OpdsPageCache.h"
 
+#include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <utility>
 
 namespace {
@@ -46,17 +48,15 @@ void OpdsPageBuffer::reset() {
 }
 
 OpdsPageCache::Slot* OpdsPageCache::findSlot(const std::string& url) {
-  for (auto& slot : slots) {
-    if (slot.used && slot.url == url) return &slot;
-  }
-  return nullptr;
+  Slot* const found = std::find_if(std::begin(slots), std::end(slots),
+                                   [&url](const Slot& slot) { return slot.used && slot.url == url; });
+  return found == std::end(slots) ? nullptr : found;
 }
 
 const OpdsPageCache::Slot* OpdsPageCache::findSlot(const std::string& url) const {
-  for (const auto& slot : slots) {
-    if (slot.used && slot.url == url) return &slot;
-  }
-  return nullptr;
+  const Slot* const found = std::find_if(std::begin(slots), std::end(slots),
+                                         [&url](const Slot& slot) { return slot.used && slot.url == url; });
+  return found == std::end(slots) ? nullptr : found;
 }
 
 const OpdsPageBuffer* OpdsPageCache::find(const std::string& url) {
@@ -96,14 +96,8 @@ bool OpdsPageCache::store(const std::string& url, OpdsPageBuffer&& page) {
   while (usedBytes + page.size() > byteBudget && evictLeastRecentlyUsed()) {
   }
 
-  Slot* target = nullptr;
-  for (auto& slot : slots) {
-    if (!slot.used) {
-      target = &slot;
-      break;
-    }
-  }
-  if (!target) target = evictLeastRecentlyUsed();
+  Slot* target = std::find_if(std::begin(slots), std::end(slots), [](const Slot& slot) { return !slot.used; });
+  if (target == std::end(slots)) target = evictLeastRecentlyUsed();
 
   target->url = url;
   target->page = std::move(page);
@@ -121,7 +115,6 @@ void OpdsPageCache::clear() {
 }
 
 size_t OpdsPageCache::pageCount() const {
-  size_t count = 0;
-  for (const auto& slot : slots) count += slot.used ? 1 : 0;
-  return count;
+  return static_cast<size_t>(
+      std::count_if(std::begin(slots), std::end(slots), [](const Slot& slot) { return slot.used; }));
 }

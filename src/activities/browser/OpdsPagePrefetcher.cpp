@@ -56,8 +56,8 @@ void OpdsPagePrefetcher::join() const {
 void OpdsPagePrefetcher::harvestInto(OpdsPageCache& cache) {
   if (running()) return;
   if (succeeded && !page.empty()) {
-    const size_t bytes = page.size();
-    if (cache.store(job.url, std::move(page))) LOG_DBG("OPDS", "Prefetched page cached (%zu bytes)", bytes);
+    LOG_DBG("OPDS", "Caching prefetched page (%zu bytes)", page.size());
+    cache.store(job.url, std::move(page));
   }
   succeeded = false;
   page.reset();
