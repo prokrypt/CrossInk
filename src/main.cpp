@@ -367,6 +367,9 @@ RTC_NOINIT_ATTR uint32_t silentReaderPageBuildMagic;
 RTC_NOINIT_ATTR uint32_t silentReaderPageBuildBookHash;
 RTC_NOINIT_ATTR uint32_t silentReaderPageBuildPackedTarget;
 RTC_NOINIT_ATTR uint32_t silentReaderPageBuildFlags;
+RTC_NOINIT_ATTR uint32_t silentFirmwareUpdateMagic;
+RTC_NOINIT_ATTR char silentFirmwareUpdatePath[MAX_SILENT_FIRMWARE_PATH];
+constexpr uint32_t SILENT_FIRMWARE_UPDATE_MAGIC = 0x46574E55;  // "FWNU"
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
@@ -487,6 +490,26 @@ void silentRestartToNetwork(const NetworkBootTarget target, const uint32_t paylo
 }
 
 void silentRestartToManageFonts() { silentRestartToNetwork(NetworkBootTarget::MANAGE_FONTS); }
+
+void silentRestartToFirmwareUpdate(const std::string& firmwarePath) {
+  if (!firmwarePath.empty() && firmwarePath.size() < MAX_SILENT_FIRMWARE_PATH) {
+    memcpy(silentFirmwareUpdatePath, firmwarePath.c_str(), firmwarePath.size() + 1);
+    silentFirmwareUpdateMagic = SILENT_FIRMWARE_UPDATE_MAGIC;
+  }
+  silentRestartToHome(0, "target=home+firmware-update");
+  // Only reached when deep sleep superseded the reboot; don't prompt on wake.
+  silentFirmwareUpdateMagic = 0;
+}
+
+std::string consumeSilentRestartFirmwareUpdate() {
+  std::string path;
+  if (silentFirmwareUpdateMagic == SILENT_FIRMWARE_UPDATE_MAGIC) {
+    silentFirmwareUpdatePath[MAX_SILENT_FIRMWARE_PATH - 1] = '\0';
+    path = silentFirmwareUpdatePath;
+  }
+  silentFirmwareUpdateMagic = 0;
+  return path;
+}
 
 static uint32_t encodeKOReaderSyncOrientation(const uint8_t orientation) {
   return orientation < CrossPointSettings::ORIENTATION_COUNT ? static_cast<uint32_t>(orientation) + 1 : 0;
@@ -1266,6 +1289,9 @@ void setup() {
   if (!isSilentReboot || snapshotTarget != SILENT_REBOOT_TARGET_READER) {
     clearSilentRestartReaderPageBuild();
   }
+  if (!isSilentReboot || snapshotTarget != SILENT_REBOOT_TARGET_HOME) {
+    silentFirmwareUpdateMagic = 0;
+  }
 
   gpio.begin();
   // Sticky shares Confirm and Power on one GPIO. Emit Power first so the
@@ -1569,6 +1595,15 @@ void setup() {
     // by network screens. Keep X3's existing full refresh behavior unchanged.
     const auto homeRefreshMode = gpio.deviceIsX3() ? HalDisplay::FULL_REFRESH : HalDisplay::HALF_REFRESH;
     activityManager.goHome(HomeMenuItem::NONE, homeRefreshMode);
+    // File Transfer exit with a firmware to flash (POST /api/exit?flash=...):
+    // open the update flow over Home so cancelling lands back on Home.
+    const std::string pendingFirmware = snapshotTarget == SILENT_REBOOT_TARGET_HOME ? consumeSilentRestartFirmwareUpdate()
+                                                                                    : std::string();
+    if (!pendingFirmware.empty()) {
+      LOG_INF("MAIN", "Opening firmware update for %s", pendingFirmware.c_str());
+      activityManager.pushActivity(
+          std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInputManager, false, pendingFirmware));
+    }
   } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
              mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
     // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity

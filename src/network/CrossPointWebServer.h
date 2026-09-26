@@ -78,6 +78,9 @@ class CrossPointWebServer {
     return requested;
   }
 
+  // Firmware .bin the exit request asked to flash (empty when none); cleared on read.
+  std::string takeExitFlashPath() { return std::move(exitFlashPath); }
+
   // Get the port number
   uint16_t getPort() const { return port; }
 
@@ -86,6 +89,7 @@ class CrossPointWebServer {
   std::unique_ptr<WebSocketsServer> wsServer = nullptr;
   bool running = false;
   bool exitRequestPending = false;  // set by POST /api/exit, consumed by the activity
+  std::string exitFlashPath;        // optional `flash` argument of POST /api/exit
   bool apMode = false;  // true when running in AP mode, false for STA mode
   uint16_t port = 80;
   uint16_t wsPort = 81;  // WebSocket port

@@ -339,6 +339,15 @@ void CrossPointWebServerActivity::startWebServer() {
 }
 
 void CrossPointWebServerActivity::exitToOrigin() {
+  // POST /api/exit?flash=... : reboot into SD Card Firmware Update for that file.
+  // Returns only when deep sleep superseded the reboot; then exit normally.
+  if (webServer) {
+    const std::string flashPath = webServer->takeExitFlashPath();
+    if (!flashPath.empty()) {
+      silentRestartToFirmwareUpdate(flashPath);
+    }
+  }
+
   if (networkBootReady) {
     if (returnBookPath.empty()) {
       silentRestart();

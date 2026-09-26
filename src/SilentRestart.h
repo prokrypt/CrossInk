@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -43,6 +44,13 @@ void silentRestartToReader(bool cleanImageBaseOnEntry = false);  // currently-op
 void restartToHomeAfterStorageHandoff();
 void silentRestartToNetwork(NetworkBootTarget target, uint32_t payload = 0);
 void silentRestartToManageFonts();
+// Reboots to home, then opens SD Card Firmware Update for `firmwarePath` (which
+// still asks for confirmation). Paths of MAX_SILENT_FIRMWARE_PATH bytes or more
+// fall back to a plain silentRestart().
+constexpr size_t MAX_SILENT_FIRMWARE_PATH = 128;
+void silentRestartToFirmwareUpdate(const std::string& firmwarePath);
+// Returns the path armed by silentRestartToFirmwareUpdate() once, then clears it.
+std::string consumeSilentRestartFirmwareUpdate();
 
 void armSilentRestartReaderPageBuild(const std::string& bookPath, uint16_t spineIndex, uint16_t targetPage,
                                      bool autoPageTurnActive);
