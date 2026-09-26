@@ -7264,16 +7264,24 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
                                      pagesUntilFullRefresh > 1 && renderer.supportsDeferredGrayscaleBase() &&
                                      allocateDeferredGrayscalePlanes(renderer, deferredLsbPlane, deferredMsbPlane);
   bool baseRefreshPending = false;
+  // Completed image gray planes leave charge in the image region that a plain
+  // fast diff on the next page can't clear, so text or a new image there
+  // ghosts (#2190). Force the next page onto the HALF ghost-cleanup path.
+  const auto markGrayscaleShown = [&]() {
+    if (needsImageGrayscale) {
+      pagesUntilFullRefresh = 1;
+    }
+  };
   if (pageHasImages && !deferImageLoading) {
     // Keep the legacy blank/base sequence unless the controller can transition
     // directly to the complete image base.
     int16_t imgX, imgY, imgW, imgH;
     if (page->getImageBoundingBox(imgX, imgY, imgW, imgH)) {
       const bool directImageBase = renderer.shouldSkipImageBlanking();
-      // A countdown at or below one means the previous page asked for a
-      // cleanup: an earlier image page leaves gray residue (#2190), or the
-      // refresh cadence is due. Image pages bypass the cadence below, so run
-      // the strong cleanup here instead of fading straight to the new image.
+      // A countdown at or below one means a cleanup is due: the previous
+      // image page finished its grayscale pass and left gray residue (#2190),
+      // or the refresh cadence ran out. Run the strong cleanup here instead of
+      // fading straight from that residue to the new image.
       const bool cleanBase = cleanImageBasePending || pagesUntilFullRefresh <= 1;
       // UC8179's base waveform transitions directly from the displayed page.
       // Keep blanking for other controllers and for a pending strong cleanup.
@@ -7284,6 +7292,7 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       if (cleanBase) {
         renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);
         cleanImageBasePending = false;
+        pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
       }
       if (!directImageBase) {
         renderer.displayBuffer(HalDisplay::FAST_REFRESH);
@@ -7298,14 +7307,12 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
     } else {
       renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);
+      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
     }
-    // The image's own page is handled above and doesn't count toward the full
-    // refresh cadence. But the grayscale pass below leaves gray charge in the
-    // image region that a plain fast diff on the *next* page can't clear, so
-    // text there ghosts gray (#2190). Force the next ordinary page onto the
-    // HALF ghost-cleanup path, which drives every pixel to its target
-    // regardless of residue.
-    pagesUntilFullRefresh = 1;
+    // The image's own page doesn't count toward the full refresh cadence. The
+    // cleanup for its gray residue is scheduled only once the grayscale pass
+    // below reaches the panel (markGrayscaleShown), so quickly skipped image
+    // pages stay flash-free.
   } else if (needsAnyGrayscale) {
     if (pagesUntilFullRefresh <= 1) {
       // Cleanup turns still need the stronger HALF pass, but X3 grayscale
@@ -7367,11 +7374,15 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   if (needsAnyGrayscale) {
     ensureGrayscaleStripScratch();
   }
+  bool tiledGrayscaleShown = false;
   if (EpubGrayscale::runTiledGrayscalePass(
           renderer, *page, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack, needsTextGrayscale,
           needsImageGrayscale, grayscaleStripScratch.get(), grayscaleStripScratchSize, overlapRefresh,
           [](void* context) { return static_cast<EpubReaderActivity*>(context)->pendingManualPageTurns.hasPending(); },
-          this)) {
+          this, &tiledGrayscaleShown)) {
+    if (tiledGrayscaleShown) {
+      markGrayscaleShown();
+    }
     return true;
   }
 
@@ -7429,6 +7440,7 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       return true;
     }
     renderer.displayGrayBuffer();
+    markGrayscaleShown();
     renderer.setRenderMode(GfxRenderer::BW);
     // restore the bw data
     renderer.restoreBwBuffer();
