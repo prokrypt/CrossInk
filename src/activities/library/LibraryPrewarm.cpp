@@ -58,6 +58,10 @@ bool serviceBuild(void*) {
   while (paused.load(std::memory_order_acquire) && !cancelRequested.load(std::memory_order_acquire)) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   }
+  // Give up the card for a tick between entries. On a dual-core chip the walk
+  // can otherwise retake the storage mutex before a waiting Home task on the
+  // other core wakes, starving it for a whole directory.
+  vTaskDelay(1);
   return !cancelRequested.load(std::memory_order_acquire);
 }
 
@@ -151,7 +155,8 @@ void tick(const bool idle) {
 }
 
 void pause() {
-  if (task) paused.store(true, std::memory_order_release);
+  // Only an atomic store, so the render task may call it too. start() clears it.
+  paused.store(true, std::memory_order_release);
 }
 
 void stop(const bool handOffToLibrary) {
