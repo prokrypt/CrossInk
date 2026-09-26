@@ -517,17 +517,52 @@ TEST_F(LibraryBuilderTest, VersionTwoIndexRebuildKeepsFirstSeenOrder) {
   EXPECT_EQ(rebuilt.firstSeen, original.firstSeen);
 }
 
-TEST_F(LibraryBuilderTest, ZeroTimestampAndFailedExtractionAreNeverFresh) {
+TEST_F(LibraryBuilderTest, ZeroTimestampIsNeverFresh) {
   fake::files["/a.epub"]->time = 0;
-  bookMetadata["/b.epub"].success = false;
   initial();
   fake::parses = 0;
 
   ASSERT_TRUE(buildLibraryIndex("/", stats, true));
 
-  EXPECT_EQ(fake::parses, 2u);
-  EXPECT_EQ(stats.metadataReused, 0);
-  EXPECT_TRUE(stats.indexReplaced);
+  EXPECT_EQ(fake::parses, 1u);
+  EXPECT_EQ(stats.metadataReused, 1);
+}
+
+TEST_F(LibraryBuilderTest, UnchangedFailedExtractionIsReusedUntilRetryIsRequested) {
+  bookMetadata["/b.epub"].success = false;
+  initial();
+  const auto old = fake::files[INDEX]->bytes;
+  fake::parses = 0;
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+
+  EXPECT_EQ(fake::parses, 0u);
+  EXPECT_EQ(stats.metadataReused, 2);
+  EXPECT_FALSE(stats.indexReplaced);
+  EXPECT_EQ(fake::files[INDEX]->bytes, old);
+
+  bookMetadata["/b.epub"].success = true;
+  bookMetadata["/b.epub"].title = "Recovered";
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true, nullptr, /*retryFailedMetadata=*/true));
+
+  EXPECT_EQ(fake::parses, 1u);
+  EXPECT_EQ(stats.metadataReused, 1);
+  LibraryIndexFile after;
+  ASSERT_TRUE(after.open(INDEX));
+  ClixRecord record{};
+  ASSERT_TRUE(recordAtPath(after, "/b.epub", record));
+  EXPECT_EQ(record.metadataStatus, CLIX_METADATA_EXTRACTED);
+}
+
+TEST_F(LibraryBuilderTest, ChangedFailedExtractionIsParsedAgain) {
+  bookMetadata["/b.epub"].success = false;
+  initial();
+  fake::files["/b.epub"]->time += 1;
+  fake::parses = 0;
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+
+  EXPECT_EQ(fake::parses, 1u);
 }
 
 TEST_F(LibraryBuilderTest, ZeroTimestampDoesNotReuseStaleEpubCache) {

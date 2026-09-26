@@ -108,7 +108,8 @@ bool LibraryActivity::rebuildIndex(const bool showScanning, const bool force) {
   index.close();
   if (showScanning) GUI.drawPopup(renderer, tr(STR_LIBRARY_SCANNING));
   library::BuildStats stats;
-  scanFailed = !library::buildLibraryIndex("/", stats, useMetadata);
+  // A manual refresh also retries books whose metadata read failed before.
+  scanFailed = !library::buildLibraryIndex("/", stats, useMetadata, nullptr, /*retryFailedMetadata=*/force);
   if (scanFailed) LOG_ERR("LIB", "Library scan failed; retaining the previous index");
   if (!index.open(library::libraryIndexPath())) {
     // A failed one-time upgrade leaves the previous index on the card. Keep
