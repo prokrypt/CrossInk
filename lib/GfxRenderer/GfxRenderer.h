@@ -49,6 +49,7 @@ class GfxRenderer {
   mutable bool absoluteGrayPlanes = false;
   Orientation orientation;
   bool fadingFix;
+  bool deferFastRefresh = false;
   uint8_t* frameBuffer = nullptr;
   uint16_t panelWidth = HalDisplay::DISPLAY_WIDTH;
   uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
@@ -203,6 +204,14 @@ class GfxRenderer {
 
   // Fading fix control
   void setFadingFix(const bool enabled) { fadingFix = enabled; }
+  // While set, FAST displayBuffer() calls return once the frame is on the panel
+  // instead of waiting out the waveform (see HalDisplay::displayBufferDeferred).
+  // The render task sets it around menu renders only.
+  void setDeferFastRefresh(const bool defer) { deferFastRefresh = defer; }
+  // A refresh started by a deferred displayBuffer() that nothing has finished yet.
+  bool isRefreshPending() const;
+  // That refresh's waveform is still running on the panel.
+  bool isRefreshBusy() const;
 
   // Screen ops
   int getScreenWidth() const;
