@@ -49,10 +49,11 @@ constexpr unsigned long DOWNLOAD_PROGRESS_MIN_UPDATE_MS = 5000;
 // prefetched next page parse locally instead of refetching.
 constexpr size_t OPDS_PAGE_CACHE_MAX_BYTES = 2 * 1024 * 1024;
 constexpr size_t OPDS_PAGE_MAX_BYTES = 512 * 1024;
-// Prefetch runs a second TLS session's worth of internal RAM (task stack +
-// wolfSSL); skip it when the internal heap is tighter than this.
-constexpr size_t OPDS_PREFETCH_MIN_INTERNAL_FREE = 96 * 1024;
-constexpr size_t OPDS_PREFETCH_MIN_INTERNAL_BLOCK = 48 * 1024;
+// Prefetch needs its 12 KB task stack as one internal block, plus internal
+// headroom for wolfSSL's small allocations (larger ones go to PSRAM on these
+// boards via CONFIG_SPIRAM_USE_MALLOC); skip it below these.
+constexpr size_t OPDS_PREFETCH_MIN_INTERNAL_FREE = 48 * 1024;
+constexpr size_t OPDS_PREFETCH_MIN_INTERNAL_BLOCK = 16 * 1024;
 
 std::string buildBookFilenameBase(const OpdsEntry& book, const OpdsFilenameFormat format) {
   if (book.author.empty()) return book.title;
@@ -151,7 +152,13 @@ void OpdsBookBrowserActivity::onExit() {
 void OpdsBookBrowserActivity::activateSelected() {
   if (!entries || entryCount == 0 || selectorIndex < 0 || selectorIndex >= static_cast<int>(entryCount)) return;
   const auto& entry = entries[selectorIndex];
-  entry.type == OpdsEntryType::BOOK ? downloadBook(entry) : navigateToEntry(entry);
+  if (entry.type == OpdsEntryType::BOOK) {
+    downloadBook(entry);
+    return;
+  }
+  const bool pageLink =
+      (hasPrevPageRow && selectorIndex == 0) || (hasNextPageRow && selectorIndex == static_cast<int>(entryCount) - 1);
+  navigateToEntry(entry, pageLink);
 }
 
 void OpdsBookBrowserActivity::onRowEvent(const fui::ActionEvent& event, void* user) {
@@ -583,7 +590,10 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
     LOG_DBG("OPDS", "Feed truncated to %zu entries", entryCount);
   }
 
+  hasPrevPageRow = false;
+  hasNextPageRow = false;
   if (!prevUrl.empty()) {
+    hasPrevPageRow = true;
     for (size_t i = entryCount; i > 0; --i) {
       entries[i] = std::move(entries[i - 1]);
     }
@@ -592,11 +602,11 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
                            "", prevUrl, ""};
     entryCount++;
   }
-  if (!nextUrl.empty() &&
-      !appendEntry(OpdsEntry{OpdsEntryType::NAVIGATION,
-                             std::string(mappedInput.resolveLabel(mappedInput.withNextPageArrow(tr(STR_NEXT_PAGE)))),
-                             "", nextUrl, ""})) {
-    LOG_DBG("OPDS", "No room for next-page entry");
+  if (!nextUrl.empty()) {
+    hasNextPageRow = appendEntry(OpdsEntry{
+        OpdsEntryType::NAVIGATION,
+        std::string(mappedInput.resolveLabel(mappedInput.withNextPageArrow(tr(STR_NEXT_PAGE)))), "", nextUrl, ""});
+    if (!hasNextPageRow) LOG_DBG("OPDS", "No room for next-page entry");
   }
 
   selectorIndex = 0;
@@ -614,13 +624,16 @@ bool OpdsBookBrowserActivity::loadFeed(const std::string& url, OpdsParser& parse
   // completed page lands in the cache.
   if (prefetcher) {
     if (prefetcher->running() && prefetcher->url() != url) prefetcher->cancel();
+    const unsigned long joinStart = millis();
+    const bool waited = prefetcher->running();
     prefetcher->join();
+    if (waited) LOG_INF("OPDS", "Waited %lu ms for background fetch", millis() - joinStart);
     prefetcher->harvestInto(*pageCache);
   }
 
   if (pageCache) {
     if (const OpdsPageBuffer* cached = pageCache->find(url)) {
-      LOG_DBG("OPDS", "Cached: %s (%zu bytes)", url.c_str(), cached->size());
+      LOG_INF("OPDS", "Cached: %s (%zu bytes)", url.c_str(), cached->size());
       parser.parse(cached->data(), cached->size());
       return true;
     }
@@ -663,7 +676,7 @@ void OpdsBookBrowserActivity::startNextPagePrefetch(const std::string& nextHref)
 
   const ByteHeapSnapshot internal = byteHeapSnapshot(MemoryPool::Internal);
   if (internal.free < OPDS_PREFETCH_MIN_INTERNAL_FREE || internal.largest < OPDS_PREFETCH_MIN_INTERNAL_BLOCK) {
-    LOG_DBG("OPDS", "Prefetch skipped: internal free=%zu largest=%zu", internal.free, internal.largest);
+    LOG_INF("OPDS", "Prefetch skipped: internal free=%zu largest=%zu", internal.free, internal.largest);
     return;
   }
 
@@ -696,6 +709,8 @@ void OpdsBookBrowserActivity::clearEntries() {
     entries[i] = OpdsEntry{};
   }
   entryCount = 0;
+  hasPrevPageRow = false;
+  hasNextPageRow = false;
 }
 
 bool OpdsBookBrowserActivity::appendEntry(OpdsEntry&& entry) {
@@ -704,8 +719,10 @@ bool OpdsBookBrowserActivity::appendEntry(OpdsEntry&& entry) {
   return true;
 }
 
-void OpdsBookBrowserActivity::navigateToEntry(const OpdsEntry& entry) {
-  navigationHistory.push_back(currentPath);
+void OpdsBookBrowserActivity::navigateToEntry(const OpdsEntry& entry, const bool pageLink) {
+  // Prev/Next page stay at the same level: Back goes up to the feed that
+  // opened this listing, not through every page visited.
+  if (!pageLink) navigationHistory.push_back(currentPath);
   // Resolve to a full URL so sub-sub-navigation retains parent path context
   const std::string feedUrl = UrlUtils::buildUrl(server.url, currentPath);
   currentPath = UrlUtils::buildUrl(feedUrl, entry.href);
