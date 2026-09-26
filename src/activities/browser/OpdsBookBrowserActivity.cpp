@@ -812,6 +812,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
       const fui::InputSnapshot snap = touchSnapshotFrom(mappedInput);
       if (snap.touchPressed || snap.touchReleased) app.route(snap);
     }
+    // cppcheck-suppress knownConditionTrueFalse ; app.route() can set cancelDownload via the Cancel button callback
     return cancelRequested || cancelDownload;
   };
   HttpDownloader::DownloadOptions downloadOptions;
