@@ -18,6 +18,7 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <SPI.h>
+#include <WiFi.h>
 #if !defined(SIMULATOR) && !FREEINK_MCU_C3
 #include <XteinkDetect.h>
 #endif
@@ -1707,11 +1708,17 @@ void loop() {
 #endif
                                  || halTiltSensor.hadActivity();
 
-  // Check for any user activity (button press or release) or active background work
+  // User input paces power saving. Background work that only has to keep the
+  // device out of deep sleep (automatic page turn, sync screens) holds off the
+  // sleep timeout separately, so it no longer pins the CPU at full clock.
   static unsigned long lastActivityTime = millis();
-  if (userInputReceived || activityManager.preventAutoSleep()) {
+  static unsigned long lastSleepBlockTime = millis();
+  if (userInputReceived) {
     lastActivityTime = millis();         // Reset inactivity timer
     powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
+  }
+  if (activityManager.preventAutoSleep()) {
+    lastSleepBlockTime = millis();
   }
   if (userInputReceived) {
     activityManager.notifyUserInput();
@@ -1817,7 +1824,8 @@ void loop() {
   }
 
   const unsigned long sleepTimeoutMs = SETTINGS.getSleepTimeoutMs();
-  if (sleepTimeoutMs > 0 && millis() - lastActivityTime >= sleepTimeoutMs) {
+  if (sleepTimeoutMs > 0 && millis() - lastActivityTime >= sleepTimeoutMs &&
+      millis() - lastSleepBlockTime >= sleepTimeoutMs) {
     LOG_DBG("SLP", "Auto-sleep triggered after %lu ms of inactivity", sleepTimeoutMs);
     enterDeepSleep(true);
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
@@ -1907,8 +1915,11 @@ void loop() {
     yield();                             // Give FreeRTOS a chance to run tasks, but return immediately
   } else {
     // Both waits end early when a key or the touch INT line changes, so the
-    // longer idle tick no longer delays the first input after a pause.
-    if (millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
+    // longer idle tick no longer delays the first input after a pause. Screens
+    // that hold the device awake for a radio exchange keep the fast tick they
+    // had before, since WiFi blocks power saving anyway.
+    const bool radioExchange = activityManager.preventAutoSleep() && WiFi.getMode() != WIFI_MODE_NULL;
+    if (!radioExchange && millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
       // If we've been inactive for a while, increase the delay to save power
       powerManager.setPowerSaving(true);  // Lower CPU frequency after extended inactivity
       InputWake::wait(50);
