@@ -53,6 +53,10 @@ void HalPowerManager::begin() {
     LOG_ERR("PWR", "Failed to create display no-light-sleep lock; refresh may light-sleep");
     displayPmLock = nullptr;
   }
+  if (esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "usb-drive", &usbDrivePmLock) != ESP_OK) {
+    LOG_ERR("PWR", "Failed to create USB Drive no-light-sleep lock; USB Drive may drop off the host");
+    usbDrivePmLock = nullptr;
+  }
   esp_pm_config_t pmConfig = {};
   pmConfig.max_freq_mhz = normalFreq;
   pmConfig.min_freq_mhz = DFS_MIN_FREQ;
@@ -78,6 +82,20 @@ void HalPowerManager::beginDisplayBusyWait() {
 void HalPowerManager::endDisplayBusyWait() {
 #if CONFIG_PM_ENABLE
   if (displayPmLock != nullptr) esp_pm_lock_release(displayPmLock);
+#endif
+}
+
+void HalPowerManager::setUsbDriveActive(bool active) {
+#if CONFIG_PM_ENABLE
+  if (usbDrivePmLock == nullptr || usbDrivePmLockHeld == active) return;
+  if (active) {
+    esp_pm_lock_acquire(usbDrivePmLock);
+  } else {
+    esp_pm_lock_release(usbDrivePmLock);
+  }
+  usbDrivePmLockHeld = active;
+#else
+  (void)active;
 #endif
 }
 
