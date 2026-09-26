@@ -94,6 +94,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "activities/boot_sleep/ImageFolderIndex.h"
 #include "activities/home/BookActions.h"
 #include "activities/reader/KOReaderSyncActivity.h"
+#include "activities/reader/ReaderProgressShadow.h"
 #include "activities/reader/ReadingStatsUtils.h"
 #include "activities/reader/StatsBackup.h"
 #include "activities/settings/FontDownloadActivity.h"
@@ -379,6 +380,12 @@ RTC_NOINIT_ATTR uint32_t silentReaderPageBuildPackedTarget;
 RTC_NOINIT_ATTR uint32_t silentReaderPageBuildFlags;
 RTC_NOINIT_ATTR uint32_t silentFirmwareUpdateMagic;
 RTC_NOINIT_ATTR char silentFirmwareUpdatePath[MAX_SILENT_FIRMWARE_PATH];
+// Armed by enterDeepSleep() and consumed at the next boot, so the power-button
+// wake right after a sleep can skip the splash. Keeping it in RTC rather than
+// state.json saves an SD write on every wake; power loss clears it, so a cold
+// boot shows the splash.
+RTC_NOINIT_ATTR uint32_t splashlessWakeMagic;
+constexpr uint32_t SPLASHLESS_WAKE_MAGIC = 0x534C5750;  // "SLWP"
 constexpr uint32_t SILENT_FIRMWARE_UPDATE_MAGIC = 0x46574E55;  // "FWNU"
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
@@ -1145,7 +1152,7 @@ void enterDeepSleep(bool fromTimeout) {
          SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
     // Every sleep mode leaves a complete retained frame on the e-ink panel. Keep
     // it visible until the first useful reader or Home paint replaces it.
-    APP_STATE.showBootScreen = false;
+    splashlessWakeMagic = SPLASHLESS_WAKE_MAGIC;
 
     APP_STATE.saveToFile();
 
@@ -1328,6 +1335,13 @@ void setup() {
   }
 #endif
 
+  // One-shot, consumed only once the wake is real (a press too short to wake
+  // goes back to sleep above with the flag still armed). Cleared before any
+  // painting so a hang in the blocking paint path resets into a normal splash
+  // boot instead of a splashless loop with no frame.
+  const bool splashlessWakeArmed = splashlessWakeMagic == SPLASHLESS_WAKE_MAGIC;
+  splashlessWakeMagic = 0;
+
 #ifndef SIMULATOR
   // X4 Pro and X4 Classic both map Up to the GPIO0 boot strap. Use Down for
   // recovery so holding the recovery chord cannot strand either S3 board in a
@@ -1389,6 +1403,9 @@ void setup() {
   logBootHeap("storage ready");
 
   HalSystem::checkPanic();
+  // Before anything reads progress.bin: replay a position a crash or reset kept
+  // off the card.
+  ReaderProgressShadow::recoverPending();
 
   SETTINGS.loadFromFile();
   Storage.installDateTimeCallback(&SETTINGS.clockUtcOffsetQ);
@@ -1459,7 +1476,7 @@ void setup() {
   // Without either, retain the fast splashless resume path.
   bool hasBootScreenDirectory = false;
   bool hasPinnedBootScreen = false;
-  if (SETTINGS.customBootscreenEnabled && isSleepWake && !APP_STATE.showBootScreen) {
+  if (SETTINGS.customBootscreenEnabled && isSleepWake && splashlessWakeArmed) {
     std::string bootScreenDirectory;
     hasBootScreenDirectory = ImageFolderIndex::resolveBootScreenDirectory(bootScreenDirectory);
     hasPinnedBootScreen = !APP_STATE.favoriteBootImagePath.empty() &&
@@ -1467,7 +1484,7 @@ void setup() {
                           Storage.exists(APP_STATE.favoriteBootImagePath.c_str());
   }
   const bool skipSplashOnWake =
-      isSleepWake && !APP_STATE.showBootScreen && !hasBootScreenDirectory && !hasPinnedBootScreen;
+      isSleepWake && splashlessWakeArmed && !hasBootScreenDirectory && !hasPinnedBootScreen;
   const BootResume resume = isNetworkResume    ? BootResume::Network
                             : isSilentReboot   ? BootResume::Silent
                             : skipSplashOnWake ? BootResume::SplashlessWake
@@ -1495,11 +1512,6 @@ void setup() {
               static_cast<unsigned long>(snapshotTarget), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       break;
     case BootResume::SplashlessWake:
-      // One-shot flag: re-arm the splash for the next ordinary boot. Save
-      // before any painting so a hang in the blocking paint path can't strand
-      // us in a splashless-with-no-frame loop on the next boot.
-      APP_STATE.showBootScreen = true;
-      APP_STATE.saveToFile();
       if (shouldRestoreSleepFrame && loadSleepFrameBuffer()) {
         const bool useDifferentialRefresh = gpio.deviceIsX3();
         if (useDifferentialRefresh) {
