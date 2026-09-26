@@ -671,7 +671,14 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
         mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       cancelRequested = true;
     }
-    return cancelRequested;
+    // Route touch in the same poll that latched it. This runs before every
+    // read; a tap left for the much rarer progress callback could be cleared
+    // by the next update() first. A Cancel tap sets cancelDownload.
+    if (uiReady) {
+      const fui::InputSnapshot snap = touchSnapshotFrom(mappedInput);
+      if (snap.touchPressed || snap.touchReleased) app.route(snap);
+    }
+    return cancelRequested || cancelDownload;
   };
   HttpDownloader::DownloadOptions downloadOptions;
   downloadOptions.shouldCancel = pollCancel;
@@ -692,22 +699,11 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
 
   const auto result = HttpDownloader::downloadToFile(
       downloadUrl, filename,
-      [this, &cancelRequested, &lastRenderedPercent, &lastProgressUpdateMs](const size_t downloaded,
-                                                                            const size_t total) {
+      [this, &lastRenderedPercent, &lastProgressUpdateMs](const size_t downloaded, const size_t total) {
+        // Input (Back, home gesture, the Cancel button) is polled by
+        // pollCancel before every read; this callback only drives the screen.
         downloadProgress = downloaded;
         downloadTotal = total;
-        // The activity loop is blocked for the whole download; pump input here
-        // so the Cancel button or a Back press can abort mid-transfer.
-        mappedInput.update();
-        if (mappedInput.wasHomeGesture()) {
-          goHomeAfterCancel = true;
-          cancelRequested = true;
-        }
-        if (mappedInput.wasReleased(MappedInputManager::Button::Back)) cancelRequested = true;
-        if (uiReady) {
-          const fui::InputSnapshot snap = touchSnapshotFrom(mappedInput);
-          if (snap.touchPressed || snap.touchReleased) app.route(snap);
-        }
         const int percent = total > 0 ? static_cast<int>(static_cast<uint64_t>(downloaded) * 100 / total) : 0;
         const unsigned long now = millis();
         if (percent >= 100 || lastRenderedPercent < 0 ||
