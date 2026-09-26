@@ -436,6 +436,13 @@ Binary layout:
 
 ## `section.bin`
 
+### Version 78
+
+Version 78 keeps the serialized layout unchanged. It was bumped because inline
+CSS padding now affects dialogue and other styled text positions. Complete files
+use byte `78`; suspended partials use the previously unused sentinel `0xF2`, so
+version 77 partials (`0xF3`) rebuild instead of resuming under the new layout.
+
 ### Version 77
 
 Version 77 keeps the serialized layout unchanged. It was bumped because ordered
