@@ -31,6 +31,7 @@
 
 ### Fixed
 
+- Chapters left partly indexed by v1.6.0 now re-index after updating instead of resuming with pages laid out under the old rules.
 - Edge slides, two-finger swipes and header taps work reliably on the File Transfer screen while the web server is running.
 - Dragging or scrolling on a list or menu no longer highlights or selects the row under your finger, and a short drag no longer opens it. Rows highlight once your finger rests on them briefly, so long-press still works.
 - Turning from an EPUB image page whose grayscale pass finished to another image page now runs a cleanup refresh, so the previous image no longer ghosts on the X4 Pro. Image pages skipped before their grayscale pass finishes no longer force a flash on the next page.
