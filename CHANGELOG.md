@@ -40,6 +40,10 @@
 - EPUB Safe Mode no longer pins inherited fonts and page layout as personal book settings.
 - The X4 Pro Home button now steps back through dictionary lookup, chapter selection, and nested settings instead of jumping to Home.
 - OPDS downloads now use the first listed author for filename templates when a catalog also lists translators or other contributors.
+- Large OPDS downloads no longer fail partway on the X3/X4. TLS keeps one receive buffer per connection instead of allocating 17 KB for every record, and asks servers for smaller records.
+- An interrupted or cancelled OPDS download no longer leaves a broken book in the library. Books download to a `.part` file that is renamed only when complete, and an EPUB cut short by a server that sends no length is rejected.
+- OPDS downloads check SD card free space first and show "Insufficient SD card space" instead of failing midway.
+- The Cancel button on the OPDS download screen responds to a tap during the download.
 - Retain the CSS spacing supplied by empty inline spans.
 - X3/X4 firmware builds again with automatic light sleep enabled. The build platform is updated to pioarduino 55.03.39 (Arduino-ESP32 3.3.9, ESP-IDF 5.5.4), which fixes a linker-script mismatch that stopped the image from being created.
 - X4 Pro firmware with automatic light sleep now enters deep sleep correctly when the frontlight is enabled.
