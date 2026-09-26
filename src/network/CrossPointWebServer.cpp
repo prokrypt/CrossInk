@@ -27,6 +27,7 @@
 #include "QuickActions.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
+#include "SilentRestart.h"
 #include "WebDAVHandler.h"
 #include "WifiCredentialStore.h"
 #include "activities/boot_sleep/ImageFolderIndex.h"
@@ -366,6 +367,7 @@ void CrossPointWebServer::begin() {
   server->on("/logo.png", HTTP_GET, [this] { handleLogo(); });
 
   server->on("/api/status", HTTP_GET, [this] { handleStatus(); });
+  server->on("/api/exit", HTTP_POST, [this] { handleExit(); });
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
   server->on("/download", HTTP_GET, [this] { handleDownload(); });
 
@@ -604,6 +606,36 @@ void CrossPointWebServer::handleNotFound() const {
   String message = "404 Not Found\n\n";
   message += "URI: " + server->uri() + "\n";
   server->send(404, "text/plain", message);
+}
+
+void CrossPointWebServer::handleExit() {
+  // Status code only, no body: 204 on success.
+  // Refuse while a WebSocket upload is still streaming; leaving would abort it.
+  if (wsUploadInProgress) {
+    server->send(409);
+    return;
+  }
+  // Optional flash=<path to .bin>: after leaving, the device opens SD Card
+  // Firmware Update for that file and asks for confirmation before flashing.
+  std::string flashPath;
+  if (server->hasArg("flash")) {
+    const String requested = normalizeWebPath(server->arg("flash"));
+    String lower = requested;
+    lower.toLowerCase();
+    if (!lower.endsWith(".bin") || requested.length() >= MAX_SILENT_FIRMWARE_PATH || isProtectedPath(requested)) {
+      server->send(400);
+      return;
+    }
+    if (!Storage.exists(requested.c_str())) {
+      server->send(404);
+      return;
+    }
+    flashPath = requested.c_str();
+  }
+  LOG_DBG("WEB", "Exit requested via /api/exit (flash=%s)", flashPath.empty() ? "-" : flashPath.c_str());
+  server->send(204);
+  exitFlashPath = std::move(flashPath);
+  exitRequestPending = true;
 }
 
 void CrossPointWebServer::handleStatus() const {

@@ -26,6 +26,7 @@
 ### Fixed
 
 - Chapters left partly indexed by v1.6.0 now re-index after updating instead of resuming with pages laid out under the old rules.
+- Edge slides, two-finger swipes and header taps work reliably on the File Transfer screen while the web server is running.
 - Saved clipping lists now show a scrollbar when more clippings are available below the visible rows.
 - EPUB Safe Mode no longer pins inherited fonts and page layout as personal book settings.
 - The X4 Pro Home button now steps back through dictionary lookup, chapter selection, and nested settings instead of jumping to Home.
