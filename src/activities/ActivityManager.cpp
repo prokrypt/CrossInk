@@ -354,8 +354,7 @@ bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInp
   const int distance =
       vertical ? std::abs(completed.endY - completed.startY) : std::abs(completed.endX - completed.startX);
   const int axisSize = vertical ? renderer.getScreenHeight() : renderer.getScreenWidth();
-  return applyConfiguredSwipeAction(activity, activityManager, action,
-                                    SwipeAdjustment::edgeAmount(distance, axisSize));
+  return applyConfiguredSwipeAction(activity, activityManager, action, SwipeAdjustment::edgeAmount(distance, axisSize));
 }
 
 #if CROSSINK_APP_CAP_TOUCH
@@ -383,8 +382,8 @@ bool applyEdgeSlideAction(Activity& activity, MappedInputManager& mappedInput, A
   if (state.active) {
     // Track the finger in both directions: reversing through the touch-down
     // point keeps moving the value instead of holding at the starting value.
-    const int amount = SwipeAdjustment::liveAmount(state.movementSign * progress.deltaY,
-                                                         mappedInput.getRenderer().getScreenHeight());
+    const int amount =
+        SwipeAdjustment::liveAmount(state.movementSign * progress.deltaY, mappedInput.getRenderer().getScreenHeight());
     updateLiveLightSwipe(activity, activityManager, state, amount);
     if (progress.finished) {
       mappedInput.suppressCurrentTouchContact();
