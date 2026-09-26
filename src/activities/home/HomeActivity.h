@@ -128,9 +128,11 @@ class HomeActivity final : public Activity {
   void loadAllBookStats();
   void loadRecentCovers(int coverHeight);
 
-  // Background Library indexing runs only after this long without input.
-  static constexpr unsigned long LIBRARY_PREWARM_IDLE_MS = 2000;
+  // Background Library indexing starts as soon as Home is shown; input pauses
+  // it and it resumes after this long without further input.
+  static constexpr unsigned long LIBRARY_PREWARM_RESUME_MS = 500;
   unsigned long lastInputMs = 0;
+  bool inputSinceEnter = false;
   bool libraryPrewarmHandOff = false;
 
  public:
