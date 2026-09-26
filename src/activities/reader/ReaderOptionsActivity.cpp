@@ -253,7 +253,7 @@ void ReaderOptionsActivity::openSubmenu(SettingAction action) {
   activeSubmenu = action;
   if (action == SettingAction::ReaderFontOptions) {
     RenderLock lock;
-    if (sdFontSystem.registryScanPending()) GUI.drawPopup(renderer, tr(STR_LOADING_POPUP), true);
+    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP), true);
     rebuildSettingsList();
   }
   setCurrentSettings();
