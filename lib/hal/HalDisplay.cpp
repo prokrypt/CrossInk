@@ -97,6 +97,15 @@ void HalDisplay::displayBufferAsync(HalDisplay::RefreshMode mode) {
 
 void HalDisplay::waitRefreshComplete() { einkDisplay.waitRefreshComplete(); }
 
+void HalDisplay::displayBufferDeferred(HalDisplay::RefreshMode mode) {
+  HalSpiBus::Lock spiLock;
+  einkDisplay.displayBufferAsync(convertRefreshMode(mode));
+}
+
+bool HalDisplay::isRefreshPending() const { return einkDisplay.isRefreshPending(); }
+
+bool HalDisplay::isRefreshBusy() { return einkDisplay.refreshBusy(); }
+
 bool HalDisplay::supportsAsyncRefresh() const { return einkDisplay.supportsAsyncRefresh(); }
 
 HalDisplay::GrayscaleCapabilities HalDisplay::grayscaleCapabilities(GrayscaleMode mode) const {

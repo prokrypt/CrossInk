@@ -2455,7 +2455,29 @@ void GfxRenderer::invertRect(const int x, const int y, const int width, const in
 }
 
 void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode, const bool turnOffScreen) const {
+#ifndef SIMULATOR
+  if (deferFastRefresh && refreshMode == HalDisplay::FAST_REFRESH && !fadingFix && !turnOffScreen) {
+    display.displayBufferDeferred(refreshMode);
+    return;
+  }
+#endif
   display.displayBuffer(refreshMode, fadingFix || turnOffScreen);
+}
+
+bool GfxRenderer::isRefreshPending() const {
+#ifdef SIMULATOR
+  return false;
+#else
+  return display.isRefreshPending();
+#endif
+}
+
+bool GfxRenderer::isRefreshBusy() const {
+#ifdef SIMULATOR
+  return false;
+#else
+  return display.isRefreshBusy();
+#endif
 }
 
 size_t GfxRenderer::readFramebufferRegion(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t* dst,
