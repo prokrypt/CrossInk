@@ -637,6 +637,47 @@ void SleepActivity::onEnter() {
   }
 }
 
+bool SleepActivity::rendersBeforeExit(const std::string& currentBookPath, const bool fromTimeout) {
+#if FREEINK_MCU_S3 && !defined(SIMULATOR)
+  // The outgoing reader keeps its heap until onExit(); only PSRAM boards have
+  // room to decode a sleep image alongside it.
+  if (fromTimeout &&
+      SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT) {
+    return false;
+  }
+  switch (SETTINGS.sleepScreen) {
+    case CrossPointSettings::SLEEP_SCREEN_MODE::DARK:
+    case CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT:
+    case CrossPointSettings::SLEEP_SCREEN_MODE::BLANK:
+    case CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM:
+      return true;
+    case CrossPointSettings::SLEEP_SCREEN_MODE::COVER:
+    case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM: {
+      if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM &&
+          !APP_STATE.lastSleepFromReader) {
+        return true;
+      }
+      // An uncached cover is extracted from the book, which needs the memory
+      // the reader releases on exit. Keep the original order for that case.
+      const std::string& path = currentBookPath.empty() ? APP_STATE.openEpubPath : currentBookPath;
+      if (path.empty()) return true;
+      const bool absolute = display.grayscaleCapabilities(HalDisplay::GrayscaleMode::Absolute).supported() &&
+                            SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
+      const bool cropped = SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP;
+      return !SleepCoverAssets::cachedCoverPathFor(path, cropped, absolute).empty();
+    }
+    default:
+      // Stats, recent-book and overlay screens read what the reader saves on
+      // exit; Quick Resume snapshots the live frame in its own path.
+      return false;
+  }
+#else
+  (void)currentBookPath;
+  (void)fromTimeout;
+  return false;
+#endif
+}
+
 void SleepActivity::renderCustomSleepScreen() const {
   const auto tryRenderSelection = [this](const SleepImageSelection& selection) {
     FsFile file;
