@@ -1691,6 +1691,52 @@ uint32_t idleWaitMs(const unsigned long idleMs) {
   }
   return idleMs < IDLE_WAIT_LONG_AFTER_MS ? IDLE_WAIT_SETTLED_MS : IDLE_WAIT_LONG_MS;
 }
+
+#if CROSSINK_APP_CAP_TOUCH && !defined(SIMULATOR)
+// Quick Lock triggers that only the physical keys can lift. The Home-key
+// triggers and the Back/Menu holds read the touch controller, so it stays
+// awake for those.
+bool quickLockUnlocksWithKeys(const QuickLockTrigger trigger) {
+  switch (trigger) {
+    case QuickLockTrigger::ShortPower:
+    case QuickLockTrigger::LongPower:
+    case QuickLockTrigger::PowerUp:
+    case QuickLockTrigger::UpDown:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Sleeps the GT911 while nothing reads it: under a Quick Lock only the keys
+// can lift, or on a reader page with the touchscreen disabled and the Home key
+// locked (the Home key is part of the GT911). The keys stay on InputWake, and
+// any change that needs touch again wakes it on the next loop.
+void updateTouchControllerSleep() {
+  static unsigned long retryAt = 0;
+  static bool retryPending = false;
+  if (!gpio.hasTouch()) return;
+  const bool quickLockedByKeys =
+      buttonShortcutController.isQuickLocked() && quickLockUnlocksWithKeys(buttonShortcutController.quickLockTrigger());
+  const bool readerTouchOff =
+      activityManager.isReaderActivity() && !mappedInputManager.hasTouch() &&
+      (!mappedInputManager.hasHomeKey() || mappedInputManager.isHomeButtonLockedInReader());
+  const bool wantAsleep = quickLockedByKeys || readerTouchOff;
+  if (wantAsleep == gpio.isTouchAsleep()) {
+    retryPending = false;
+    return;
+  }
+  if (retryPending && static_cast<long>(millis() - retryAt) < 0) return;
+  if (gpio.setTouchSleep(wantAsleep)) {
+    retryPending = false;
+    LOG_DBG("TOUCH", "Touch controller %s", wantAsleep ? "asleep" : "awake");
+  } else {
+    // Refused while a finger or the Home key is down, or no answer on I2C.
+    retryPending = true;
+    retryAt = millis() + 1000;
+  }
+}
+#endif
 }  // namespace
 
 void loop() {
@@ -1721,6 +1767,10 @@ void loop() {
     }
     return;
   }
+
+#if CROSSINK_APP_CAP_TOUCH && !defined(SIMULATOR)
+  updateTouchControllerSleep();
+#endif
 
   if (!buttonShortcutController.isQuickLocked()) {
     halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.tiltPageTurnDirection, SETTINGS.orientation,
