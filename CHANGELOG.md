@@ -14,6 +14,7 @@
 
 ### Changed
 
+- USB Drive mounts faster: the next part of the SD card is read in the background while the current data is sent over USB, cutting about 5 seconds from mounting a FAT32 card on the X4 Pro.
 - Brightness and warmth gestures now respond while you drag, with longer swipes making larger adjustments.
 - Edge-slide brightness and warmth gestures now adjust in 1% steps instead of 5% and are half as sensitive: a full-length slide along the screen edge changes the level by about 50%.
 - Idle power saving now puts the device into automatic light sleep between loop ticks instead of only lowering the CPU clock, cutting idle draw while leaving buttons, touch, and the frontlight working exactly as before. The screen, Wi-Fi transfers, and USB sessions stay awake while they are in use.

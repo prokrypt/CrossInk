@@ -9,6 +9,8 @@
 #include <SDCardManager.h>
 #if FREEINK_CAP_USB_MSC
 #include <UsbMassStorage.h>
+
+#include "UsbDriveReadAhead.h"
 #endif
 
 #include <cassert>
@@ -81,6 +83,7 @@ void HalStorage::markLibraryContentChanged(const char* reason) {
 class HalStorage::UsbDriveContext {
  public:
   freeink::UsbMassStorage massStorage;
+  UsbDriveReadAhead readAhead;
 };
 #endif
 
@@ -220,8 +223,11 @@ bool HalStorage::beginUsbDrive() {
     return false;
   }
   powerManager.setUsbDriveActive(true);
-  if (!usbDriveContext->massStorage.begin(blockDevice)) {
+  // Falls back to plain pass-through reads if its buffers can't be allocated.
+  usbDriveContext->readAhead.begin(blockDevice);
+  if (!usbDriveContext->massStorage.begin(&usbDriveContext->readAhead)) {
     LOG_ERR("USB", "USB Drive MSC initialization failed");
+    usbDriveContext->readAhead.end();
     powerManager.setUsbDriveActive(false);
     if (!SDCard.begin()) {
       LOG_ERR("USB", "Unable to remount SD card after USB Drive startup failure");
@@ -255,7 +261,10 @@ bool HalStorage::usbDriveHostSuspended() const {
 void HalStorage::endUsbDrive() {
   markLibraryContentChanged("USB Drive end");
 #if FREEINK_CAP_USB_MSC
-  if (usbDriveContext) usbDriveContext->massStorage.end();
+  if (usbDriveContext) {
+    usbDriveContext->massStorage.end();
+    usbDriveContext->readAhead.end();
+  }
   powerManager.setUsbDriveActive(false);
 #endif
 }
