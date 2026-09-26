@@ -9,8 +9,6 @@
 #include <algorithm>
 #include <mutex>
 
-#include "util/WriteTiming.h"
-
 namespace {
 constexpr uint8_t STATE_FILE_VERSION = 5;
 constexpr char STATE_FILE_BIN[] = "/.crosspoint/state.bin";
@@ -59,7 +57,6 @@ void CrossPointState::pushRecentBoot(uint16_t idx) {
 bool CrossPointState::saveToFile() const {
   std::lock_guard<std::mutex> storeLock(storeMutex);
   std::lock_guard<std::mutex> stateLock(_mutex);
-  ScopedWriteTimer timer("state.json");
   JsonDocument doc;
   toJson(doc);
   String json;
@@ -70,7 +67,6 @@ bool CrossPointState::saveToFile() const {
   // which resets this, so it cannot mask a deleted file.
   const uint32_t crc = uzlib_crc32(json.c_str(), json.length(), 0);
   const bool unchanged = lastSavedCrcValid && crc == lastSavedCrc;
-  timer.markChecked(unchanged);
   if (unchanged) return true;
 
   Storage.mkdir("/.crosspoint");
