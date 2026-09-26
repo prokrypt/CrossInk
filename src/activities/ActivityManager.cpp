@@ -221,11 +221,9 @@ void updateLiveLightSwipe(Activity& activity, ActivityManager& activityManager, 
   const int difference = sign * (target - current);
   if (difference != 0 || (brightness && amount != 0 && !Frontlight.isOn()))
     applyConfiguredSwipeAction(activity, activityManager, state.action, difference, false);
-  if (brightness && amount == 0 && Frontlight.isOn() != state.initialOn) {
-    Frontlight.setOn(state.initialOn);
-    SETTINGS.frontlightOn = state.initialOn ? 1 : 0;
-    activity.onExternalFrontlightChange();
-  }
+  // Without a dead zone, amount 0 is only a narrow band mid-drag, so restoring
+  // the initial on/off state here would blink the light off and back on while
+  // reversing through it. cancelLiveLightSwipe() restores it when needed.
   state.changed = (brightness ? Frontlight.brightness() : Frontlight.warmth()) != state.initialValue ||
                   Frontlight.isOn() != state.initialOn;
 }
@@ -992,13 +990,14 @@ void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));
 }
 
-void ActivityManager::goToLibrary() {
+bool ActivityManager::goToLibrary() {
   auto library = makeUniqueNoThrow<LibraryActivity>(renderer, mappedInput);
   if (!library) {
     LOG_ERR("ACT", "Cannot allocate Library activity");
-    return;
+    return false;
   }
   replaceActivity(std::move(library));
+  return true;
 }
 
 void ActivityManager::goToBrowser() {
