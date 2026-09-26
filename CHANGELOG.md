@@ -15,9 +15,11 @@
 ### Changed
 
 - Brightness and warmth gestures now respond while you drag, with longer swipes making larger adjustments.
+- Edge-slide brightness and warmth gestures now adjust in 1% steps instead of 5% and are half as sensitive: a full-length slide along the screen edge changes the level by about 50%.
 - Idle power saving now puts the device into automatic light sleep between loop ticks instead of only lowering the CPU clock, cutting idle draw while leaving buttons, touch, and the frontlight working exactly as before. The screen, Wi-Fi transfers, and USB sessions stay awake while they are in use.
 - GitHub workflows and release documentation links now follow the `development` default branch.
 - Idle power saving now engages after 1 second instead of 3, and battery level is polled every 6 seconds instead of every 1.5, trading slightly less frequent battery updates for lower average power draw.
+- The Library opens instantly when nothing on the SD card has changed since its last scan, instead of rescanning the whole card on every visit. Moving the selection no longer re-reads each visible book from the card.
 - Fewer SD card writes: session state and reading stats are no longer rewritten when nothing changed, and the reading percentage shown on Home is saved once when you leave a book instead of every 10 pages.
 
 ### Fixed

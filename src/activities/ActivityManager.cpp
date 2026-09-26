@@ -381,7 +381,7 @@ bool applyEdgeSlideAction(Activity& activity, MappedInputManager& mappedInput, A
   }
   if (state.active) {
     const int amount = state.direction == static_cast<int>(progress.direction)
-                           ? SwipeAdjustment::amount(progress.distance, mappedInput.getRenderer().getScreenHeight())
+                           ? SwipeAdjustment::edgeAmount(progress.distance, mappedInput.getRenderer().getScreenHeight())
                            : 0;
     updateLiveLightSwipe(activity, activityManager, state, amount);
     if (progress.finished) {
@@ -403,7 +403,7 @@ bool applyEdgeSlideAction(Activity& activity, MappedInputManager& mappedInput, A
                              ? Frontlight.brightness()
                              : Frontlight.warmth();
     updateLiveLightSwipe(activity, activityManager, state,
-                         SwipeAdjustment::amount(progress.distance, mappedInput.getRenderer().getScreenHeight()));
+                         SwipeAdjustment::edgeAmount(progress.distance, mappedInput.getRenderer().getScreenHeight()));
     if (progress.finished) {
       mappedInput.suppressCurrentTouchContact();
       finishLiveLightSwipe(state, activityManager);

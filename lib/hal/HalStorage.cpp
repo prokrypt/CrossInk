@@ -12,7 +12,9 @@
 #endif
 
 #include <cassert>
+#include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <new>
 
 #include "HalSpiBus.h"
@@ -20,6 +22,60 @@
 #define SDCard SDCardManager::getInstance()
 
 HalStorage HalStorage::instance;
+
+namespace {
+bool isHiddenPath(const char* path) {
+  for (const char* p = path; *p; ++p) {
+    if (*p == '.' && (p == path || p[-1] == '/')) return true;
+  }
+  return false;
+}
+
+bool extensionIs(const char* ext, const char* expected) {
+  for (; *ext && *expected; ++ext, ++expected) {
+    if (std::tolower(static_cast<unsigned char>(*ext)) != *expected) return false;
+  }
+  return *ext == '\0' && *expected == '\0';
+}
+
+// Whether a mutation of `path` can change what the Library lists. The Library
+// skips dot-prefixed entries (including /.crosspoint caches) and lists only
+// the extensions in library::fileTypeFor(); a path without an extension is
+// treated as a folder. Over-reporting only costs one extra rescan.
+bool affectsLibrary(const char* path) {
+  if (!path || path[0] == '\0') return false;
+  if (isHiddenPath(path)) return false;
+  const char* base = std::strrchr(path, '/');
+  base = base ? base + 1 : path;
+  const char* ext = std::strrchr(base, '.');
+  if (!ext) return true;
+  return extensionIs(ext, ".epub") || extensionIs(ext, ".xtc") || extensionIs(ext, ".xtch") ||
+         extensionIs(ext, ".txt") || extensionIs(ext, ".md");
+}
+
+bool isFolderMutation(const char* path) { return path && path[0] != '\0' && !isHiddenPath(path); }
+}  // namespace
+
+// Deep sleep keeps RTC memory; power loss and resets do not clear it reliably,
+// so the pair is checked and cleared on every mount.
+constexpr uint32_t LIBRARY_SCAN_CURRENT_MAGIC = 0x4C494233;  // "LIB3"
+RTC_NOINIT_ATTR uint32_t rtcLibraryScanCurrent;
+RTC_NOINIT_ATTR uint32_t rtcLibraryScanCurrentCheck;
+
+void HalStorage::noteLibraryScanned(const uint32_t generation) {
+  libraryScannedGeneration.store(generation, std::memory_order_release);
+  libraryScanned.store(true, std::memory_order_release);
+}
+
+bool HalStorage::libraryScanCurrent() const {
+  return libraryScanned.load(std::memory_order_acquire) &&
+         libraryScannedGeneration.load(std::memory_order_acquire) == libraryContentGeneration();
+}
+
+void HalStorage::markLibraryContentChanged(const char* reason) {
+  libraryGeneration.fetch_add(1, std::memory_order_acq_rel);
+  LOG_DBG("SD", "Library content may have changed: %s", reason ? reason : "?");
+}
 
 #if FREEINK_CAP_USB_MSC
 class HalStorage::UsbDriveContext {
@@ -133,12 +189,26 @@ HalStorage::~HalStorage() = default;
 
 bool HalStorage::begin() {
   HalSpiBus::Lock spiLock;
+  const bool scanCarriedOver =
+      rtcLibraryScanCurrent == LIBRARY_SCAN_CURRENT_MAGIC && rtcLibraryScanCurrentCheck == ~LIBRARY_SCAN_CURRENT_MAGIC;
+  rtcLibraryScanCurrent = 0;
+  rtcLibraryScanCurrentCheck = 0;
+  if (scanCarriedOver) {
+    // Waking from deep sleep with no Library change since the last scan. Card
+    // edits made elsewhere while asleep need the Library's refresh button.
+    noteLibraryScanned(libraryContentGeneration());
+  } else {
+    // A cold boot or reset may follow edits made on a computer.
+    markLibraryContentChanged("mount");
+  }
   return SDCard.begin();
 }
 
 bool HalStorage::ready() const { return SDCard.ready(); }
 
 bool HalStorage::beginUsbDrive() {
+  // The host may change anything while it owns the card.
+  markLibraryContentChanged("USB Drive start");
 #if FREEINK_CAP_USB_MSC && FREEINK_SD_SDMMC
   if (!usbDriveContext) {
     LOG_ERR("USB", "USB Drive context allocation failed");
@@ -183,6 +253,7 @@ bool HalStorage::usbDriveHostSuspended() const {
 }
 
 void HalStorage::endUsbDrive() {
+  markLibraryContentChanged("USB Drive end");
 #if FREEINK_CAP_USB_MSC
   if (usbDriveContext) usbDriveContext->massStorage.end();
   powerManager.setUsbDriveActive(false);
@@ -228,6 +299,9 @@ class HalStorage::StorageLock {
   return SDCard.method(__VA_ARGS__);
 
 void HalStorage::shutdown() {
+  const bool current = libraryScanCurrent();
+  rtcLibraryScanCurrent = current ? LIBRARY_SCAN_CURRENT_MAGIC : 0;
+  rtcLibraryScanCurrentCheck = current ? ~LIBRARY_SCAN_CURRENT_MAGIC : 0;
   StorageLock lock;
   SDCard.shutdown();
 }
@@ -251,6 +325,7 @@ size_t HalStorage::readFileToBuffer(const char* path, char* buffer, size_t buffe
 }
 
 bool HalStorage::writeFile(const char* path, const String& content) {
+  if (affectsLibrary(path)) markLibraryContentChanged(path);
   HAL_STORAGE_WRAPPED_CALL(writeFile, path, content);
 }
 
@@ -303,6 +378,9 @@ HalFile& HalFile::operator=(HalFile&& other) {
 }
 
 HalFile HalStorage::open(const char* path, const oflag_t oflag) {
+  if ((oflag & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0 && affectsLibrary(path)) {
+    markLibraryContentChanged(path);
+  }
   FsFile fsFile;
   {
     StorageLock lock;  // ensure thread safety for the duration of this function
@@ -329,12 +407,19 @@ bool HalStorage::mkdir(const char* path, const bool pFlag) { HAL_STORAGE_WRAPPED
 
 bool HalStorage::exists(const char* path) { HAL_STORAGE_WRAPPED_CALL(exists, path); }
 
-bool HalStorage::remove(const char* path) { HAL_STORAGE_WRAPPED_CALL(remove, path); }
+bool HalStorage::remove(const char* path) {
+  if (affectsLibrary(path)) markLibraryContentChanged(path);
+  HAL_STORAGE_WRAPPED_CALL(remove, path);
+}
 bool HalStorage::rename(const char* oldPath, const char* newPath) {
+  if (affectsLibrary(oldPath) || affectsLibrary(newPath)) markLibraryContentChanged(newPath);
   HAL_STORAGE_WRAPPED_CALL(rename, oldPath, newPath);
 }
 
-bool HalStorage::rmdir(const char* path) { HAL_STORAGE_WRAPPED_CALL(rmdir, path); }
+bool HalStorage::rmdir(const char* path) {
+  if (isFolderMutation(path)) markLibraryContentChanged(path);
+  HAL_STORAGE_WRAPPED_CALL(rmdir, path);
+}
 
 bool HalStorage::openFileForRead(const char* moduleName, const char* path, HalFile& file) {
   file.close();
@@ -369,6 +454,7 @@ bool HalStorage::openFileForRead(const char* moduleName, const String& path, Hal
 }
 
 bool HalStorage::openFileForWrite(const char* moduleName, const char* path, HalFile& file) {
+  if (affectsLibrary(path)) markLibraryContentChanged(path);
   file.close();
   FsFile fsFile;
   bool ok = false;
@@ -485,7 +571,11 @@ int HalFile::read() { HAL_FILE_WRAPPED_CALL(read, ); }
 size_t HalFile::write(const void* buf, size_t count) { HAL_FILE_WRAPPED_CALL(write, buf, count); }
 size_t HalFile::write(uint8_t b) { HAL_FILE_WRAPPED_CALL(write, b); }
 bool HalFile::sync() { HAL_FILE_WRAPPED_CALL(sync, ); }
-bool HalFile::rename(const char* newPath) { HAL_FILE_WRAPPED_CALL(rename, newPath); }
+bool HalFile::rename(const char* newPath) {
+  // The old name is unknown here; treat any handle rename as a content change.
+  Storage.markLibraryContentChanged(newPath);
+  HAL_FILE_WRAPPED_CALL(rename, newPath);
+}
 bool HalFile::isDirectory() const { HAL_FILE_FORWARD_CALL(isDirectory, ); }  // already thread-safe, no need to wrap
 void HalFile::rewindDirectory() {
   HalStorage::StorageLock lock;

@@ -7,7 +7,6 @@
 #include <cstring>
 
 #include "util/FileContentEquals.h"
-#include "util/WriteTiming.h"
 
 namespace {
 // Binary layout v1 (11 bytes):
@@ -305,10 +304,8 @@ bool BookReadingStats::save(const std::string& cachePath) const {
   }
   writeLe32(data, 69, estimatedTimeLeftSeconds);
 
-  ScopedWriteTimer timer("book-stats");
   // Reader exit saves unconditionally; a quick open-and-close changes nothing.
   const bool unchanged = fileContentEquals("STATS", statsPath.c_str(), data, sizeof(data));
-  timer.markChecked(unchanged);
   if (unchanged) return true;  // the file already holds exactly these bytes
 
   // Write to a temp file and rename into place so a save interrupted mid-write

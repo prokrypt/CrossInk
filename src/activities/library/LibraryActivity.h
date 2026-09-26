@@ -61,11 +61,55 @@ class LibraryActivity final : public Activity {
   std::string seriesScratch;
   std::string genreScratch;
   std::string subtitleScratch;
+  // Display text of recently drawn rows, direct-mapped by row. Moving the
+  // selection or re-running layout passes then redraws without re-reading the
+  // index from the card. Dropped whenever the row order or contents change.
+  struct CachedRow {
+    int32_t row = -1;
+    bool ok = false;
+    bool hasHeading = false;
+    uint8_t icon = 0;
+    std::string title;
+    std::string subtitle;
+    std::string heading;
+  };
+  static constexpr int ROW_CACHE_SIZE = 16;
+  std::unique_ptr<CachedRow[]> rowCache;
+  // Used when the cache could not be allocated.
+  CachedRow uncachedRow;
+  // Input seen since the last processed frame. Rendering holds the render lock
+  // through the panel refresh, and waiting on it here would stall the main
+  // loop's touch polling: a swipe made during a refresh then loses its start
+  // point and can land as a tap on a row. Input is latched every loop and
+  // applied once the frame is out.
+  struct PendingInput {
+    bool touchPress = false;
+    bool touchRelease = false;
+    bool longPress = false;
+    bool headerBack = false;
+    bool confirmReleased = false;
+    bool backReleased = false;
+    int16_t pressX = 0;
+    int16_t pressY = 0;
+    int16_t releaseX = 0;
+    int16_t releaseY = 0;
+    int8_t scrollPages = 0;  // positive moves down the list
+    int8_t steps = 0;
+    int8_t pageSteps = 0;
+  };
+  PendingInput pending;
+  // Travel of the current contact, so a drag is not taken as a tap.
+  bool touchTracking = false;
+  int touchStartX = 0;
+  int touchStartY = 0;
+  int touchLastX = 0;
+  int touchLastY = 0;
 
   static void listScreen(UiApp::ScreenType& screen, void* user);
   static void onRowEvent(const freeink::ui::ActionEvent& event, void* user);
   static void onControlEvent(const freeink::ui::ActionEvent& event, void* user);
   static void provideRow(void* user, uint16_t row, freeink::ui::ListItem& item);
+  void latchInput();
   void buildListScreen(UiApp::ScreenType& screen);
   void buildSortHeader(UiApp::ScreenType& screen);
   const char* sortLabel() const;
@@ -77,7 +121,12 @@ class LibraryActivity final : public Activity {
   uint16_t dateGroupForRow(int row);
   bool metadataGroupForRow(int row, std::string& out);
   bool hasActiveFilter() const;
-  bool rebuildIndex(bool showScanning);
+  // Rescans the card only when storage reports a Library-visible change since
+  // the last successful scan (or `force`); otherwise reopens the saved index.
+  bool rebuildIndex(bool showScanning, bool force = false);
+  CachedRow& rowFor(int row);
+  void fillRow(int row, CachedRow& out);
+  void invalidateRowCache();
   void resolveRecents();
   void applyFilter();
   void resetViewport();

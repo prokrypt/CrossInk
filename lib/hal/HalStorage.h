@@ -4,6 +4,7 @@
 #include <common/FsApiConstants.h>  // for oflag_t
 #include <freertos/semphr.h>
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -69,6 +70,18 @@ class HalStorage {
   bool openFileForWrite(const char* moduleName, const String& path, HalFile& file);
   bool removeDir(const char* path);
 
+  // Bumped whenever something may have added, removed, renamed or rewritten a
+  // book or folder the Library can see: a book-type file or folder outside
+  // hidden (dot) paths, a remount, or a USB Drive session. Consumers compare
+  // it with the value they last synced against instead of rescanning the card.
+  uint32_t libraryContentGeneration() const { return libraryGeneration.load(std::memory_order_acquire); }
+  void markLibraryContentChanged(const char* reason = nullptr);
+  // The Library records the generation its last successful scan started at.
+  // The record survives deep sleep (not power loss or a reset), so a wake does
+  // not force a rescan when nothing changed before sleeping.
+  void noteLibraryScanned(uint32_t generation);
+  bool libraryScanCurrent() const;
+
   static HalStorage& getInstance() { return instance; }
 
   class StorageLock;  // private class, used internally
@@ -81,6 +94,9 @@ class HalStorage {
 
   bool initialized = false;
   SemaphoreHandle_t storageMutex = nullptr;
+  std::atomic<uint32_t> libraryGeneration{0};
+  std::atomic<bool> libraryScanned{false};
+  std::atomic<uint32_t> libraryScannedGeneration{0};
 #if FREEINK_CAP_USB_MSC
   std::unique_ptr<UsbDriveContext> usbDriveContext;
 #endif
