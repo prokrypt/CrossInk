@@ -11,7 +11,7 @@
 - A new **Extend** sleep screen cover mode fills the empty margins around a cover that doesn't match the screen's aspect ratio by repeating its edge pixels instead of leaving them blank.
 - A new **Extend Mirror** sleep screen cover mode fills those same margins by reflecting the cover's edge content instead of repeating a single edge pixel.
 - TTF font support on ESP32-S3 devices. Whole-point sizes from 8pt to 22pt will be automatically available.
-- The OPDS browser shows how many books a category holds next to its arrow, when the catalog provides a count (a `thr:count` link attribute or a "12713 books" summary).
+- The OPDS browser shows how many books a category holds next to its arrow, when the catalog provides a count (a `thr:count` link attribute or a "12713 books" summary). Folder titles that start with a 📁 emoji show as "/name" instead, since the device fonts have no folder emoji.
 
 ### Changed
 
