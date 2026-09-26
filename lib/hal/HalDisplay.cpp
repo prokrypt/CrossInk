@@ -1,3 +1,4 @@
+#include <BoardConfig.h>
 #include <HalDisplay.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
@@ -12,8 +13,28 @@ HalDisplay display;
 namespace {
 // EInkDisplay::setBusyWaitHooks() only accepts plain function pointers, so these
 // forward to the powerManager singleton instead of capturing state.
-void onDisplayBusyWaitBegin() { powerManager.beginDisplayBusyWait(); }
-void onDisplayBusyWaitEnd() { powerManager.endDisplayBusyWait(); }
+#if !FREEINK_SD_SDMMC
+// The panel needs no SPI traffic while its waveform runs (~0.5 s), so lend the
+// shared bus to SD access for that window instead of stalling every read.
+bool spiLentDuringBusyWait = false;
+#endif
+
+void onDisplayBusyWaitBegin() {
+  powerManager.beginDisplayBusyWait();
+#if !FREEINK_SD_SDMMC
+  spiLentDuringBusyWait = HalSpiBus::getInstance().releaseForIdle();
+#endif
+}
+
+void onDisplayBusyWaitEnd() {
+#if !FREEINK_SD_SDMMC
+  if (spiLentDuringBusyWait) {
+    spiLentDuringBusyWait = false;
+    HalSpiBus::getInstance().reacquireAfterIdle();
+  }
+#endif
+  powerManager.endDisplayBusyWait();
+}
 }  // namespace
 
 HalDisplay::HalDisplay() : einkDisplay(EPD_SCLK, EPD_MOSI, EPD_CS, EPD_DC, EPD_RST, EPD_BUSY) {}
