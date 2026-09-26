@@ -71,6 +71,13 @@ class CrossPointWebServer {
 
   WsUploadStatus getWsUploadStatus() const;
 
+  // True once after a client called POST /api/exit (the reply has been sent).
+  bool consumeExitRequest() {
+    const bool requested = exitRequestPending;
+    exitRequestPending = false;
+    return requested;
+  }
+
   // Get the port number
   uint16_t getPort() const { return port; }
 
@@ -78,6 +85,7 @@ class CrossPointWebServer {
   std::unique_ptr<WebServer> server = nullptr;
   std::unique_ptr<WebSocketsServer> wsServer = nullptr;
   bool running = false;
+  bool exitRequestPending = false;  // set by POST /api/exit, consumed by the activity
   bool apMode = false;  // true when running in AP mode, false for STA mode
   uint16_t port = 80;
   uint16_t wsPort = 81;  // WebSocket port
@@ -102,6 +110,7 @@ class CrossPointWebServer {
   void handleLogo() const;
   void handleNotFound() const;
   void handleStatus() const;
+  void handleExit();
   void handleFileList() const;
   void handleFileListData() const;
   void handleDownload() const;
