@@ -1,16 +1,18 @@
 #pragma once
 
-// Builds the Library index in the background while Home sits idle, so the first
+// Builds the Library index in the background while Home is shown, so the first
 // Library visit after a boot or reset opens the existing index instead of
 // walking the card behind a "Reading your books" popup.
 //
-// Home drives it: tick() starts or resumes the build after a quiet spell and
-// pauses it on input, so the walk only borrows the card and CPU while nobody is
-// using them. A paused build keeps its place; it does not start over.
+// Home drives it: tick() starts the build as soon as Home is up, pauses it on
+// input and resumes it after a short quiet spell, so the walk only borrows the
+// card and CPU while nobody is using them. A paused build keeps its place; it
+// does not start over.
 namespace LibraryPrewarm {
 
-// Called from Home's loop. `idle` is true once Home has had no input for a
-// while; false pauses a running build at its next directory entry.
+// Called from Home's loop. `idle` is true until the first input and again
+// shortly after the last one; false pauses a running build at its next
+// directory entry.
 void tick(bool idle);
 
 // Pauses a running build straight away (Home saw input).

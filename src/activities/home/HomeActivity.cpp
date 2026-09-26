@@ -883,7 +883,7 @@ void HomeActivity::onEnter() {
   minimalHomeNavIndex = -1;
   carouselFramesReady = false;
   carouselWarmupPending = isCarouselTheme;
-  lastInputMs = millis();
+  inputSinceEnter = false;
   libraryPrewarmHandOff = false;
 
   const auto& metrics = UITheme::getInstance().getMetrics();
@@ -1513,6 +1513,7 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
 
 void HomeActivity::onUserInput() {
   lastInputMs = millis();
+  inputSinceEnter = true;
   LibraryPrewarm::pause();
 }
 
@@ -1521,7 +1522,7 @@ void HomeActivity::onUserInput() {
 bool HomeActivity::preventAutoSleep() { return LibraryPrewarm::working(); }
 
 void HomeActivity::loop() {
-  LibraryPrewarm::tick(millis() - lastInputMs >= LIBRARY_PREWARM_IDLE_MS);
+  LibraryPrewarm::tick(!inputSinceEnter || millis() - lastInputMs >= LIBRARY_PREWARM_RESUME_MS);
 
   if (quickActionsLongPowerHandled) {
     if (!mappedInput.isPressed(MappedInputManager::Button::Power)) {
