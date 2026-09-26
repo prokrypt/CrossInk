@@ -358,7 +358,7 @@ void OpdsBookBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
   // strings, freed on scope exit.
   std::vector<fui::ListItem> items;
   items.reserve(entryCount);
-  // Right-aligned "<count> >" for navigation entries whose feed advertises a
+  // Right-aligned "(<count>) >" for navigation entries whose feed advertises a
   // book count; same lifetime as `items`.
   using CountLabel = std::array<char, 16>;
   std::vector<CountLabel> countLabels(entryCount);
@@ -369,7 +369,7 @@ void OpdsBookBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
     if (entry.type == OpdsEntryType::BOOK && !entry.author.empty()) item.subtitle = entry.author.c_str();
     if (entry.type == OpdsEntryType::NAVIGATION) {
       if (entry.count >= 0) {
-        snprintf(countLabels[i].data(), countLabels[i].size(), "%ld >", static_cast<long>(entry.count));
+        snprintf(countLabels[i].data(), countLabels[i].size(), "(%ld) >", static_cast<long>(entry.count));
         item.value = countLabels[i].data();
       } else {
         item.value = ">";
