@@ -335,7 +335,7 @@ bool applyLiveTwoFingerLightSwipe(Activity& activity, MappedInputManager& mapped
 
   const int displacement = state.movementSign * (state.vertical ? centerY - state.startY : centerX - state.startX);
   const int axisSize = state.vertical ? renderer.getScreenHeight() : renderer.getScreenWidth();
-  updateLiveLightSwipe(activity, activityManager, state, SwipeAdjustment::signedEdgeAmount(displacement, axisSize));
+  updateLiveLightSwipe(activity, activityManager, state, SwipeAdjustment::liveAmount(displacement, axisSize));
   return true;
 }
 #endif
@@ -381,9 +381,9 @@ bool applyEdgeSlideAction(Activity& activity, MappedInputManager& mappedInput, A
       break;
   }
   if (state.active) {
-    // Track the finger in both directions: reversing past the touch-down
-    // point moves the value past where it started instead of stopping there.
-    const int amount = SwipeAdjustment::signedEdgeAmount(state.movementSign * progress.deltaY,
+    // Track the finger in both directions: reversing through the touch-down
+    // point keeps moving the value instead of holding at the starting value.
+    const int amount = SwipeAdjustment::liveAmount(state.movementSign * progress.deltaY,
                                                          mappedInput.getRenderer().getScreenHeight());
     updateLiveLightSwipe(activity, activityManager, state, amount);
     if (progress.finished) {

@@ -16,11 +16,21 @@ inline int edgeAmount(const int distance, const int axisSize) {
   return 1 + (std::min(distance, maximumDistance) - minimumDistance) * 99 / (2 * travel);
 }
 
-// Live light swipes keep tracking the finger after it reverses: displacement is
-// signed along the swipe's starting direction, so moving back past the
-// touch-down point adjusts the other way on the same scale.
-inline int signedEdgeAmount(const int displacement, const int axisSize) {
-  return displacement < 0 ? -edgeAmount(-displacement, axisSize) : edgeAmount(displacement, axisSize);
+// Once a live light swipe is recognized, the dead zone is behind it: the value
+// tracks the finger on the same 1-point scale as edgeAmount() in both
+// directions, so reversing back through the touch-down point keeps stepping
+// instead of holding at the starting value. displacement is signed along the
+// swipe's starting direction.
+inline int liveAmount(const int displacement, const int axisSize) {
+  if (axisSize < 2) return 0;
+  const int minimumDistance = std::max(60, axisSize * 6 / 100);
+  const int maximumDistance = axisSize - 1;
+  const int travel = std::max(1, maximumDistance - minimumDistance);
+  const int numerator = (std::min(displacement, maximumDistance) - minimumDistance) * 99;
+  const int denominator = 2 * travel;
+  int steps = numerator / denominator;
+  if (numerator % denominator != 0 && numerator < 0) --steps;  // Floor so steps stay evenly spaced below zero.
+  return 1 + steps;
 }
 
 inline int targetValue(const int initialValue, const bool increase, const int adjustment) {

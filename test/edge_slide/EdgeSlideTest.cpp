@@ -39,12 +39,23 @@ TEST(EdgeSlide, LeavesCenterAndDiagonalGesturesAlone) {
   EXPECT_EQ(EdgeSlide::directionFor(790, 500, 720, 350, 800, 800), EdgeSlide::Direction::None);
 }
 
-TEST(EdgeSlide, SignedEdgeAmountTracksReversal) {
-  EXPECT_EQ(SwipeAdjustment::signedEdgeAmount(0, 800), 0);
-  EXPECT_EQ(SwipeAdjustment::signedEdgeAmount(75, 800), 2);
-  EXPECT_EQ(SwipeAdjustment::signedEdgeAmount(-75, 800), -2);
-  EXPECT_EQ(SwipeAdjustment::signedEdgeAmount(-59, 800), 0);
+TEST(EdgeSlide, LiveAmountHasNoDeadZoneAfterRecognition) {
+  // Matches edgeAmount() from the recognition point onward.
+  EXPECT_EQ(SwipeAdjustment::liveAmount(60, 800), 1);
+  EXPECT_EQ(SwipeAdjustment::liveAmount(75, 800), 2);
+  EXPECT_EQ(SwipeAdjustment::liveAmount(429, 800), 25);
+  EXPECT_EQ(SwipeAdjustment::liveAmount(1200, 800), 50);
+  // Below the recognition point it keeps stepping by one point instead of holding.
+  EXPECT_EQ(SwipeAdjustment::liveAmount(59, 800), 0);
+  EXPECT_EQ(SwipeAdjustment::liveAmount(46, 800), 0);
+  EXPECT_EQ(SwipeAdjustment::liveAmount(45, 800), -1);
+  EXPECT_LT(SwipeAdjustment::liveAmount(0, 800), 0);
+  for (int d = -500; d < 800; ++d) {
+    const int step = SwipeAdjustment::liveAmount(d + 1, 800) - SwipeAdjustment::liveAmount(d, 800);
+    EXPECT_TRUE(step == 0 || step == 1) << d;
+  }
   // Start at 20%, slide down to decrease, then back up past the touch-down point.
-  EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::signedEdgeAmount(429, 800)), 0);
-  EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::signedEdgeAmount(-429, 800)), 45);
+  EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::liveAmount(429, 800)), 0);
+  EXPECT_GT(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::liveAmount(0, 800)), 20);
+  EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::liveAmount(-429, 800)), 52);
 }
