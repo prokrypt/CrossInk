@@ -71,10 +71,12 @@ struct BuildControl {
 // `readMetadata` takes title, author, series, and subject from each EPUB. It
 // stops the normal EPUB parser at the end of <metadata>, before the manifest,
 // without building the reader's spine, TOC, CSS, or section caches. Unchanged
-// books reuse these values from the prior Library index.
+// books reuse these values from the prior Library index. An unchanged book
+// whose metadata read failed keeps its filename title rather than being parsed
+// again on every build; `retryFailedMetadata` (the Library's refresh) retries it.
 // `control` is optional; only one build may run at a time.
 bool buildLibraryIndex(const char* rootPath, BuildStats& stats, bool readMetadata = false,
-                       const BuildControl* control = nullptr);
+                       const BuildControl* control = nullptr, bool retryFailedMetadata = false);
 
 // Live index path, shared by the builder and activity.
 const char* libraryIndexPath();
