@@ -1650,6 +1650,49 @@ void setup() {
   allowSleepAt = millis() + 2000;
 }
 
+namespace {
+constexpr uint32_t IDLE_WAIT_MS = 50;
+constexpr uint32_t IDLE_WAIT_SETTLED_MS = 250;
+constexpr uint32_t IDLE_WAIT_LONG_MS = 1000;
+// Toasts, hold thresholds and the Home double tap all resolve within a couple
+// of seconds of the last input, so the idle tick stays short until then.
+constexpr unsigned long IDLE_WAIT_BACKOFF_AFTER_MS = 2000;
+constexpr unsigned long IDLE_WAIT_LONG_AFTER_MS = 10000;
+
+bool anyInputHeld() {
+  for (uint8_t button = HalGPIO::BTN_BACK; button <= HalGPIO::BTN_POWER; ++button) {
+    if (gpio.isPressed(button)) return true;
+  }
+#if CROSSINK_APP_CAP_TOUCH
+  float nx = 0.0f;
+  float ny = 0.0f;
+  if (gpio.isTouchHeldAt(nx, ny)) return true;
+#endif
+  return false;
+}
+
+// Longest idle wait for the power-saving branch of loop(). When every input
+// is on an InputWake line the tick only paces timers, so it backs off the
+// longer the device sits untouched. Anything still polled keeps 50 ms.
+uint32_t idleWaitMs(const unsigned long idleMs) {
+  if (!InputWake::coversAllInputs() || idleMs < IDLE_WAIT_BACKOFF_AFTER_MS) return IDLE_WAIT_MS;
+  const bool tiltPolling = SETTINGS.tiltPageTurn != CrossPointSettings::TILT_OFF && halTiltSensor.isAvailable() &&
+                           activityManager.isReaderActivity();
+#ifdef SIMULATOR
+  const bool usbConnected = gpio.isUsbConnected();
+#else
+  const bool usbConnected = gpio.isUsbConnectedCached();
+#endif
+  // Timed activity work (automatic page turn), USB serial transfer and radio
+  // exchanges are paced by the tick rather than by input.
+  if (tiltPolling || usbConnected || activityManager.preventAutoSleep() || WiFi.getMode() != WIFI_MODE_NULL ||
+      anyInputHeld()) {
+    return IDLE_WAIT_MS;
+  }
+  return idleMs < IDLE_WAIT_LONG_AFTER_MS ? IDLE_WAIT_SETTLED_MS : IDLE_WAIT_LONG_MS;
+}
+}  // namespace
+
 void loop() {
   static unsigned long maxLoopDuration = 0;
   const unsigned long loopStartTime = millis();
@@ -1922,7 +1965,7 @@ void loop() {
     if (!radioExchange && millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
       // If we've been inactive for a while, increase the delay to save power
       powerManager.setPowerSaving(true);  // Lower CPU frequency after extended inactivity
-      InputWake::wait(50);
+      InputWake::wait(idleWaitMs(millis() - lastActivityTime));
     } else {
       // Short delay to prevent tight loop while still being responsive
       InputWake::wait(10);

@@ -19,6 +19,7 @@ namespace {
 std::array<gpio_num_t, 8> wakePins{};
 size_t wakePinCount = 0;
 SemaphoreHandle_t wakeSignal = nullptr;
+bool allInputsCovered = false;
 
 // Wake lines use level interrupts, because only those can also end a light
 // sleep. A level keeps firing while it holds, so each line disarms itself here
@@ -30,18 +31,21 @@ void IRAM_ATTR onWakeLine(void* arg) {
   if (higherPriorityTaskWoken == pdTRUE) portYIELD_FROM_ISR();
 }
 
-void addWakePin(const int8_t pin) {
-  if (pin < 0 || wakePinCount >= wakePins.size()) return;
+// Returns false only when a real pin could not be armed.
+bool addWakePin(const int8_t pin) {
+  if (pin < 0) return true;
+  if (wakePinCount >= wakePins.size()) return false;
   const auto gpioPin = static_cast<gpio_num_t>(pin);
   for (size_t i = 0; i < wakePinCount; ++i) {
-    if (wakePins[i] == gpioPin) return;
+    if (wakePins[i] == gpioPin) return true;
   }
   gpio_intr_disable(gpioPin);
   if (gpio_isr_handler_add(gpioPin, onWakeLine, reinterpret_cast<void*>(static_cast<uintptr_t>(pin))) != ESP_OK) {
     LOG_ERR("WAKE", "Could not attach input wake handler to GPIO%d", pin);
-    return;
+    return false;
   }
   wakePins[wakePinCount++] = gpioPin;
+  return true;
 }
 }  // namespace
 
@@ -60,18 +64,27 @@ void InputWake::begin() {
   }
 
   const auto& board = BoardConfig::ACTIVE;
+  bool allArmed = true;
   // ADC-ladder boards report keys through analog levels that cannot raise a
   // GPIO interrupt, so only plain digital keys take part.
   if (board.inputStyle == BoardConfig::InputStyle::DigitalButtons) {
     for (const int8_t pin : {board.input.back, board.input.confirm, board.input.left, board.input.right,
                              board.input.up, board.input.down, board.input.power}) {
-      addWakePin(pin);
+      allArmed = addWakePin(pin) && allArmed;
     }
   }
-  if (board.touch.controller != BoardConfig::TouchController::None) addWakePin(board.touch.irq);
+  if (board.touch.controller != BoardConfig::TouchController::None) allArmed = addWakePin(board.touch.irq) && allArmed;
+  // The GT911 raises INT for every report frame while a finger or the Home key
+  // is down, so one missed pulse is followed by the next. The other touch
+  // controllers pulse it once or leave it unused, so they keep the poll tick.
+  const bool touchCovered = board.touch.controller == BoardConfig::TouchController::None ||
+                            (board.touch.controller == BoardConfig::TouchController::Gt911 && board.touch.irq >= 0);
+  allInputsCovered =
+      allArmed && board.inputStyle == BoardConfig::InputStyle::DigitalButtons && touchCovered && wakePinCount > 0;
 
   if (wakePinCount > 0 && esp_sleep_enable_gpio_wakeup() != ESP_OK) {
     LOG_ERR("WAKE", "Could not enable GPIO wake from light sleep");
+    allInputsCovered = false;
   }
   LOG_INF("WAKE", "Input wake armed on %u line(s)", static_cast<unsigned>(wakePinCount));
 }
@@ -91,10 +104,14 @@ void InputWake::wait(const uint32_t timeoutMs) {
   xSemaphoreTake(wakeSignal, pdMS_TO_TICKS(timeoutMs));
 }
 
+bool InputWake::coversAllInputs() { return allInputsCovered; }
+
 #else
 
 void InputWake::begin() {}
 
 void InputWake::wait(const uint32_t timeoutMs) { delay(timeoutMs); }
+
+bool InputWake::coversAllInputs() { return false; }
 
 #endif
