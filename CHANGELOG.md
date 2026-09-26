@@ -16,7 +16,8 @@
 
 - USB Drive mounts faster: the next part of the SD card is read in the background while the current data is sent over USB, cutting about 5 seconds from mounting a FAT32 card on the X4 Pro.
 - Brightness and warmth gestures now respond while you drag, with longer swipes making larger adjustments.
-- Edge-slide brightness and warmth gestures now adjust in 1% steps instead of 5% and are half as sensitive: a full-length slide along the screen edge changes the level by about 50%.
+- Edge-slide and two-finger brightness and warmth gestures now adjust in 1% steps instead of 5% and are half as sensitive: a full-length slide changes the level by about 50%.
+- Reversing a brightness or warmth drag partway now moves the level past where it started instead of stopping there.
 - Idle power saving now puts the device into automatic light sleep between loop ticks instead of only lowering the CPU clock, cutting idle draw while leaving buttons, touch, and the frontlight working exactly as before. The screen, Wi-Fi transfers, and USB sessions stay awake while they are in use.
 - GitHub workflows and release documentation links now follow the `development` default branch.
 - Idle power saving now engages after 1 second instead of 3, and battery level is polled every 6 seconds instead of every 1.5, trading slightly less frequent battery updates for lower average power draw.
