@@ -98,8 +98,7 @@ class LibraryActivity final : public Activity {
     int8_t pageSteps = 0;
   };
   PendingInput pending;
-  // Travel of the current contact, for drags the SDK reports as neither a tap
-  // nor a swipe.
+  // Travel of the current contact, so a drag is not taken as a tap.
   bool touchTracking = false;
   int touchStartX = 0;
   int touchStartY = 0;

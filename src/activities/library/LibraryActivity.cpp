@@ -40,9 +40,6 @@ constexpr int HEADER_CONTROL_GAP = 10;
 // A released contact that travelled further than this is a drag, not a tap on
 // the row it started on. Matches the SDK's stationary tap slop.
 constexpr int DRAG_TAP_SLOP_PX = 28;
-// Vertical travel that scrolls the list when the SDK does not report a swipe,
-// such as a drag slower than its flick window. Matches its swipe distance.
-constexpr int DRAG_SCROLL_PX = 60;
 
 int headerControlRightInset() {
   const auto& metrics = UITheme::getInstance().getMetrics();
@@ -469,10 +466,7 @@ void LibraryActivity::latchInput() {
     pending.releaseY = snap.touchY;
   }
 
-  auto swipe = mappedInput.wasSwipe();
-  if (swipe == MappedInputManager::SwipeDir::None && released && travelY >= DRAG_SCROLL_PX && travelY > travelX) {
-    swipe = touchLastY < touchStartY ? MappedInputManager::SwipeDir::Up : MappedInputManager::SwipeDir::Down;
-  }
+  const auto swipe = mappedInput.wasSwipe();
   if (released) touchTracking = false;
   if (swipe == MappedInputManager::SwipeDir::Up && pending.scrollPages < INT8_MAX) ++pending.scrollPages;
   if (swipe == MappedInputManager::SwipeDir::Down && pending.scrollPages > INT8_MIN) --pending.scrollPages;
