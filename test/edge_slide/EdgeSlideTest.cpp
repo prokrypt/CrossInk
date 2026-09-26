@@ -58,3 +58,11 @@ TEST(EdgeSlide, SignedEdgeAmountTracksReversal) {
   EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::signedEdgeAmount(429, 800)), 0);
   EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::signedEdgeAmount(-429, 800)), 45);
 }
+
+TEST(EdgeSlide, SignedAmountTracksTwoFingerReversal) {
+  EXPECT_EQ(SwipeAdjustment::signedAmount(0, 800), 0);
+  EXPECT_EQ(SwipeAdjustment::signedAmount(60, 800), 5);
+  EXPECT_EQ(SwipeAdjustment::signedAmount(-60, 800), -5);
+  EXPECT_EQ(SwipeAdjustment::signedAmount(-59, 800), 0);
+  EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::signedAmount(-799, 800)), 100);
+}

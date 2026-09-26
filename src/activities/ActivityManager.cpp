@@ -335,7 +335,7 @@ bool applyLiveTwoFingerLightSwipe(Activity& activity, MappedInputManager& mapped
 
   const int displacement = state.movementSign * (state.vertical ? centerY - state.startY : centerX - state.startX);
   const int axisSize = state.vertical ? renderer.getScreenHeight() : renderer.getScreenWidth();
-  updateLiveLightSwipe(activity, activityManager, state, SwipeAdjustment::amount(std::max(0, displacement), axisSize));
+  updateLiveLightSwipe(activity, activityManager, state, SwipeAdjustment::signedAmount(displacement, axisSize));
   return true;
 }
 #endif
