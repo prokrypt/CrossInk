@@ -47,6 +47,7 @@
 - Keep clipped text, exported excerpts, and chapter titles on complete characters when shortened.
 - Keep clipping-selection button hints from covering book text.
 - Changing a reader font with incremental indexing now returns after the current reading position is ready, instead of waiting for the whole chapter to be re-indexed.
+- On the first page of an EPUB or XTC book, previous page and previous chapter (including the chapter-skip long press) now do nothing instead of redrawing or reloading the page.
 
 ## [v1.6.0] - 2026-09-21
 

@@ -342,6 +342,8 @@ void XtcReaderActivity::loop() {
             currentPage = pageCount > 0 ? pageCount - 1 : 0;
             needsUpdate = true;
           }
+        } else if (prevLongPressed && currentPage == 0) {
+          // First page of the book: nothing to skip back to.
         } else {
           uint32_t forwardReadSeconds = 0;
           const bool shouldRecordForwardRead =
@@ -446,6 +448,8 @@ void XtcReaderActivity::loop() {
             currentPage = pageCount > 0 ? pageCount - 1 : 0;
             needsUpdate = true;
           }
+        } else if (prevLongPressed && currentPage == 0) {
+          // First page of the book: nothing to skip back to.
         } else {
           uint32_t forwardReadSeconds = 0;
           const bool shouldRecordForwardRead =
@@ -536,6 +540,8 @@ void XtcReaderActivity::loop() {
         currentPage = pageCount > 0 ? pageCount - 1 : 0;
         needsUpdate = true;
       }
+    } else if (prevTriggered && currentPage == 0) {
+      // First page of the book: nothing to go back to, so skip the redraw too.
     } else if (prevTriggered) {
       recordCurrentPageReadingTime("page_back");
       if (currentPage >= static_cast<uint32_t>(skipAmount)) {
