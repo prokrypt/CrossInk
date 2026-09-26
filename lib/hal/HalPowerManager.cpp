@@ -245,6 +245,9 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
   freeink::PowerManager::armPowerButtonWakeup();
   gpio_deep_sleep_hold_en();
+  // The ROM otherwise prints its boot banner at 115200 baud on every deep-sleep
+  // wake before the bootloader runs. setup() logs the reset and wake causes.
+  esp_deep_sleep_disable_rom_logging();
   esp_deep_sleep_start();
 }
 
