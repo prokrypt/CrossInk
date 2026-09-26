@@ -5,6 +5,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,10 @@ class MappedInputManager;
 class EndOfBookOptions {
  public:
   enum class Action { None, Redraw, OpenBook, GoHome, LastPage };
+  // A physical-button menu command decoded from one input frame. Readers keep one
+  // of these while the menu is still loading so a press made during the end-of-book
+  // transition is applied once the menu is ready instead of being dropped.
+  enum class MenuKey : uint8_t { None, Confirm, Back, Previous, Next };
 
   static constexpr size_t MAX_SUGGESTIONS = 3;
 
@@ -41,6 +46,12 @@ class EndOfBookOptions {
   // nothing relevant was pressed; callers continue their normal input path (keeping
   // long-press Back to the file browser working).
   Action handleMenuInput(const MappedInputManager& input, std::string* openPath);
+
+  // Decodes the physical-button menu command in this input frame, or MenuKey::None.
+  static MenuKey readMenuKey(const MappedInputManager& input);
+
+  // Applies a decoded (possibly queued) button command to the menu.
+  Action applyMenuKey(MenuKey key, std::string* openPath);
 
   // Draws the full end screen (plain title, or the suggestion menu) onto a cleared buffer.
   void render(GfxRenderer& renderer, const MappedInputManager& input);

@@ -18,6 +18,7 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <SPI.h>
+#include <WiFi.h>
 #if !defined(SIMULATOR) && !FREEINK_MCU_C3
 #include <XteinkDetect.h>
 #endif
@@ -104,6 +105,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "components/icons/tablerFilledIcons.h"
 #include "fontIds.h"
 #include "network/UsbSerialFileTransfer.h"
+#include "platform/InputWake.h"
 #ifdef SIMULATOR
 #include <SimulatorLifecycle.h>
 
@@ -1007,6 +1009,15 @@ bool handleX4ProHomeKeyShortcuts() {
 
   if (!wasX4ProHomeKeyTapped()) return completedPendingTap;
 
+  // With no double-tap action there is nothing to wait for, so a tap acts at
+  // once. Back/Home lets this frame's raw tap reach the activity's own route.
+  if (SETTINGS.homeButtonDoubleTapAction == CrossPointSettings::SHORT_PWRBTN::IGNORE) {
+    x4ProHomeKeyTapPending = false;
+    if (SETTINGS.homeButtonTapAction == CrossPointSettings::HOME_BUTTON_BACK_HOME) return completedPendingTap;
+    executeX4ProHomeButtonAction(SETTINGS.homeButtonTapAction, QuickLockTrigger::HomeTap);
+    return true;
+  }
+
   if (!x4ProHomeKeyTapPending) {
     lastX4ProHomeKeyTapAt = now;
     x4ProHomeKeyTapPending = true;
@@ -1299,6 +1310,7 @@ void setup() {
   // only on screens that explicitly allow the fallback.
   gpio.setSharedConfirmPowerShortPressEmitsPower(true);
   powerManager.begin();
+  InputWake::begin();
 
   const auto wakeupReason = gpio.getWakeupReason();
 #ifndef SIMULATOR
@@ -1638,6 +1650,94 @@ void setup() {
   allowSleepAt = millis() + 2000;
 }
 
+namespace {
+constexpr uint32_t IDLE_WAIT_MS = 50;
+constexpr uint32_t IDLE_WAIT_SETTLED_MS = 250;
+constexpr uint32_t IDLE_WAIT_LONG_MS = 1000;
+// Toasts, hold thresholds and the Home double tap all resolve within a couple
+// of seconds of the last input, so the idle tick stays short until then.
+constexpr unsigned long IDLE_WAIT_BACKOFF_AFTER_MS = 2000;
+constexpr unsigned long IDLE_WAIT_LONG_AFTER_MS = 10000;
+
+bool anyInputHeld() {
+  for (uint8_t button = HalGPIO::BTN_BACK; button <= HalGPIO::BTN_POWER; ++button) {
+    if (gpio.isPressed(button)) return true;
+  }
+#if CROSSINK_APP_CAP_TOUCH
+  float nx = 0.0f;
+  float ny = 0.0f;
+  if (gpio.isTouchHeldAt(nx, ny)) return true;
+#endif
+  return false;
+}
+
+// Longest idle wait for the power-saving branch of loop(). When every input
+// is on an InputWake line the tick only paces timers, so it backs off the
+// longer the device sits untouched. Anything still polled keeps 50 ms.
+uint32_t idleWaitMs(const unsigned long idleMs) {
+  if (!InputWake::coversAllInputs() || idleMs < IDLE_WAIT_BACKOFF_AFTER_MS) return IDLE_WAIT_MS;
+  const bool tiltPolling = SETTINGS.tiltPageTurn != CrossPointSettings::TILT_OFF && halTiltSensor.isAvailable() &&
+                           activityManager.isReaderActivity();
+#ifdef SIMULATOR
+  const bool usbConnected = gpio.isUsbConnected();
+#else
+  const bool usbConnected = gpio.isUsbConnectedCached();
+#endif
+  // Timed activity work (automatic page turn), USB serial transfer and radio
+  // exchanges are paced by the tick rather than by input.
+  if (tiltPolling || usbConnected || activityManager.preventAutoSleep() || WiFi.getMode() != WIFI_MODE_NULL ||
+      anyInputHeld()) {
+    return IDLE_WAIT_MS;
+  }
+  return idleMs < IDLE_WAIT_LONG_AFTER_MS ? IDLE_WAIT_SETTLED_MS : IDLE_WAIT_LONG_MS;
+}
+
+#if CROSSINK_APP_CAP_TOUCH && !defined(SIMULATOR)
+// Quick Lock triggers that only the physical keys can lift. The Home-key
+// triggers and the Back/Menu holds read the touch controller, so it stays
+// awake for those.
+bool quickLockUnlocksWithKeys(const QuickLockTrigger trigger) {
+  switch (trigger) {
+    case QuickLockTrigger::ShortPower:
+    case QuickLockTrigger::LongPower:
+    case QuickLockTrigger::PowerUp:
+    case QuickLockTrigger::UpDown:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Sleeps the GT911 while nothing reads it: under a Quick Lock only the keys
+// can lift, or on a reader page with the touchscreen disabled and the Home key
+// locked (the Home key is part of the GT911). The keys stay on InputWake, and
+// any change that needs touch again wakes it on the next loop.
+void updateTouchControllerSleep() {
+  static unsigned long retryAt = 0;
+  static bool retryPending = false;
+  if (!gpio.hasTouch()) return;
+  const bool quickLockedByKeys =
+      buttonShortcutController.isQuickLocked() && quickLockUnlocksWithKeys(buttonShortcutController.quickLockTrigger());
+  const bool readerTouchOff = activityManager.isReaderActivity() && !mappedInputManager.hasTouch() &&
+                              (!mappedInputManager.hasHomeKey() || mappedInputManager.isHomeButtonLockedInReader());
+  const bool wantAsleep = quickLockedByKeys || readerTouchOff;
+  if (wantAsleep == gpio.isTouchAsleep()) {
+    retryPending = false;
+    return;
+  }
+  if (retryPending && static_cast<long>(millis() - retryAt) < 0) return;
+  if (gpio.setTouchSleep(wantAsleep)) {
+    retryPending = false;
+    LOG_DBG("TOUCH", "Touch controller %s", wantAsleep ? "asleep" : "awake");
+  } else {
+    // Refused while a finger or the Home key is down, or no answer on I2C.
+    retryPending = true;
+    retryAt = millis() + 1000;
+  }
+}
+#endif
+}  // namespace
+
 void loop() {
   static unsigned long maxLoopDuration = 0;
   const unsigned long loopStartTime = millis();
@@ -1666,6 +1766,10 @@ void loop() {
     }
     return;
   }
+
+#if CROSSINK_APP_CAP_TOUCH && !defined(SIMULATOR)
+  updateTouchControllerSleep();
+#endif
 
   if (!buttonShortcutController.isQuickLocked()) {
     halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.tiltPageTurnDirection, SETTINGS.orientation,
@@ -1696,11 +1800,17 @@ void loop() {
 #endif
                                  || halTiltSensor.hadActivity();
 
-  // Check for any user activity (button press or release) or active background work
+  // User input paces power saving. Background work that only has to keep the
+  // device out of deep sleep (automatic page turn, sync screens) holds off the
+  // sleep timeout separately, so it no longer pins the CPU at full clock.
   static unsigned long lastActivityTime = millis();
-  if (userInputReceived || activityManager.preventAutoSleep()) {
+  static unsigned long lastSleepBlockTime = millis();
+  if (userInputReceived) {
     lastActivityTime = millis();         // Reset inactivity timer
     powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
+  }
+  if (activityManager.preventAutoSleep()) {
+    lastSleepBlockTime = millis();
   }
   if (userInputReceived) {
     activityManager.notifyUserInput();
@@ -1806,7 +1916,8 @@ void loop() {
   }
 
   const unsigned long sleepTimeoutMs = SETTINGS.getSleepTimeoutMs();
-  if (sleepTimeoutMs > 0 && millis() - lastActivityTime >= sleepTimeoutMs) {
+  if (sleepTimeoutMs > 0 && millis() - lastActivityTime >= sleepTimeoutMs &&
+      millis() - lastSleepBlockTime >= sleepTimeoutMs) {
     LOG_DBG("SLP", "Auto-sleep triggered after %lu ms of inactivity", sleepTimeoutMs);
     enterDeepSleep(true);
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
@@ -1895,13 +2006,18 @@ void loop() {
     powerManager.setPowerSaving(false);  // Make sure we're at full performance when skipLoopDelay is requested
     yield();                             // Give FreeRTOS a chance to run tasks, but return immediately
   } else {
-    if (millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
+    // Both waits end early when a key or the touch INT line changes, so the
+    // longer idle tick no longer delays the first input after a pause. Screens
+    // that hold the device awake for a radio exchange keep the fast tick they
+    // had before, since WiFi blocks power saving anyway.
+    const bool radioExchange = activityManager.preventAutoSleep() && WiFi.getMode() != WIFI_MODE_NULL;
+    if (!radioExchange && millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
       // If we've been inactive for a while, increase the delay to save power
       powerManager.setPowerSaving(true);  // Lower CPU frequency after extended inactivity
-      delay(50);
+      InputWake::wait(idleWaitMs(millis() - lastActivityTime));
     } else {
       // Short delay to prevent tight loop while still being responsive
-      delay(10);
+      InputWake::wait(10);
     }
   }
 }

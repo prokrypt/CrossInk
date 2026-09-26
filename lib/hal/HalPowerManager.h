@@ -34,6 +34,12 @@ class HalPowerManager {
   // Held only for the duration of an EPD busy-wait (see beginDisplayBusyWait),
   // so tickless idle can never light-sleep mid-refresh.
   esp_pm_lock_handle_t displayPmLock = nullptr;
+  // cpuFreqLock is wanted while the device is active, except during an EPD
+  // busy-wait, where the CPU only waits on the panel and can idle at the DFS
+  // floor. cpuFreqLockHeld tracks what has actually been acquired.
+  bool cpuFreqLockHeld = false;
+  bool displayBusyWaitActive = false;
+  void syncCpuFreqLock();
   // Held while USB Drive owns the USB-OTG PHY. TinyUSB cannot service the host
   // across a light-sleep window, and USJ_NO_AUTO_LS_ON_CONNECTION only watches
   // the Serial/JTAG controller, not OTG.
@@ -58,9 +64,9 @@ class HalPowerManager {
   // DFS floor when power management is enabled. 80 MHz keeps APB pinned at
   // 80 MHz across every mode, so SPI dividers computed at bus setup stay valid
   // no matter what the CPU clock is doing.
-  static constexpr int DFS_MIN_FREQ = 80;                      // MHz
-  static constexpr unsigned long IDLE_POWER_SAVING_MS = 1000;  // ms
-  static constexpr unsigned long BATTERY_POLL_MS = 6000;       // ms
+  static constexpr int DFS_MIN_FREQ = 80;                     // MHz
+  static constexpr unsigned long IDLE_POWER_SAVING_MS = 250;  // ms
+  static constexpr unsigned long BATTERY_POLL_MS = 6000;      // ms
 
   void begin();
 
@@ -73,6 +79,13 @@ class HalPowerManager {
   // lock creation failed.
   void beginDisplayBusyWait();
   void endDisplayBusyWait();
+
+  // Keeps light sleep off while a refresh runs in the background and the
+  // render task goes on working, as the deferred menu refresh does. Unlike the
+  // busy-wait hooks it leaves the CPU clock alone, since renders can run in
+  // the meantime.
+  void beginDisplayRefreshHold();
+  void endDisplayRefreshHold();
 
   // Keeps the device out of light sleep while USB Drive is exposing the SD card
   // over USB-OTG. Idempotent, so repeated end calls on exit paths are safe.

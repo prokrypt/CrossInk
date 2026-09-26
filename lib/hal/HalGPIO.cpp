@@ -301,6 +301,10 @@ bool HalGPIO::wasSwipe(float& nxStart, float& nyStart, float& nxEnd, float& nyEn
 }
 
 bool HalGPIO::wasTouchActivity() const { return inputMgr.wasTouchActivity(); }
+
+bool HalGPIO::setTouchSleep(const bool asleep) { return inputMgr.setTouchSleep(asleep); }
+
+bool HalGPIO::isTouchAsleep() const { return inputMgr.isTouchAsleep(); }
 #endif
 
 void HalGPIO::setSharedConfirmPowerShortPressEmitsPower(const bool enabled) {

@@ -31,6 +31,8 @@
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "fontIds.h"
 #include "util/BookCacheUtils.h"
+#include "util/FileContentEquals.h"
+#include "util/InPlaceFileWrite.h"
 
 namespace {
 constexpr unsigned long MIN_READING_STATS_PAGE_MS = 2000UL;
@@ -217,32 +219,60 @@ void XtcReaderActivity::loop() {
     return;
   }
 
+  const bool atEndOfBook = currentPage >= xtc->getPageCount();
   // Paged back into the book: release the end screen app and its theme tokens.
-  {
+  if (!atEndOfBook) {
+    queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
     RenderLock lock(*this);
-    if (currentPage < xtc->getPageCount() && endOfBookOptions) {
+    if (endOfBookOptions) {
       endOfBookOptions.reset();
     }
+  }
+
+  // On the end screen, load the suggestions here while the render task is idle.
+  // While it is busy (it loads the same menu before drawing it), don't block on
+  // it, so this loop keeps polling buttons during the end-screen refresh.
+  if (atEndOfBook && !RenderLock::peek()) {
+    RenderLock lock(*this);
+    if (!endOfBookOptions) {
+      endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);
+      if (!endOfBookOptions) {
+        LOG_ERR("XTR", "OOM: EndOfBookOptions (%u bytes)", static_cast<unsigned>(sizeof(EndOfBookOptions)));
+      }
+    }
+    if (endOfBookOptions) {
+      endOfBookOptions->loadOnce(xtc->getPath());
+    }
+  }
+  if (atEndOfBook && RenderLock::peek() && !(endOfBookOptions && endOfBookOptions->loaded())) {
+    // The render task is still loading the suggestions. Keep the first menu press
+    // for the menu instead of dropping it or letting it reach the plain end-screen
+    // page-turn handling (which goes Home).
+    const auto key = EndOfBookOptions::readMenuKey(mappedInput);
+    if (key != EndOfBookOptions::MenuKey::None && queuedEndOfBookKey == EndOfBookOptions::MenuKey::None) {
+      queuedEndOfBookKey = key;
+    }
+    return;
   }
 
   // While the end screen suggestion menu is showing it owns Confirm/Back/navigation
   // input. Anything it doesn't handle (e.g. long-press Back to the file browser) falls
   // through to the regular handlers below; page turns are absorbed by the end-of-book
-  // block.
+  // block. Menu input runs alongside a repaint (the menu's selection is atomic), so
+  // only the page change back into the book takes the render lock.
   EndOfBookOptions::Action endOfBookAction = EndOfBookOptions::Action::None;
   std::string openPath;
-  bool endOfBookNeedsUpdate = false;
-  {
-    RenderLock lock(*this);
-    if (currentPage >= xtc->getPageCount() && endOfBookOptions && endOfBookOptions->menuActive()) {
-      endOfBookAction = endOfBookOptions->handleMenuInput(mappedInput, &openPath);
-      if (endOfBookAction == EndOfBookOptions::Action::LastPage) {
-        const uint32_t pageCount = xtc->getPageCount();
-        currentPage = pageCount > 0 ? pageCount - 1 : 0;
-        endOfBookNeedsUpdate = true;
-      } else if (endOfBookAction == EndOfBookOptions::Action::Redraw) {
-        endOfBookNeedsUpdate = true;
-      }
+  const bool endOfBookMenuOpen = atEndOfBook && endOfBookOptions && endOfBookOptions->menuActive();
+  const auto queuedKey = queuedEndOfBookKey;
+  queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
+  if (endOfBookMenuOpen) {
+    endOfBookAction = queuedKey != EndOfBookOptions::MenuKey::None
+                          ? endOfBookOptions->applyMenuKey(queuedKey, &openPath)
+                          : endOfBookOptions->handleMenuInput(mappedInput, &openPath);
+    if (endOfBookAction == EndOfBookOptions::Action::LastPage) {
+      RenderLock lock(*this);
+      const uint32_t pageCount = xtc->getPageCount();
+      currentPage = pageCount > 0 ? pageCount - 1 : 0;
     }
   }
   switch (endOfBookAction) {
@@ -254,9 +284,7 @@ void XtcReaderActivity::loop() {
       return;
     case EndOfBookOptions::Action::LastPage:
     case EndOfBookOptions::Action::Redraw:
-      if (endOfBookNeedsUpdate) {
-        requestUpdate();
-      }
+      requestUpdate();
       return;
     case EndOfBookOptions::Action::None:
       break;
@@ -342,6 +370,8 @@ void XtcReaderActivity::loop() {
             currentPage = pageCount > 0 ? pageCount - 1 : 0;
             needsUpdate = true;
           }
+        } else if (prevLongPressed && currentPage == 0) {
+          // First page of the book: nothing to skip back to.
         } else {
           uint32_t forwardReadSeconds = 0;
           const bool shouldRecordForwardRead =
@@ -446,6 +476,8 @@ void XtcReaderActivity::loop() {
             currentPage = pageCount > 0 ? pageCount - 1 : 0;
             needsUpdate = true;
           }
+        } else if (prevLongPressed && currentPage == 0) {
+          // First page of the book: nothing to skip back to.
         } else {
           uint32_t forwardReadSeconds = 0;
           const bool shouldRecordForwardRead =
@@ -536,6 +568,8 @@ void XtcReaderActivity::loop() {
         currentPage = pageCount > 0 ? pageCount - 1 : 0;
         needsUpdate = true;
       }
+    } else if (prevTriggered && currentPage == 0) {
+      // First page of the book: nothing to go back to, so skip the redraw too.
     } else if (prevTriggered) {
       recordCurrentPageReadingTime("page_back");
       if (currentPage >= static_cast<uint32_t>(skipAmount)) {
@@ -1081,7 +1115,7 @@ void XtcReaderActivity::render(RenderLock&&) {
 
   const uint32_t pageToRender = currentPage;
   if (pageToRender >= xtc->getPageCount()) {
-    // This is the sole creation and load site: its app and theme tokens are
+    // Created here or by loop() only on the end screen: its app and theme tokens are
     // absent during normal reading and allocation failure leaves an empty end screen.
     if (!endOfBookOptions) {
       endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);
@@ -1320,19 +1354,17 @@ bool XtcReaderActivity::saveProgress(const uint32_t page) {
   if (!xtc) {
     return false;
   }
-  HalFile f;
-  if (!Storage.openFileForWrite("XTR", xtc->getCachePath() + "/progress.bin", f)) {
-    return false;
-  }
   uint8_t data[4];
   data[0] = page & 0xFF;
   data[1] = (page >> 8) & 0xFF;
   data[2] = (page >> 16) & 0xFF;
   data[3] = (page >> 24) & 0xFF;
-  const bool written = f.write(data, sizeof(data)) == sizeof(data);
-  f.close();
-  if (!written) {
-    LOG_ERR("XTR", "Short write saving reader progress");
+  // Overwrite in place (no truncate, so no FAT churn and never an empty file),
+  // and skip the write entirely when the card already holds this position.
+  const std::string path = xtc->getCachePath() + "/progress.bin";
+  if (!fileContentEquals("XTR", path.c_str(), data, sizeof(data)) &&
+      !writeFileInPlace("XTR", path.c_str(), data, sizeof(data))) {
+    LOG_ERR("XTR", "Failed to save reader progress");
     return false;
   }
   progressSaveDebouncer.markPersisted(page);

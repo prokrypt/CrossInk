@@ -23,6 +23,8 @@
 #include "activities/home/FileBrowserActionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/FileContentEquals.h"
+#include "util/InPlaceFileWrite.h"
 
 namespace {
 constexpr size_t CHUNK_SIZE = 8 * 1024;  // 8KB chunk for reading
@@ -877,10 +879,6 @@ bool TxtReaderActivity::saveProgress(const int page) {
   if (!txt) {
     return false;
   }
-  HalFile f;
-  if (!Storage.openFileForWrite("TRS", txt->getCachePath() + "/progress.bin", f)) {
-    return false;
-  }
   // 6-byte format: page(2 bytes LE) + file offset(4 bytes LE)
   // The offset lets drawCurrentPageToBuffer render without requiring index.bin.
   const size_t offset = (page >= 0 && page < static_cast<int>(pageOffsets.size())) ? pageOffsets[page] : 0;
@@ -891,10 +889,12 @@ bool TxtReaderActivity::saveProgress(const int page) {
   data[3] = (offset >> 8) & 0xFF;
   data[4] = (offset >> 16) & 0xFF;
   data[5] = (offset >> 24) & 0xFF;
-  const bool written = f.write(data, sizeof(data)) == sizeof(data);
-  f.close();
-  if (!written) {
-    LOG_ERR("TRS", "Short write saving reader progress");
+  // Overwrite in place (no truncate, so no FAT churn and never an empty file),
+  // and skip the write entirely when the card already holds this position.
+  const std::string path = txt->getCachePath() + "/progress.bin";
+  if (!fileContentEquals("TRS", path.c_str(), data, sizeof(data)) &&
+      !writeFileInPlace("TRS", path.c_str(), data, sizeof(data))) {
+    LOG_ERR("TRS", "Failed to save reader progress");
     return false;
   }
   progressSaveDebouncer.markPersisted(static_cast<uint32_t>(page));

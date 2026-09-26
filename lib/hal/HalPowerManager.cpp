@@ -48,6 +48,7 @@ void HalPowerManager::begin() {
   } else {
     // Matches the initial isLowPower == false: the device boots active.
     esp_pm_lock_acquire(cpuFreqLock);
+    cpuFreqLockHeld = true;
   }
   if (esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "epd-refresh", &displayPmLock) != ESP_OK) {
     LOG_ERR("PWR", "Failed to create display no-light-sleep lock; refresh may light-sleep");
@@ -73,13 +74,51 @@ void HalPowerManager::begin() {
 #endif
 }
 
+#if CONFIG_PM_ENABLE
+// Caller holds modeMutex.
+void HalPowerManager::syncCpuFreqLock() {
+  if (cpuFreqLock == nullptr) return;
+  const bool wanted = !isLowPower && !displayBusyWaitActive;
+  if (wanted == cpuFreqLockHeld) return;
+  if (wanted) {
+    esp_pm_lock_acquire(cpuFreqLock);
+  } else {
+    esp_pm_lock_release(cpuFreqLock);
+  }
+  cpuFreqLockHeld = wanted;
+}
+#endif
+
 void HalPowerManager::beginDisplayBusyWait() {
+#if CONFIG_PM_ENABLE
+  if (displayPmLock != nullptr) esp_pm_lock_acquire(displayPmLock);
+  // The panel runs its waveform on its own; the CPU only waits for BUSY, so
+  // let DFS drop it to the floor for the duration. displayPmLock still keeps
+  // it out of light sleep.
+  if (modeMutex != nullptr) xSemaphoreTake(modeMutex, portMAX_DELAY);
+  displayBusyWaitActive = true;
+  syncCpuFreqLock();
+  if (modeMutex != nullptr) xSemaphoreGive(modeMutex);
+#endif
+}
+
+void HalPowerManager::endDisplayBusyWait() {
+#if CONFIG_PM_ENABLE
+  if (modeMutex != nullptr) xSemaphoreTake(modeMutex, portMAX_DELAY);
+  displayBusyWaitActive = false;
+  syncCpuFreqLock();
+  if (modeMutex != nullptr) xSemaphoreGive(modeMutex);
+  if (displayPmLock != nullptr) esp_pm_lock_release(displayPmLock);
+#endif
+}
+
+void HalPowerManager::beginDisplayRefreshHold() {
 #if CONFIG_PM_ENABLE
   if (displayPmLock != nullptr) esp_pm_lock_acquire(displayPmLock);
 #endif
 }
 
-void HalPowerManager::endDisplayBusyWait() {
+void HalPowerManager::endDisplayRefreshHold() {
 #if CONFIG_PM_ENABLE
   if (displayPmLock != nullptr) esp_pm_lock_release(displayPmLock);
 #endif
@@ -121,7 +160,8 @@ void HalPowerManager::setPowerSaving(bool enabled) {
 #if CONFIG_PM_ENABLE
     // DFS owns the clock here: dropping the lock is what lets the CPU fall to
     // DFS_MIN_FREQ and lets the idle task light-sleep between loop ticks.
-    if (cpuFreqLock != nullptr) esp_pm_lock_release(cpuFreqLock);
+    isLowPower = true;
+    syncCpuFreqLock();
 #else
     if (!setCpuFrequencyMhz(LOW_POWER_FREQ)) {
       LOG_DBG("PWR", "Failed to set CPU frequency = %d MHz", LOW_POWER_FREQ);
@@ -136,7 +176,8 @@ void HalPowerManager::setPowerSaving(bool enabled) {
   } else if ((!enabled || mode != None) && isLowPower) {
     LOG_DBG("PWR", "Restoring normal CPU frequency");
 #if CONFIG_PM_ENABLE
-    if (cpuFreqLock != nullptr) esp_pm_lock_acquire(cpuFreqLock);
+    isLowPower = false;
+    syncCpuFreqLock();
 #else
     if (!setCpuFrequencyMhz(normalFreq)) {
       LOG_DBG("PWR", "Failed to set CPU frequency = %d MHz", normalFreq);

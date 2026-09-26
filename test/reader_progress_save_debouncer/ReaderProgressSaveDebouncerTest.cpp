@@ -39,10 +39,11 @@ TEST(ReaderProgressSaveDebouncer, MetadataChangeDoesNotCountAsPageTurn) {
   debouncer.markPersisted(initialPosition, 100);
   EXPECT_FALSE(debouncer.observe(initialPosition, 120));
 
-  for (uint32_t page = 51; page < 60; ++page) {
+  constexpr uint32_t interval = ReaderProgressSaveDebouncer::PAGE_CHANGE_INTERVAL;
+  for (uint32_t page = 51; page < 50 + interval; ++page) {
     EXPECT_FALSE(debouncer.observe((3U << 16) | page, 120));
   }
-  EXPECT_TRUE(debouncer.observe((3U << 16) | 60U, 120));
+  EXPECT_TRUE(debouncer.observe((3U << 16) | (50U + interval), 120));
 }
 
 TEST(ReaderProgressSaveDebouncer, PositionOnlyCallersKeepExistingBehavior) {
