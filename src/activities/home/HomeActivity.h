@@ -128,6 +128,11 @@ class HomeActivity final : public Activity {
   void loadAllBookStats();
   void loadRecentCovers(int coverHeight);
 
+  // Background Library indexing runs only after this long without input.
+  static constexpr unsigned long LIBRARY_PREWARM_IDLE_MS = 2000;
+  unsigned long lastInputMs = 0;
+  bool libraryPrewarmHandOff = false;
+
  public:
   explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                         HomeMenuItem initialMenuItemValue = HomeMenuItem::NONE,
@@ -150,4 +155,6 @@ class HomeActivity final : public Activity {
   std::unique_ptr<Activity> createFrontlightReadingStatsActivity() override;
   void onFrontlightPanelClosed() override;
   bool handleFrontlightPanelResult(const FrontlightPanelResult& result) override;
+  void onUserInput() override;
+  bool preventAutoSleep() override;
 };

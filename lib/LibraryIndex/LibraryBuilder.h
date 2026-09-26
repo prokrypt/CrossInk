@@ -53,6 +53,15 @@ struct BuildStats {
   bool indexReplaced = false;
   bool ranksDegraded = false;
   bool dedupDegraded = false;
+  bool cancelled = false;  // the owner stopped the build; the previous index is untouched
+};
+
+// Lets a background owner pause or stop a build. `service` runs on the building
+// task between directory entries and during the later phases; it may block while
+// the owner wants the card and CPU back, and returns false to stop the build.
+struct BuildControl {
+  bool (*service)(void* context) = nullptr;
+  void* context = nullptr;
 };
 
 // Walk `rootPath`, write `/.crosspoint/library.idx`, and report what happened.
@@ -63,7 +72,9 @@ struct BuildStats {
 // stops the normal EPUB parser at the end of <metadata>, before the manifest,
 // without building the reader's spine, TOC, CSS, or section caches. Unchanged
 // books reuse these values from the prior Library index.
-bool buildLibraryIndex(const char* rootPath, BuildStats& stats, bool readMetadata = false);
+// `control` is optional; only one build may run at a time.
+bool buildLibraryIndex(const char* rootPath, BuildStats& stats, bool readMetadata = false,
+                       const BuildControl* control = nullptr);
 
 // Live index path, shared by the builder and activity.
 const char* libraryIndexPath();
