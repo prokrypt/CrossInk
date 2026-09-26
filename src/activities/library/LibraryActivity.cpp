@@ -90,7 +90,8 @@ bool LibraryActivity::rebuildIndex(const bool showScanning, const bool force) {
   index.close();
   // Home may have been indexing in the background; finishing that walk is
   // cheaper than starting a new one, and usually it is already done.
-  if (LibraryPrewarm::active()) {
+  // Only show the popup if the walk is not about to finish anyway.
+  if (LibraryPrewarm::active() && !LibraryPrewarm::finishForLibrary(300)) {
     if (showScanning) GUI.drawPopup(renderer, tr(STR_LIBRARY_SCANNING));
     LibraryPrewarm::finishForLibrary();
   }

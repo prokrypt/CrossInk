@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // Builds the Library index in the background while Home is shown, so the first
 // Library visit after a boot or reset opens the existing index instead of
 // walking the card behind a "Reading your books" popup.
@@ -31,9 +33,9 @@ bool active();
 // speed during these bursts so they end sooner.
 bool working();
 
-// Library entry: finishes a handed-off build on the calling task's behalf and
-// waits for it. Afterwards Storage.libraryScanCurrent() says whether it left a
-// current index. No-op when nothing is running.
-void finishForLibrary();
+// Library entry: lets a handed-off build run unpaused and waits up to `waitMs`
+// for it. Returns true once nothing is running; Storage.libraryScanCurrent()
+// then says whether it left a current index.
+bool finishForLibrary(uint32_t waitMs = UINT32_MAX);
 
 }  // namespace LibraryPrewarm
