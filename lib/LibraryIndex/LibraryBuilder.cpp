@@ -319,6 +319,7 @@ struct WalkState {
   bool failed = false;
   bool creationTimesUnchanged = true;
   bool readMetadata = false;
+  bool retryFailedMetadata = false;
   LibraryIndexFile* previous = nullptr;
   BuildStats* stats = nullptr;
   uint16_t enriched = 0;
@@ -387,10 +388,12 @@ int findPrior(WalkState& st, const uint64_t pathHash) {
       st.failed = true;
       return false;
     }
-    reuseMetadata = st.prior[priorIndex].fileSize == fileSize && modificationTime != 0 &&
-                    priorRecord.modificationTime == modificationTime && st.previous->header().formatVersion >= 3 &&
-                    st.previous->header().metadataEnabled == st.readMetadata &&
-                    priorRecord.metadataStatus == expectedStatus;
+    reuseMetadata =
+        st.prior[priorIndex].fileSize == fileSize && modificationTime != 0 &&
+        priorRecord.modificationTime == modificationTime && st.previous->header().formatVersion >= 3 &&
+        st.previous->header().metadataEnabled == st.readMetadata &&
+        (priorRecord.metadataStatus == expectedStatus ||
+         (extractionExpected && !st.retryFailedMetadata && priorRecord.metadataStatus == CLIX_METADATA_FAILED));
   }
   // A fold update invalidates derived sort keys, not the stored book metadata.
   const bool reuseSortKeys = reuseMetadata && st.previous->header().foldVersion == CLIX_FOLD_VERSION;
@@ -1275,7 +1278,8 @@ bool emitIndex(const char* folderStagePath, WalkState& st, const uint16_t* order
 
 const char* libraryIndexPath() { return INDEX_PATH; }
 
-bool buildLibraryIndex(const char* rootPath, BuildStats& stats, const bool readMetadata, const BuildControl* control) {
+bool buildLibraryIndex(const char* rootPath, BuildStats& stats, const bool readMetadata, const BuildControl* control,
+                       const bool retryFailedMetadata) {
   const uint32_t startMs = millis();
   uint32_t serviceUnits = 0;
   stats = BuildStats{};
@@ -1355,6 +1359,7 @@ bool buildLibraryIndex(const char* rootPath, BuildStats& stats, const bool readM
   st.prior = priorList.get();
   st.priorCount = priorList ? priorCount : 0;
   st.readMetadata = readMetadata;
+  st.retryFailedMetadata = retryFailedMetadata;
   st.previous = previous.isOpen() ? &previous : nullptr;
   st.stats = &stats;
 
