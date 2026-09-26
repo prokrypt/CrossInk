@@ -140,6 +140,9 @@ size_t buttonIndex(MappedInputManager::Button button) { return static_cast<size_
 void MappedInputManager::update() const {
   gpio.update();
   expireReleaseSuppressions();
+#if CROSSINK_APP_CAP_TOUCH
+  updateSelectionTouchDown();
+#endif
 }
 
 bool MappedInputManager::wasPhysicallyReleased(const Button button) const {
@@ -396,6 +399,45 @@ bool MappedInputManager::wasScreenTouchDown(int& x, int& y) const {
   return true;
 }
 
+void MappedInputManager::updateSelectionTouchDown() const {
+  // Runs once per input frame so every reader in a frame sees the same edge.
+  selectPressThisFrame = false;
+  int x = 0;
+  int y = 0;
+  if (wasScreenTouchDown(x, y)) {
+    selectPressPending = true;
+    selectPressX = x;
+    selectPressY = y;
+  }
+  if (!selectPressPending) return;
+  // Released (a quick tap), suppressed, or moved: never highlight this contact.
+  if (!isScreenTouchHeld(x, y) || std::abs(x - selectPressX) > SELECT_PRESS_SLOP_PX ||
+      std::abs(y - selectPressY) > SELECT_PRESS_SLOP_PX) {
+    selectPressPending = false;
+    return;
+  }
+  unsigned long heldMs = 0;
+  if (!isScreenTouchTapCandidate(x, y, heldMs)) {
+    selectPressPending = false;
+    return;
+  }
+  if (heldMs < SELECT_PRESS_DELAY_MS) return;
+  selectPressPending = false;
+  selectPressThisFrame = true;
+}
+
+bool MappedInputManager::wasSelectionTouchDown(int& x, int& y) const {
+#ifdef SIMULATOR
+  // Scripted simulator contacts are instantaneous; keep their press edge.
+  return wasScreenTouchDown(x, y);
+#else
+  if (!selectPressThisFrame || !touchInputEnabled()) return false;
+  x = selectPressX;
+  y = selectPressY;
+  return true;
+#endif
+}
+
 bool MappedInputManager::isScreenTouchTapCandidate(int& x, int& y, unsigned long& heldMs) const {
   if (!touchInputEnabled()) return false;
 #ifdef SIMULATOR
@@ -442,7 +484,7 @@ bool MappedInputManager::wasRegistryTargetTapped(const uint8_t kind, int& id) co
 bool MappedInputManager::wasRegistryTargetTouchedDown(const uint8_t kind, int& id) const {
   int tx = 0;
   int ty = 0;
-  return wasScreenTouchDown(tx, ty) &&
+  return wasSelectionTouchDown(tx, ty) &&
          TouchRegistry::getInstance().hitTest(tx, ty, static_cast<TouchRegistry::Kind>(kind), id);
 }
 
@@ -520,7 +562,7 @@ bool MappedInputManager::wasListItemTouchedDown(int& index, const int itemCount,
                                                 const int listTop, const int listHeight, const bool hasSubtitle) const {
   int tx = 0;
   int ty = 0;
-  if (!wasScreenTouchDown(tx, ty)) return false;
+  if (!wasSelectionTouchDown(tx, ty)) return false;
   if (TouchRegistry::getInstance().hitTest(tx, ty, TouchRegistry::Item, index) && index >= 0 && index < itemCount) {
     return true;
   }
@@ -553,7 +595,7 @@ MappedInputManager::RowTouch MappedInputManager::rowTouch(int& row, const int to
   };
   int x = 0;
   int y = 0;
-  if (wasScreenTouchDown(x, y) && hit(x, y)) return RowTouch::Down;
+  if (wasSelectionTouchDown(x, y) && hit(x, y)) return RowTouch::Down;
   if (wasScreenTapped(x, y) && hit(x, y)) return RowTouch::Tap;
   return RowTouch::None;
 }
@@ -572,7 +614,7 @@ MappedInputManager::RowTouch MappedInputManager::colTouch(int& col, const int le
   };
   int x = 0;
   int y = 0;
-  if (wasScreenTouchDown(x, y) && hit(x, y)) return RowTouch::Down;
+  if (wasSelectionTouchDown(x, y) && hit(x, y)) return RowTouch::Down;
   if (wasScreenTapped(x, y) && hit(x, y)) return RowTouch::Tap;
   return RowTouch::None;
 }
