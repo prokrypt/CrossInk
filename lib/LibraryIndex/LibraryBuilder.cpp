@@ -83,12 +83,41 @@ bool sortKeyLess(const SortKey& a, const SortKey& b) {
   return a.ordinal < b.ordinal;
 }
 
+// Owner hooks for the build in progress. One build runs at a time, so file
+// statics avoid threading the control through every phase helper.
+const BuildControl* gBuildControl = nullptr;
+bool gBuildCancelled = false;
+
+// Gives a background owner the chance to pause (the hook blocks) or stop the
+// build. Returns false once the build has been told to stop.
+bool continueBuild() {
+  if (gBuildCancelled) return false;
+  if (gBuildControl != nullptr && gBuildControl->service != nullptr &&
+      !gBuildControl->service(gBuildControl->context)) {
+    gBuildCancelled = true;
+  }
+  return !gBuildCancelled;
+}
+
+struct BuildControlScope {
+  explicit BuildControlScope(const BuildControl* control) {
+    gBuildControl = control;
+    gBuildCancelled = false;
+  }
+  ~BuildControlScope() { gBuildControl = nullptr; }
+  BuildControlScope(const BuildControlScope&) = delete;
+  BuildControlScope& operator=(const BuildControlScope&) = delete;
+};
+
 // Let FreeRTOS run the idle task during every long phase, including builds
 // without a UI callback and the sort/emit work after the directory walk. The
 // counter keeps the delay out of tight per-byte operations while bounding CPU
 // work between yields.
 void serviceBuilder(uint32_t& workUnits) {
-  if ((++workUnits & 0x1Fu) == 0) delay(1);
+  if ((++workUnits & 0x1Fu) == 0) {
+    delay(1);
+    continueBuild();
+  }
 }
 
 // Only ties need another read. At most 11 fixed-size segments are considered,
@@ -525,6 +554,9 @@ void walk(WalkState& st, const std::string& path, const int depth) {
 
   for (HalFile entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
     serviceBuilder(st.serviceUnits);
+    // Checked per entry, not per 32 units: an EPUB metadata read can take a
+    // noticeable fraction of a second, and a paused owner wants the card now.
+    if (!continueBuild()) st.failed = true;
     if (st.failed) {
       entry.close();
       break;
@@ -1243,10 +1275,11 @@ bool emitIndex(const char* folderStagePath, WalkState& st, const uint16_t* order
 
 const char* libraryIndexPath() { return INDEX_PATH; }
 
-bool buildLibraryIndex(const char* rootPath, BuildStats& stats, const bool readMetadata) {
+bool buildLibraryIndex(const char* rootPath, BuildStats& stats, const bool readMetadata, const BuildControl* control) {
   const uint32_t startMs = millis();
   uint32_t serviceUnits = 0;
   stats = BuildStats{};
+  const BuildControlScope controlScope(control);
 
   Storage.mkdir(CACHE_DIR);
   if (!recoverInterruptedInstall()) return false;
@@ -1347,6 +1380,13 @@ bool buildLibraryIndex(const char* rootPath, BuildStats& stats, const bool readM
   const bool foldersClosed = st.folders.close();
   LOG_DBG("LIBIDX", "phase walk/metadata/stage: %ums", static_cast<unsigned>(millis() - walkStartMs));
 
+  if (gBuildCancelled) {
+    LOG_INF("LIBIDX", "build stopped by its owner; keeping the previous index");
+    stats.cancelled = true;
+    Storage.remove(STAGE_PATH);
+    Storage.remove(folderStagePath.c_str());
+    return false;
+  }
   if (st.failed || !stageFlushed || !stageClosed || !foldersClosed) {
     LOG_ERR("LIBIDX", "staging failed; keeping the previous index");
     Storage.remove(STAGE_PATH);
@@ -1552,6 +1592,14 @@ bool buildLibraryIndex(const char* rootPath, BuildStats& stats, const bool readM
     }
   }
   LOG_DBG("LIBIDX", "phase title order: %ums", static_cast<unsigned>(millis() - titleStartMs));
+
+  if (gBuildCancelled) {
+    LOG_INF("LIBIDX", "build stopped by its owner before install; keeping the previous index");
+    stats.cancelled = true;
+    Storage.remove(STAGE_PATH);
+    Storage.remove(folderStagePath.c_str());
+    return false;
+  }
 
   [[maybe_unused]] const uint32_t emitStartMs = millis();
   const bool ok =

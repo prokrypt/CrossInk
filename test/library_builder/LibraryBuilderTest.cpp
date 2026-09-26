@@ -154,6 +154,44 @@ TEST_F(LibraryBuilderTest, DirectoryIterationFailureRetainsPreviousIndex) {
   EXPECT_EQ(fake::files[INDEX]->bytes, old);
 }
 
+TEST_F(LibraryBuilderTest, OwnerCancellationRetainsPreviousIndex) {
+  initial();
+  const auto old = fake::files[INDEX]->bytes;
+  fake::add("/c.epub");
+  unsigned calls = 0;
+  BuildControl control;
+  control.context = &calls;
+  control.service = [](void* context) {
+    // Let the first entry through, then stop as a background owner would.
+    return ++*static_cast<unsigned*>(context) < 2;
+  };
+
+  EXPECT_FALSE(buildLibraryIndex("/", stats, false, &control));
+  EXPECT_TRUE(stats.cancelled);
+  EXPECT_GE(calls, 2u);
+  EXPECT_EQ(fake::files[INDEX]->bytes, old);
+
+  // The next build without an owner is unaffected by the earlier stop.
+  ASSERT_TRUE(buildLibraryIndex("/", stats, false));
+  EXPECT_FALSE(stats.cancelled);
+  EXPECT_EQ(stats.books, 3);
+}
+
+TEST_F(LibraryBuilderTest, OwnerThatNeverStopsBuildsNormally) {
+  unsigned calls = 0;
+  BuildControl control;
+  control.context = &calls;
+  control.service = [](void* context) {
+    ++*static_cast<unsigned*>(context);
+    return true;
+  };
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, false, &control));
+  EXPECT_FALSE(stats.cancelled);
+  EXPECT_GT(calls, 0u);
+  EXPECT_EQ(stats.books, 2);
+}
+
 TEST_F(LibraryBuilderTest, DirectoryOpenFailureRetainsPreviousIndex) {
   initial();
   const auto old = fake::files[INDEX]->bytes;

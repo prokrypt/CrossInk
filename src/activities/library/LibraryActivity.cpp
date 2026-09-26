@@ -17,6 +17,7 @@
 
 #include "activities/home/BookActions.h"
 #include "activities/home/FileBrowserActionActivity.h"
+#include "activities/library/LibraryPrewarm.h"
 #include "activities/library/LibrarySettingsActivity.h"
 #include "activities/reader/EpubReaderActivity.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -87,6 +88,12 @@ void LibraryActivity::onExit() {
 bool LibraryActivity::rebuildIndex(const bool showScanning, const bool force) {
   uiReady = false;
   index.close();
+  // Home may have been indexing in the background; finishing that walk is
+  // cheaper than starting a new one, and usually it is already done.
+  if (LibraryPrewarm::active()) {
+    if (showScanning) GUI.drawPopup(renderer, tr(STR_LIBRARY_SCANNING));
+    LibraryPrewarm::finishForLibrary();
+  }
   const bool useMetadata = SETTINGS.libraryUseMetadata != 0;
   const uint32_t generation = Storage.libraryContentGeneration();
   if (!force && Storage.libraryScanCurrent() && index.open(library::libraryIndexPath()) &&
