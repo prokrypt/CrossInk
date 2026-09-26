@@ -1059,64 +1059,6 @@ static bool loadSleepFrameBuffer() {
   return true;
 }
 
-// UC8179 wake baseline. Deep sleep discards controller RAM, so the first page
-// after wake would otherwise run a full GC refresh from white. Keeping the B/W
-// sleep frame lets wake restore it as the controller's OLD plane and draw the
-// first page with the partial waveform instead. Written after the sleep screen
-// is visible; overwritten or removed on every sleep, so it always matches the
-// frame the panel retained.
-constexpr char SLEEP_BASELINE_FILE[] = "/.crosspoint/sleep_baseline.bin";
-
-static bool keepsSleepBaseline() {
-#if !defined(SIMULATOR) && !FREEINK_MCU_C3
-  return BoardConfig::ACTIVE.displayController == BoardConfig::DisplayController::UC8179;
-#else
-  return false;
-#endif
-}
-
-static void updateSleepBaseline(const bool isQuickResumeSleep) {
-  if (!keepsSleepBaseline()) return;
-#ifndef SIMULATOR
-  // Grayscale sleep images leave the framebuffer holding a gray plane, not the
-  // panel's state, and the UC8179 already runs a full refresh after any
-  // grayscale pass. Quick Resume restores its own frame.
-  if (!isQuickResumeSleep && display.lastRefreshWasBw() && !display.isInverted()) {
-    HalFile file;
-    if (Storage.openFileForWrite("SLP", SLEEP_BASELINE_FILE, file)) {
-      const size_t bufferSize = display.getBufferSize();
-      const bool ok = file.write(display.getFrameBuffer(), bufferSize) == bufferSize;
-      file.close();
-      if (ok) return;
-    }
-  }
-#else
-  (void)isQuickResumeSleep;
-#endif
-  if (Storage.exists(SLEEP_BASELINE_FILE)) Storage.remove(SLEEP_BASELINE_FILE);
-}
-
-// Loads the saved sleep frame and restores it into the controller as the
-// differential baseline. Returns true when the first page may use a fast
-// (partial) refresh. The file is left in place: the next sleep replaces it.
-static bool restoreSleepBaseline() {
-  if (!keepsSleepBaseline() || display.isInverted()) return false;
-  HalFile file;
-  if (!Storage.openFileForRead("SLP", SLEEP_BASELINE_FILE, file)) return false;
-  const size_t bufferSize = display.getBufferSize();
-  const bool sizeMatches = file.fileSize() == bufferSize;
-  const bool ok = sizeMatches && file.read(display.getFrameBuffer(), bufferSize) == bufferSize;
-  file.close();
-  if (!ok) {
-    LOG_ERR("SLP", "Invalid wake baseline; using a full first refresh");
-    Storage.remove(SLEEP_BASELINE_FILE);
-    renderer.clearScreen();
-    return false;
-  }
-  renderer.cleanupGrayscaleWithFrameBuffer();
-  return true;
-}
-
 static bool preflightSleepFrameBuffer() {
   if (!Storage.exists(SLEEP_FRAME_FILE)) return false;
 
@@ -1221,7 +1163,6 @@ void enterDeepSleep(bool fromTimeout) {
       // A stale Quick Resume frame must not replace the selected sleep screen during wake.
       Storage.remove(SLEEP_FRAME_FILE);
     }
-    updateSleepBaseline(isQuickResumeSleep);
 
     if (halClock.isAvailable() && SETTINGS.autoBackupStats != 0) {
       ReadingStatsDateTime now;
@@ -1595,11 +1536,6 @@ void setup() {
         // The explicit HALF refresh above has already established a clean panel
         // baseline, so the reader's first page can use its fast initial cycle
         // instead of repeating the cleanup waveform.
-        allowFastInitialReaderRefresh = true;
-      } else if (restoreSleepBaseline()) {
-        // The controller's OLD plane now holds the retained sleep frame, so the
-        // first page can replace it with a partial refresh.
-        LOG_INF("BOOT", "Wake baseline restored; first page uses fast refresh");
         allowFastInitialReaderRefresh = true;
       }
       break;

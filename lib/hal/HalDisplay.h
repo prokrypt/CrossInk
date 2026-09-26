@@ -72,9 +72,6 @@ class HalDisplay {
   bool supportsAsyncGrayscaleBase() const;
   void refreshDisplay(RefreshMode mode = RefreshMode::FAST_REFRESH, bool turnOffScreen = false);
   bool isInverted() const;
-  // True when the most recent refresh sent a plain black-and-white frame, so
-  // the framebuffer matches what the panel shows. Any grayscale pass clears it.
-  bool lastRefreshWasBw() const { return lastRefreshBw; }
 
   // Power management
   void deepSleep();
@@ -132,7 +129,6 @@ class HalDisplay {
 
  private:
   EInkDisplay einkDisplay;
-  bool lastRefreshBw = false;
 };
 
 extern HalDisplay display;
