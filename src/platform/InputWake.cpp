@@ -13,6 +13,7 @@
 #include <hal/gpio_ll.h>
 #include <soc/gpio_struct.h>
 
+#include <algorithm>
 #include <array>
 
 namespace {
@@ -36,9 +37,8 @@ bool addWakePin(const int8_t pin) {
   if (pin < 0) return true;
   if (wakePinCount >= wakePins.size()) return false;
   const auto gpioPin = static_cast<gpio_num_t>(pin);
-  for (size_t i = 0; i < wakePinCount; ++i) {
-    if (wakePins[i] == gpioPin) return true;
-  }
+  const auto armedEnd = wakePins.begin() + wakePinCount;
+  if (std::find(wakePins.begin(), armedEnd, gpioPin) != armedEnd) return true;
   gpio_intr_disable(gpioPin);
   if (gpio_isr_handler_add(gpioPin, onWakeLine, reinterpret_cast<void*>(static_cast<uintptr_t>(pin))) != ESP_OK) {
     LOG_ERR("WAKE", "Could not attach input wake handler to GPIO%d", pin);
@@ -68,8 +68,8 @@ void InputWake::begin() {
   // ADC-ladder boards report keys through analog levels that cannot raise a
   // GPIO interrupt, so only plain digital keys take part.
   if (board.inputStyle == BoardConfig::InputStyle::DigitalButtons) {
-    for (const int8_t pin : {board.input.back, board.input.confirm, board.input.left, board.input.right,
-                             board.input.up, board.input.down, board.input.power}) {
+    for (const int8_t pin : {board.input.back, board.input.confirm, board.input.left, board.input.right, board.input.up,
+                             board.input.down, board.input.power}) {
       allArmed = addWakePin(pin) && allArmed;
     }
   }

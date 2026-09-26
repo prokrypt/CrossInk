@@ -14,6 +14,50 @@ constexpr char kMultiAuthorFeed[] = R"(<?xml version="1.0" encoding="UTF-8"?>
   </entry>
 </feed>)";
 
+// Sanitized from a live Mayberry /opds/branches feed.
+constexpr char kSummaryCountFeed[] = R"(<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opds="http://opds-spec.org/2010/catalog">
+  <id>urn:example:branches</id>
+  <title>Branches</title>
+  <entry>
+    <id>urn:example:branch:a</id>
+    <title>Branch A</title>
+    <summary type="text">12713 books</summary>
+    <link rel="subsection" href="/opds/branch/a" type="application/atom+xml;profile=opds-catalog;kind=acquisition"></link>
+  </entry>
+  <entry>
+    <id>urn:example:branch:b</id>
+    <title>Branch B</title>
+    <summary type="text">1 books</summary>
+    <link rel="subsection" href="/opds/branch/b" type="application/atom+xml;profile=opds-catalog;kind=acquisition"></link>
+  </entry>
+  <entry>
+    <id>urn:example:releases</id>
+    <title>New Releases</title>
+    <link rel="subsection" href="/opds/releases" type="application/atom+xml;profile=opds-catalog;kind=acquisition"></link>
+  </entry>
+  <entry>
+    <id>urn:example:descr</id>
+    <title>Described</title>
+    <summary type="text">3 friends set out on a journey</summary>
+    <link rel="subsection" href="/opds/descr" type="application/atom+xml;profile=opds-catalog;kind=navigation"></link>
+  </entry>
+</feed>)";
+
+constexpr char kThrCountFeed[] = R"(<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:thr="http://purl.org/syndication/thread/1.0">
+  <entry>
+    <title>Fiction</title>
+    <summary>99 books</summary>
+    <link rel="subsection" href="/fiction" type="application/atom+xml;profile=opds-catalog" thr:count="42"/>
+  </entry>
+  <entry>
+    <title>A Book</title>
+    <summary>5 stars</summary>
+    <link href="/b.epub" rel="http://opds-spec.org/acquisition" type="application/epub+zip"/>
+  </entry>
+</feed>)";
+
 }  // namespace
 
 TEST(OpdsParserTest, MultipleAuthorsKeepFirstAuthor) {
@@ -24,4 +68,28 @@ TEST(OpdsParserTest, MultipleAuthorsKeepFirstAuthor) {
   ASSERT_EQ(parser.getEntryCount(), 1u);
   ASSERT_NE(parser.getEntry(0), nullptr);
   EXPECT_EQ(parser.getEntry(0)->author, "Main Author Name");
+}
+
+TEST(OpdsParserTest, NavigationCountFromSummary) {
+  OpdsEntry entries[MAX_OPDS_FEED_ENTRIES];
+  OpdsParser parser(entries);
+
+  ASSERT_TRUE(parser.parse(kSummaryCountFeed, sizeof(kSummaryCountFeed) - 1));
+  ASSERT_EQ(parser.getEntryCount(), 4u);
+  EXPECT_EQ(parser.getEntry(0)->count, 12713);
+  EXPECT_EQ(parser.getEntry(1)->count, 1);
+  EXPECT_EQ(parser.getEntry(2)->count, -1);
+  EXPECT_EQ(parser.getEntry(3)->count, -1);
+}
+
+TEST(OpdsParserTest, ThrCountWinsAndBooksHaveNoCount) {
+  OpdsEntry entries[MAX_OPDS_FEED_ENTRIES];
+  OpdsParser parser(entries);
+
+  ASSERT_TRUE(parser.parse(kThrCountFeed, sizeof(kThrCountFeed) - 1));
+  ASSERT_EQ(parser.getEntryCount(), 2u);
+  EXPECT_EQ(parser.getEntry(0)->type, OpdsEntryType::NAVIGATION);
+  EXPECT_EQ(parser.getEntry(0)->count, 42);
+  EXPECT_EQ(parser.getEntry(1)->type, OpdsEntryType::BOOK);
+  EXPECT_EQ(parser.getEntry(1)->count, -1);
 }

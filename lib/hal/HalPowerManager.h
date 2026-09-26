@@ -64,9 +64,9 @@ class HalPowerManager {
   // DFS floor when power management is enabled. 80 MHz keeps APB pinned at
   // 80 MHz across every mode, so SPI dividers computed at bus setup stay valid
   // no matter what the CPU clock is doing.
-  static constexpr int DFS_MIN_FREQ = 80;                      // MHz
-  static constexpr unsigned long IDLE_POWER_SAVING_MS = 250;   // ms
-  static constexpr unsigned long BATTERY_POLL_MS = 6000;       // ms
+  static constexpr int DFS_MIN_FREQ = 80;                     // MHz
+  static constexpr unsigned long IDLE_POWER_SAVING_MS = 250;  // ms
+  static constexpr unsigned long BATTERY_POLL_MS = 6000;      // ms
 
   void begin();
 
@@ -79,6 +79,13 @@ class HalPowerManager {
   // lock creation failed.
   void beginDisplayBusyWait();
   void endDisplayBusyWait();
+
+  // Keeps light sleep off while a refresh runs in the background and the
+  // render task goes on working, as the deferred menu refresh does. Unlike the
+  // busy-wait hooks it leaves the CPU clock alone, since renders can run in
+  // the meantime.
+  void beginDisplayRefreshHold();
+  void endDisplayRefreshHold();
 
   // Keeps the device out of light sleep while USB Drive is exposing the SD card
   // over USB-OTG. Idempotent, so repeated end calls on exit paths are safe.

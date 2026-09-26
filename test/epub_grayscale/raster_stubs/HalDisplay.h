@@ -37,6 +37,9 @@ class HalDisplay {
   void displayBuffer(RefreshMode, bool) {}
   void displayBufferAsync(RefreshMode) {}
   void waitRefreshComplete() {}
+  void displayBufferDeferred(RefreshMode) {}
+  bool isRefreshPending() const { return false; }
+  bool isRefreshBusy() { return false; }
   bool supportsAsyncRefresh() const { return true; }
   bool supportsAsyncGrayscaleBase() const { return true; }
   void displayGrayscaleBase(RefreshMode, bool) {}

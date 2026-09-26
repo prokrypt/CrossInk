@@ -1725,9 +1725,8 @@ void updateTouchControllerSleep() {
   if (!gpio.hasTouch()) return;
   const bool quickLockedByKeys =
       buttonShortcutController.isQuickLocked() && quickLockUnlocksWithKeys(buttonShortcutController.quickLockTrigger());
-  const bool readerTouchOff =
-      activityManager.isReaderActivity() && !mappedInputManager.hasTouch() &&
-      (!mappedInputManager.hasHomeKey() || mappedInputManager.isHomeButtonLockedInReader());
+  const bool readerTouchOff = activityManager.isReaderActivity() && !mappedInputManager.hasTouch() &&
+                              (!mappedInputManager.hasHomeKey() || mappedInputManager.isHomeButtonLockedInReader());
   const bool wantAsleep = quickLockedByKeys || readerTouchOff;
   if (wantAsleep == gpio.isTouchAsleep()) {
     retryPending = false;
