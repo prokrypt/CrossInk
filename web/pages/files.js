@@ -130,9 +130,14 @@ async function hydrate() {
 
   // Escape cancels whichever modal is currently open
   document.addEventListener("keydown", function (e) {
-    if (e.key !== "Escape") return;
     const openOverlay = document.querySelector(".modal-overlay.open");
     if (!openOverlay) return;
+    if (openOverlay.id === "imagePreviewModal" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      // A held key would queue a device download per auto-repeat
+      if (!e.repeat) stepImagePreview(e.key === "ArrowLeft" ? -1 : 1);
+      return;
+    }
+    if (e.key !== "Escape") return;
     const closeFn = MODAL_CANCEL_FNS[openOverlay.id];
     if (closeFn) closeFn();
   });
@@ -278,10 +283,28 @@ function downloadUrl(filePath) {
 function openImagePreview(url, name) {
   const img = document.getElementById("imagePreviewImg");
   document.getElementById("imagePreviewName").textContent = name;
+  // Browsers keep showing the previous image until the new one arrives
+  img.style.opacity = 0;
+  img.onload = img.onerror = () => (img.style.opacity = "");
   img.src = url;
   img.alt = name;
   document.getElementById("imagePreviewDownload").href = url;
+  document.getElementById("imagePreviewNav").classList.toggle("single", previewLinks().length < 2);
   document.getElementById("imagePreviewModal").classList.add("open");
+}
+
+// Only image rows get .image-preview-link (isImageFile); wraps at the ends.
+function previewLinks() {
+  return [...document.querySelectorAll("#file-table .image-preview-link")];
+}
+
+function stepImagePreview(dir) {
+  const links = previewLinks();
+  const current = document.getElementById("imagePreviewDownload").getAttribute("href");
+  const i = links.findIndex((l) => l.getAttribute("href") === current);
+  if (i < 0 || links.length < 2) return;
+  const link = links[(i + dir + links.length) % links.length];
+  openImagePreview(link.getAttribute("href"), link.textContent);
 }
 
 function closeImagePreview() {
