@@ -11,7 +11,9 @@
 #include <Utf8.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 
 #include "activities/home/BookActions.h"
 #include "activities/home/FileBrowserActionActivity.h"
@@ -35,6 +37,9 @@ constexpr unsigned long LONG_PRESS_MS = 1000;
 constexpr unsigned long ACTION_FEEDBACK_MS = 1000;
 constexpr int HEADER_CONTROL_SIZE = 44;
 constexpr int HEADER_CONTROL_GAP = 10;
+// A released contact that travelled further than this is a drag, not a tap on
+// the row it started on. Matches the SDK's stationary tap slop.
+constexpr int DRAG_TAP_SLOP_PX = 28;
 
 int headerControlRightInset() {
   const auto& metrics = UITheme::getInstance().getMetrics();
@@ -56,15 +61,17 @@ void LibraryActivity::onEnter() {
   seriesScratch.reserve(128);
   genreScratch.reserve(128);
   subtitleScratch.reserve(448);
+  rowCache = makeUniqueNoThrow<CachedRow[]>(ROW_CACHE_SIZE);
+  if (!rowCache) LOG_ERR("LIB", "Cannot allocate Library row cache; rows are read on every draw");
   sort = SETTINGS.librarySortMethod <= static_cast<uint8_t>(Sort::Genre) ? static_cast<Sort>(SETTINGS.librarySortMethod)
                                                                          : Sort::RecentlyRead;
   descending = SETTINGS.librarySortDescending != 0;
   app.on(ACTION_ROW, &LibraryActivity::onRowEvent, this);
   app.on(ACTION_CONTROL, &LibraryActivity::onControlEvent, this);
   app.setScreen(&LibraryActivity::listScreen, this);
-  // Reconcile on entry as card contents may change through USB, Wi-Fi or an
-  // external card reader. Unchanged books reuse the index's metadata.
-  rebuildIndex(!Storage.exists(library::libraryIndexPath()));
+  // Card contents may change through USB, Wi-Fi, transfers or file actions.
+  // Storage counts those, so an unchanged card reopens the index directly.
+  rebuildIndex(true);
   resetViewport();
   ignoreConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
   requestUpdate();
@@ -73,15 +80,27 @@ void LibraryActivity::onEnter() {
 void LibraryActivity::onExit() {
   index.close();
   filtered.reset();
+  rowCache.reset();
   Activity::onExit();
 }
 
-bool LibraryActivity::rebuildIndex(const bool showScanning) {
+bool LibraryActivity::rebuildIndex(const bool showScanning, const bool force) {
   uiReady = false;
+  index.close();
+  const bool useMetadata = SETTINGS.libraryUseMetadata != 0;
+  const uint32_t generation = Storage.libraryContentGeneration();
+  if (!force && Storage.libraryScanCurrent() && index.open(library::libraryIndexPath()) &&
+      (index.header().metadataEnabled != 0) == useMetadata) {
+    LOG_DBG("LIB", "Card unchanged since last scan; reusing index");
+    scanFailed = false;
+    resolveRecents();
+    applyFilter();
+    return !scanFailed;
+  }
   index.close();
   if (showScanning) GUI.drawPopup(renderer, tr(STR_LIBRARY_SCANNING));
   library::BuildStats stats;
-  scanFailed = !library::buildLibraryIndex("/", stats, SETTINGS.libraryUseMetadata != 0);
+  scanFailed = !library::buildLibraryIndex("/", stats, useMetadata);
   if (scanFailed) LOG_ERR("LIB", "Library scan failed; retaining the previous index");
   if (!index.open(library::libraryIndexPath())) {
     // A failed one-time upgrade leaves the previous index on the card. Keep
@@ -97,6 +116,9 @@ bool LibraryActivity::rebuildIndex(const bool showScanning) {
       }
     }
   }
+  // Record the generation read before the walk: a change made during it
+  // leaves the counter ahead, so the next visit rescans.
+  if (!scanFailed) Storage.noteLibraryScanned(generation);
   resolveRecents();
   applyFilter();
   return !scanFailed;
@@ -204,7 +226,14 @@ bool LibraryActivity::readBook(const int row, RecentBook& book, const bool fullP
   return true;
 }
 
+void LibraryActivity::invalidateRowCache() {
+  if (!rowCache) return;
+  for (int i = 0; i < ROW_CACHE_SIZE; ++i) rowCache[i].row = -1;
+}
+
 void LibraryActivity::applyFilter() {
+  // Every change to sort, direction, filter, settings or the index lands here.
+  invalidateRowCache();
   filteredCount = 0;
   filterFailed = false;
   filtered.reset();
@@ -274,7 +303,9 @@ void LibraryActivity::resetViewport() {
 }
 
 void LibraryActivity::reloadAfterBookAction() {
-  rebuildIndex(false);
+  // Deleting or moving a book changes the storage generation and rescans;
+  // cache, stats and settings actions only refresh recents and rows.
+  rebuildIndex(true);
   selection = std::min(selection, std::max(CONTROL_COUNT, CONTROL_COUNT + rowCount() - 1));
   listNav.selected = selection - CONTROL_COUNT;
   listNav.top = topIndex;
@@ -344,7 +375,7 @@ void LibraryActivity::openSearch() {
 }
 
 void LibraryActivity::refreshLibrary() {
-  rebuildIndex(true);
+  rebuildIndex(true, /*force=*/true);
   resetViewport();
   requestUpdate();
 }
@@ -355,7 +386,7 @@ void LibraryActivity::openSettings() {
              [this, useMetadata](const ActivityResult&) {
                // cppcheck-suppress knownConditionTrueFalse ; the settings dialog may change SETTINGS before this runs
                if ((SETTINGS.libraryUseMetadata != 0) != useMetadata) {
-                 rebuildIndex(true);
+                 rebuildIndex(true, /*force=*/true);
                } else {
                  applyFilter();
                }
@@ -397,12 +428,73 @@ void LibraryActivity::onControlEvent(const fui::ActionEvent& event, void* user) 
   self->activateControl(event.value);
 }
 
+void LibraryActivity::latchInput() {
+  int x = 0;
+  int y = 0;
+  if (mappedInput.wasScreenTouchDown(x, y)) {
+    touchTracking = true;
+    touchStartX = touchLastX = x;
+    touchStartY = touchLastY = y;
+  }
+  if (touchTracking && mappedInput.isScreenTouchHeld(x, y)) {
+    touchLastX = x;
+    touchLastY = y;
+  }
+  const int travelX = std::abs(touchLastX - touchStartX);
+  const int travelY = std::abs(touchLastY - touchStartY);
+  const bool released = touchTracking && mappedInput.wasScreenTouchReleased();
+
+  const auto header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
+  if (mappedInput.wasScreenTapped(x, y) && y < header.y + header.height &&
+      TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
+    pending.headerBack = true;
+  }
+
+  auto snap = touchSnapshotFrom(mappedInput);
+  if (snap.touchReleased && !snap.longPress && touchTracking && std::max(travelX, travelY) > DRAG_TAP_SLOP_PX) {
+    snap.touchReleased = false;
+  }
+  if (snap.touchPressed) {
+    pending.touchPress = true;
+    pending.touchRelease = false;
+    pending.pressX = snap.touchX;
+    pending.pressY = snap.touchY;
+  }
+  if (snap.touchReleased) {
+    pending.touchRelease = true;
+    pending.longPress = snap.longPress;
+    pending.releaseX = snap.touchX;
+    pending.releaseY = snap.touchY;
+  }
+
+  const auto swipe = mappedInput.wasSwipe();
+  if (released) touchTracking = false;
+  if (swipe == MappedInputManager::SwipeDir::Up && pending.scrollPages < INT8_MAX) ++pending.scrollPages;
+  if (swipe == MappedInputManager::SwipeDir::Down && pending.scrollPages > INT8_MIN) --pending.scrollPages;
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) pending.confirmReleased = true;
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) pending.backReleased = true;
+  const auto step = [](int8_t& value, const int delta) {
+    value = static_cast<int8_t>(std::max<int>(INT8_MIN, std::min<int>(INT8_MAX, value + delta)));
+  };
+  buttonNavigator.onNextRelease([&] { step(pending.steps, 1); });
+  buttonNavigator.onPreviousRelease([&] { step(pending.steps, -1); });
+  buttonNavigator.onNextContinuous([&] { step(pending.pageSteps, 1); });
+  buttonNavigator.onPreviousContinuous([&] { step(pending.pageSteps, -1); });
+}
+
 void LibraryActivity::loop() {
-  RenderLock lock;
   if (sortPopup.isActive()) {
+    pending = {};
+    RenderLock lock;
     sortPopup.handleInput(mappedInput, [this] { requestUpdate(); });
     return;
   }
+  latchInput();
+  if (RenderLock::peek()) return;
+  RenderLock lock;
+  const PendingInput input = pending;
+  pending = {};
   if (pendingCacheDeletedFeedback && millis() - cacheDeletedFeedbackShowTime >= ACTION_FEEDBACK_MS) {
     pendingCacheDeletedFeedback = false;
     requestUpdate();
@@ -414,11 +506,7 @@ void LibraryActivity::loop() {
     }
     return;
   }
-  int tapX = 0;
-  int tapY = 0;
-  const auto header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
-  if (mappedInput.wasScreenTapped(tapX, tapY) && tapY < header.y + header.height &&
-      TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
+  if (input.headerBack) {
     onGoHome();
     return;
   }
@@ -430,22 +518,34 @@ void LibraryActivity::loop() {
       activateControl(selection);
     return;
   }
-  if (uiReady) {
-    const auto snap = touchSnapshotFrom(mappedInput);
-    if (snap.touchPressed || snap.touchReleased) {
-      const auto event = app.route(snap);
-      if (app.invalidated()) requestUpdate();
-      if (event) return;
+  if (uiReady && (input.touchPress || input.touchRelease)) {
+    bool routed = false;
+    if (input.touchPress) {
+      fui::InputSnapshot snap{};
+      snap.touchPressed = true;
+      snap.touchX = input.pressX;
+      snap.touchY = input.pressY;
+      routed = static_cast<bool>(app.route(snap));
     }
+    if (!routed && input.touchRelease) {
+      fui::InputSnapshot snap{};
+      snap.touchReleased = true;
+      snap.longPress = input.longPress;
+      snap.touchX = input.releaseX;
+      snap.touchY = input.releaseY;
+      routed = static_cast<bool>(app.route(snap));
+    }
+    if (app.invalidated()) requestUpdate();
+    if (routed) return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (input.confirmReleased) {
     if (selection < CONTROL_COUNT)
       activateControl(selection);
     else
       openBook(selection - CONTROL_COUNT);
     return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (input.backReleased) {
     if (!query.empty()) {
       query.clear();
       applyFilter();
@@ -455,12 +555,11 @@ void LibraryActivity::loop() {
       onGoHome();
     return;
   }
-  const auto swipe = mappedInput.wasSwipe();
-  if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
+  if (input.scrollPages != 0) {
     if (mappedInput.hasTouchHardware()) showSelection = false;
     listNav.top = topIndex;
     const int page = listNav.pageRowsFor(rowCount());
-    listNav.scrollBy(swipe == MappedInputManager::SwipeDir::Up ? page : -page, rowCount());
+    listNav.scrollBy(input.scrollPages * page, rowCount());
     topIndex = listNav.top;
     requestUpdate();
     return;
@@ -481,12 +580,15 @@ void LibraryActivity::loop() {
     }
     requestUpdate();
   };
-  buttonNavigator.onNextRelease([&] { move(ButtonNavigator::nextIndex(selection, count)); });
-  buttonNavigator.onPreviousRelease([&] { move(ButtonNavigator::previousIndex(selection, count)); });
-  buttonNavigator.onNextContinuous(
-      [&] { move(ButtonNavigator::nextPageIndex(selection, count, listNav.pageRowsFor(rowCount()))); });
-  buttonNavigator.onPreviousContinuous(
-      [&] { move(ButtonNavigator::previousPageIndex(selection, count, listNav.pageRowsFor(rowCount()))); });
+  for (int i = 0; i < std::abs(input.steps); ++i) {
+    move(input.steps > 0 ? ButtonNavigator::nextIndex(selection, count)
+                         : ButtonNavigator::previousIndex(selection, count));
+  }
+  for (int i = 0; i < std::abs(input.pageSteps); ++i) {
+    const int page = listNav.pageRowsFor(rowCount());
+    move(input.pageSteps > 0 ? ButtonNavigator::nextPageIndex(selection, count, page)
+                             : ButtonNavigator::previousPageIndex(selection, count, page));
+  }
 }
 
 void LibraryActivity::listScreen(UiApp::ScreenType& screen, void* user) {
@@ -495,70 +597,94 @@ void LibraryActivity::listScreen(UiApp::ScreenType& screen, void* user) {
 
 void LibraryActivity::provideRow(void* user, const uint16_t row, fui::ListItem& item) {
   auto* self = static_cast<LibraryActivity*>(user);
-  if (!self->readBook(row, self->rowScratch, false)) {
+  const CachedRow& cached = self->rowFor(row);
+  if (!cached.ok) {
     item.label = tr(STR_LIBRARY_UNAVAILABLE);
     item.enabled = false;
     return;
   }
-  item.label = self->rowScratch.title.c_str();
-  if (!self->rowScratch.author.empty()) item.subtitle = self->rowScratch.author.c_str();
+  item.label = cached.title.c_str();
+  if (!cached.subtitle.empty()) item.subtitle = cached.subtitle.c_str();
+  item.icon = listIconFor(static_cast<UIIcon>(cached.icon), 32);
+  item.actionValue = static_cast<int16_t>(row);
+  if (cached.hasHeading) item.sectionHeading = cached.heading.c_str();
+}
+
+LibraryActivity::CachedRow& LibraryActivity::rowFor(const int row) {
+  CachedRow& entry = rowCache ? rowCache[row % ROW_CACHE_SIZE] : uncachedRow;
+  if (!rowCache || entry.row != row) {
+    fillRow(row, entry);
+    // Failed reads are retried on the next draw.
+    entry.row = entry.ok && rowCache ? row : -1;
+  }
+  return entry;
+}
+
+void LibraryActivity::fillRow(const int row, CachedRow& out) {
+  out.ok = false;
+  out.hasHeading = false;
+  out.subtitle.clear();
+  if (!readBook(row, rowScratch, false)) return;
+  out.ok = true;
+  out.title = rowScratch.title;
+  out.subtitle = rowScratch.author;
   if (SETTINGS.libraryListExpanded && SETTINGS.libraryUseMetadata &&
       (SETTINGS.libraryShowSeries || SETTINGS.libraryShowGenre)) {
     library::ClixRecord record{};
-    const uint16_t ordinal = self->ordinalForRow(row);
-    if (ordinal != UINT16_MAX && self->index.readRecord(ordinal, record) &&
-        self->index.readSeries(record, self->seriesScratch) && self->index.readGenre(record, self->genreScratch) &&
-        ((SETTINGS.libraryShowSeries && !self->seriesScratch.empty()) ||
-         (SETTINGS.libraryShowGenre && !self->genreScratch.empty()))) {
-      self->subtitleScratch = self->rowScratch.author;
-      if (!self->subtitleScratch.empty()) self->subtitleScratch.append(" · ");
-      if (SETTINGS.libraryShowSeries && !self->seriesScratch.empty()) {
-        self->subtitleScratch.append(tr(STR_LIBRARY_SERIES));
-        self->subtitleScratch.append(": ");
-        self->subtitleScratch.append(self->seriesScratch);
+    const uint16_t ordinal = ordinalForRow(row);
+    if (ordinal != UINT16_MAX && index.readRecord(ordinal, record) && index.readSeries(record, seriesScratch) &&
+        index.readGenre(record, genreScratch) &&
+        ((SETTINGS.libraryShowSeries && !seriesScratch.empty()) ||
+         (SETTINGS.libraryShowGenre && !genreScratch.empty()))) {
+      subtitleScratch = rowScratch.author;
+      if (!subtitleScratch.empty()) subtitleScratch.append(" · ");
+      if (SETTINGS.libraryShowSeries && !seriesScratch.empty()) {
+        subtitleScratch.append(tr(STR_LIBRARY_SERIES));
+        subtitleScratch.append(": ");
+        subtitleScratch.append(seriesScratch);
       }
-      if (SETTINGS.libraryShowGenre && !self->genreScratch.empty()) {
-        if (SETTINGS.libraryShowSeries && !self->seriesScratch.empty()) self->subtitleScratch.append(" · ");
-        self->subtitleScratch.append(tr(STR_LIBRARY_GENRE));
-        self->subtitleScratch.append(": ");
-        self->subtitleScratch.append(self->genreScratch);
+      if (SETTINGS.libraryShowGenre && !genreScratch.empty()) {
+        if (SETTINGS.libraryShowSeries && !seriesScratch.empty()) subtitleScratch.append(" · ");
+        subtitleScratch.append(tr(STR_LIBRARY_GENRE));
+        subtitleScratch.append(": ");
+        subtitleScratch.append(genreScratch);
       }
-      item.subtitle = self->subtitleScratch.c_str();
+      out.subtitle = subtitleScratch;
     }
   }
-  item.icon = listIconFor(UITheme::getFileIcon(self->rowScratch.path), 32);
-  item.actionValue = static_cast<int16_t>(row);
-  if (SETTINGS.libraryListExpanded && self->sort == Sort::DateAdded) {
-    const uint16_t date = self->dateGroupForRow(row);
-    if (row == 0 || date != self->dateGroupForRow(row - 1)) {
+  out.icon = static_cast<uint8_t>(UITheme::getFileIcon(rowScratch.path));
+  if (SETTINGS.libraryListExpanded && sort == Sort::DateAdded) {
+    const uint16_t date = dateGroupForRow(row);
+    if (row == 0 || date != dateGroupForRow(row - 1)) {
       if (date == 0) {
-        self->groupHeading = "?";
+        groupHeading = "?";
       } else {
         char heading[11];
         std::snprintf(heading, sizeof(heading), "%04u-%02u-%02u", 1980u + (date >> 9), (date >> 5) & 15u, date & 31u);
-        self->groupHeading = heading;
+        groupHeading = heading;
       }
-      item.sectionHeading = self->groupHeading.c_str();
+      out.hasHeading = true;
     }
-  } else if (SETTINGS.libraryListExpanded && (self->sort == Sort::Series || self->sort == Sort::Genre)) {
-    if (self->metadataGroupForRow(row, self->groupHeading)) {
-      library::foldInto(self->groupHeading, self->groupKeyScratch);
-      if (row == 0 || !self->metadataGroupForRow(row - 1, self->previousGroupScratch)) {
-        item.sectionHeading = self->groupHeading.c_str();
+  } else if (SETTINGS.libraryListExpanded && (sort == Sort::Series || sort == Sort::Genre)) {
+    if (metadataGroupForRow(row, groupHeading)) {
+      library::foldInto(groupHeading, groupKeyScratch);
+      if (row == 0 || !metadataGroupForRow(row - 1, previousGroupScratch)) {
+        out.hasHeading = true;
       } else {
-        library::foldInto(self->previousGroupScratch, self->previousGroupKeyScratch);
-        if (self->groupKeyScratch != self->previousGroupKeyScratch) item.sectionHeading = self->groupHeading.c_str();
+        library::foldInto(previousGroupScratch, previousGroupKeyScratch);
+        if (groupKeyScratch != previousGroupKeyScratch) out.hasHeading = true;
       }
     }
-  } else if (SETTINGS.libraryListExpanded && self->sort != Sort::RecentlyRead) {
-    const uint32_t initial = self->groupForRow(row);
-    if (row == 0 || initial != self->groupForRow(row - 1)) {
-      self->groupHeading.clear();
+  } else if (SETTINGS.libraryListExpanded && sort != Sort::RecentlyRead) {
+    const uint32_t initial = groupForRow(row);
+    if (row == 0 || initial != groupForRow(row - 1)) {
+      groupHeading.clear();
       utf8AppendCodepoint(initial ? (initial >= 'a' && initial <= 'z' ? initial - 'a' + 'A' : initial) : '#',
-                          self->groupHeading);
-      item.sectionHeading = self->groupHeading.c_str();
+                          groupHeading);
+      out.hasHeading = true;
     }
   }
+  if (out.hasHeading) out.heading = groupHeading;
 }
 
 bool LibraryActivity::metadataGroupForRow(const int row, std::string& out) {

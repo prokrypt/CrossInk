@@ -6,7 +6,7 @@
 - Library replaces Recent Books with a searchable book list, title and author metadata, and sorting by date added, title, author last name, author first name, or recently opened.
 - Reset a book's reader settings from the in-reader Settings tab.
 - Assign actions to upward and downward slides along either screen edge on touch devices.
-- Automatic light sleep is available in the X4 Pro light-sleep firmware profiles, reducing idle power while retaining normal button, touch, and frontlight behavior. USB serial stays available while a computer is connected, because the device skips light sleep for as long as a USB host is attached.
+- Automatic light sleep is available in the X4 Pro light-sleep firmware profiles, reducing idle power while retaining normal button, touch, and frontlight behavior. USB serial stays available while a computer is connected, because the device skips light sleep for as long as a USB host is attached. USB Drive also works in these profiles and keeps the device awake while it is open.
 - Add the continuous **IncreMENTAL** EPUB indexing method for background chapter indexing.
 - A new **Extend** sleep screen cover mode fills the empty margins around a cover that doesn't match the screen's aspect ratio by repeating its edge pixels instead of leaving them blank.
 - A new **Extend Mirror** sleep screen cover mode fills those same margins by reflecting the cover's edge content instead of repeating a single edge pixel.
@@ -20,6 +20,7 @@
 - Idle power saving now puts the device into automatic light sleep between loop ticks instead of only lowering the CPU clock, cutting idle draw while leaving buttons, touch, and the frontlight working exactly as before. The screen, Wi-Fi transfers, and USB sessions stay awake while they are in use.
 - GitHub workflows and release documentation links now follow the `development` default branch.
 - Idle power saving now engages after 1 second instead of 3, and battery level is polled every 6 seconds instead of every 1.5, trading slightly less frequent battery updates for lower average power draw.
+- The Library opens instantly when nothing on the SD card has changed since its last scan, instead of rescanning the whole card on every visit. Moving the selection no longer re-reads each visible book from the card.
 - Fewer SD card writes: session state and reading stats are no longer rewritten when nothing changed, and the reading percentage shown on Home is saved once when you leave a book instead of every 10 pages.
 
 ### Fixed

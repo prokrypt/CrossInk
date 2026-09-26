@@ -34,6 +34,11 @@ class HalPowerManager {
   // Held only for the duration of an EPD busy-wait (see beginDisplayBusyWait),
   // so tickless idle can never light-sleep mid-refresh.
   esp_pm_lock_handle_t displayPmLock = nullptr;
+  // Held while USB Drive owns the USB-OTG PHY. TinyUSB cannot service the host
+  // across a light-sleep window, and USJ_NO_AUTO_LS_ON_CONNECTION only watches
+  // the Serial/JTAG controller, not OTG.
+  esp_pm_lock_handle_t usbDrivePmLock = nullptr;
+  bool usbDrivePmLockHeld = false;
 #endif
 
   mutable int _batteryCachedPercent = 0;  // Last read battery percentage * 10 (0-1000); callers divide by 10 (ADC/X4
@@ -68,6 +73,10 @@ class HalPowerManager {
   // lock creation failed.
   void beginDisplayBusyWait();
   void endDisplayBusyWait();
+
+  // Keeps the device out of light sleep while USB Drive is exposing the SD card
+  // over USB-OTG. Idempotent, so repeated end calls on exit paths are safe.
+  void setUsbDriveActive(bool active);
 
   // Setup wake up GPIO and enter deep sleep
   // Should be called inside main loop() to handle the currentLockMode
