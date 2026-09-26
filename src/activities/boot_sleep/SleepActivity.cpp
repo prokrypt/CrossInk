@@ -821,23 +821,6 @@ bool SleepActivity::renderBitmapSleepScreen(Bitmap& bitmap) const {
   const bool hasGreyscale = bitmap.hasGreyscale() &&
                             SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
 
-  if (!renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY)) return false;
-
-  if (extendEdges) {
-    extendBitmapEdges(renderer, x, y, bitmap.getWidth(), bitmap.getHeight(), pageWidth, pageHeight);
-  } else if (mirrorEdges) {
-    mirrorBitmapEdges(renderer, x, y, bitmap.getWidth(), bitmap.getHeight(), pageWidth, pageHeight);
-  }
-
-  if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
-    renderer.invertScreen();
-  }
-
-  if (!hasGreyscale) {
-    renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
-    return true;
-  }
-
   // Prefer the Direct waveform where the panel implements it: it folds the B/W
   // base into the grayscale pass rather than pushing a separate base refresh
   // first. Keep `absolute` on the Absolute probe alone so it matches what the
@@ -845,6 +828,32 @@ bool SleepActivity::renderBitmapSleepScreen(Bitmap& bitmap) const {
   // is only ever an upgrade on top of it, never a substitute.
   const bool absolute = renderer.supportsAbsoluteGrayscale();
   const bool direct = absolute && renderer.supportsDirectGrayscale();
+  // Direct starts from the two complete gray planes and never reads the B/W
+  // frame buffer, so a B/W render ahead of it would be a whole image decode
+  // that the LSB pass immediately clears. Absolute and Overlay bases still
+  // push the B/W frame, so they keep it.
+  const bool drawBwFrame = !hasGreyscale || !direct;
+  const unsigned long decodeStartMs = millis();
+
+  if (drawBwFrame) {
+    if (!renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY)) return false;
+
+    if (extendEdges) {
+      extendBitmapEdges(renderer, x, y, bitmap.getWidth(), bitmap.getHeight(), pageWidth, pageHeight);
+    } else if (mirrorEdges) {
+      mirrorBitmapEdges(renderer, x, y, bitmap.getWidth(), bitmap.getHeight(), pageWidth, pageHeight);
+    }
+
+    if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
+      renderer.invertScreen();
+    }
+  }
+
+  if (!hasGreyscale) {
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
+    return true;
+  }
+
   if (absolute) {
     if (!(direct ? renderer.displayDirectGrayscaleBase() : renderer.displayAbsoluteGrayscaleBase())) return false;
   } else {
@@ -874,6 +883,7 @@ bool SleepActivity::renderBitmapSleepScreen(Bitmap& bitmap) const {
     else
       renderer.copyGrayscaleMsbBuffers();
   }
+  LOG_DBG("SLP", "Sleep image decoded in %lu ms (%d passes)", millis() - decodeStartMs, drawBwFrame ? 3 : 2);
   renderer.displayGrayBuffer(TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
   renderer.setRenderMode(GfxRenderer::BW);
   return true;
