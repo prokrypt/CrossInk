@@ -176,12 +176,18 @@ void HalGPIO::begin() {
 
 void HalGPIO::update() {
   inputMgr.update();
+#if CROSSINK_APP_CAP_TOUCH
+  trackTouchDrag();
+#endif
   if (inputMgr.isDebouncePending()) {
     // The SDK commits a state change after it remains stable for more than
     // 5 ms. Re-poll before the low-power loop's next ~100 ms sample so short
     // physical button presses are not discarded.
     delay(BUTTON_DEBOUNCE_REPOLL_MS);
     inputMgr.update();
+#if CROSSINK_APP_CAP_TOUCH
+    trackTouchDrag();
+#endif
   }
 
   usbStateChanged = false;
@@ -256,7 +262,23 @@ bool HalGPIO::wasHomeKeyTapped() const { return inputMgr.wasHomeKeyTapped(); }
 
 bool HalGPIO::wasHomeKeyLongPressed() const { return inputMgr.wasHomeKeyLongPressed(); }
 
-bool HalGPIO::wasTouchTap(float& nx, float& ny) const { return inputMgr.wasTouchTap(nx, ny); }
+void HalGPIO::trackTouchDrag() {
+  if (inputMgr.wasTouchPressed()) touchDraggedPastTapSlop = false;
+  if (!inputMgr.isTouchPressed()) return;
+  // The SDK stops reporting a tap candidate once the contact moves past its
+  // 28 px stationary slop (the same gate long-press uses).
+  float nx = 0.0f;
+  float ny = 0.0f;
+  unsigned long heldMs = 0;
+  if (!inputMgr.isTouchTapCandidate(nx, ny, heldMs)) touchDraggedPastTapSlop = true;
+}
+
+bool HalGPIO::wasTouchTap(float& nx, float& ny) const {
+  // The SDK accepts released taps up to its 60 px swipe distance so slow finger
+  // rolls are not lost, but on lists and menus that lets a short drag select
+  // the row it started on. Anything past the stationary slop is a drag.
+  return !touchDraggedPastTapSlop && inputMgr.wasTouchTap(nx, ny);
+}
 
 bool HalGPIO::wasTouchDown(float& nx, float& ny) const { return inputMgr.wasTouchPressedAt(nx, ny); }
 

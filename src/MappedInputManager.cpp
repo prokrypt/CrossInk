@@ -321,6 +321,12 @@ bool MappedInputManager::wasScreenTapped(int& x, int& y) const {
       simulatorTouch.longPressFired = false;
       return false;
     }
+    // Mirror HalGPIO: a contact that moved past the stationary slop is a drag.
+    constexpr int SIMULATOR_TAP_SLOP_PX = 28;
+    if (std::abs(simulatorTouch.currentX - simulatorTouch.startX) > SIMULATOR_TAP_SLOP_PX ||
+        std::abs(simulatorTouch.currentY - simulatorTouch.startY) > SIMULATOR_TAP_SLOP_PX) {
+      return false;
+    }
     x = simulatorTouch.startX;
     y = simulatorTouch.startY;
     rememberTouchHeldTime();
