@@ -646,7 +646,6 @@ void SleepActivity::renderCustomSleepScreen() const {
     }
 
     LOG_INF("SLP", "Loading custom sleep image: %s", selection.path.c_str());
-    delay(100);
     // Use image-specific gray levels only when the panel accepts complete planes.
     Bitmap bitmap(file, true,
                   renderer.supportsAbsoluteGrayscale() &&
