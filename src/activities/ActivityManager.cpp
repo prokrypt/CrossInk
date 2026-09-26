@@ -219,7 +219,7 @@ void updateLiveLightSwipe(Activity& activity, ActivityManager& activityManager, 
   const int target = SwipeAdjustment::targetValue(state.initialValue, sign > 0, amount);
   const int current = brightness ? Frontlight.brightness() : Frontlight.warmth();
   const int difference = sign * (target - current);
-  if (difference != 0 || (brightness && amount > 0 && !Frontlight.isOn()))
+  if (difference != 0 || (brightness && amount != 0 && !Frontlight.isOn()))
     applyConfiguredSwipeAction(activity, activityManager, state.action, difference, false);
   if (brightness && amount == 0 && Frontlight.isOn() != state.initialOn) {
     Frontlight.setOn(state.initialOn);
@@ -380,9 +380,10 @@ bool applyEdgeSlideAction(Activity& activity, MappedInputManager& mappedInput, A
       break;
   }
   if (state.active) {
-    const int amount = state.direction == static_cast<int>(progress.direction)
-                           ? SwipeAdjustment::edgeAmount(progress.distance, mappedInput.getRenderer().getScreenHeight())
-                           : 0;
+    // Track the finger in both directions: reversing past the touch-down
+    // point moves the value past where it started instead of stopping there.
+    const int amount = SwipeAdjustment::signedEdgeAmount(state.movementSign * progress.deltaY,
+                                                         mappedInput.getRenderer().getScreenHeight());
     updateLiveLightSwipe(activity, activityManager, state, amount);
     if (progress.finished) {
       mappedInput.suppressCurrentTouchContact();
@@ -397,6 +398,10 @@ bool applyEdgeSlideAction(Activity& activity, MappedInputManager& mappedInput, A
     state.active = true;
     state.action = action;
     state.direction = static_cast<int>(progress.direction);
+    state.movementSign = progress.direction == MappedInputManager::EdgeSlide::LeftUp ||
+                                 progress.direction == MappedInputManager::EdgeSlide::RightUp
+                             ? -1
+                             : 1;
     state.initialOn = Frontlight.isOn();
     state.initialValue = action == CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS ||
                                  action == CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_BRIGHTNESS

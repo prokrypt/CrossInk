@@ -27,6 +27,13 @@ inline int edgeAmount(const int distance, const int axisSize) {
   return 1 + (std::min(distance, maximumDistance) - minimumDistance) * 99 / (2 * travel);
 }
 
+// Live edge slides keep tracking the finger after it reverses: displacement is
+// signed along the slide's starting direction, so moving back past the
+// touch-down point adjusts the other way on the same edgeAmount() scale.
+inline int signedEdgeAmount(const int displacement, const int axisSize) {
+  return displacement < 0 ? -edgeAmount(-displacement, axisSize) : edgeAmount(displacement, axisSize);
+}
+
 inline int targetValue(const int initialValue, const bool increase, const int adjustment) {
   return std::clamp(initialValue + (increase ? adjustment : -adjustment), 0, 100);
 }
