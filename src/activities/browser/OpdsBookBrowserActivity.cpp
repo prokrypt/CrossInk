@@ -10,12 +10,15 @@
 #include <OpdsStream.h>
 #include <WiFi.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <utility>
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "OpdsPageCache.h"
+#include "OpdsPagePrefetcher.h"
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -42,6 +45,14 @@ constexpr fui::ActionId ACTION_SEARCH = 2;
 constexpr fui::ActionId ACTION_CANCEL = 3;
 constexpr int DOWNLOAD_PROGRESS_STEP_PERCENT = 5;
 constexpr unsigned long DOWNLOAD_PROGRESS_MIN_UPDATE_MS = 5000;
+// PSRAM page cache (S3 only): whole raw feed responses, so Back/Prev and the
+// prefetched next page parse locally instead of refetching.
+constexpr size_t OPDS_PAGE_CACHE_MAX_BYTES = 2 * 1024 * 1024;
+constexpr size_t OPDS_PAGE_MAX_BYTES = 512 * 1024;
+// Prefetch runs a second TLS session's worth of internal RAM (task stack +
+// wolfSSL); skip it when the internal heap is tighter than this.
+constexpr size_t OPDS_PREFETCH_MIN_INTERNAL_FREE = 96 * 1024;
+constexpr size_t OPDS_PREFETCH_MIN_INTERNAL_BLOCK = 48 * 1024;
 
 std::string buildBookFilenameBase(const OpdsEntry& book, const OpdsFilenameFormat format) {
   if (book.author.empty()) return book.title;
@@ -101,6 +112,13 @@ void OpdsBookBrowserActivity::onEnter() {
     return;
   }
 
+  if (psramHeapAvailable()) {
+    const size_t budget = std::min(OPDS_PAGE_CACHE_MAX_BYTES, byteHeapSnapshot(MemoryPool::Psram).free / 4);
+    pageCache = makeUniqueNoThrow<OpdsPageCache>(budget);
+    if (pageCache) prefetcher = makeUniqueNoThrow<OpdsPagePrefetcher>();
+    LOG_DBG("OPDS", "Page cache %s (budget %zu bytes)", pageCache ? "on" : "off", budget);
+  }
+
 #ifdef SIMULATOR
   // Use deterministic catalog data so the UI can be exercised without WiFi or an OPDS server.
   fetchFeed(currentPath);
@@ -111,6 +129,10 @@ void OpdsBookBrowserActivity::onEnter() {
 
 void OpdsBookBrowserActivity::onExit() {
   Activity::onExit();
+  // Joins the background download before Wi-Fi goes down and before the
+  // cache it would hand its page to is freed.
+  prefetcher.reset();
+  pageCache.reset();
   clearEntries();
   entries.reset();
   navigationHistory.clear();
@@ -532,28 +554,17 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
 
   clearEntries();
   const std::string url = UrlUtils::buildUrl(server.url, path);
-  // Keep the normalized server URL alive for the synchronous fetch so
-  // HttpDownloader can scope Basic auth even for legacy scheme-less entries.
-  const std::string authorizationOrigin = UrlUtils::ensureProtocol(server.url);
-  LOG_DBG("OPDS", "Fetching: %s", url.c_str());
   OpdsParser parser(entries.get(), MAX_OPDS_FEED_ENTRIES);
-  {
-    OpdsParserStream stream{parser};
-    HttpDownloader::DownloadOptions downloadOptions;
-    downloadOptions.transport = HttpDownloader::Transport::WOLFSSL;
-    downloadOptions.authorizationOrigin = authorizationOrigin;
-    const auto result = HttpDownloader::streamUrl(
-        url, [&stream](const uint8_t* data, const size_t len) { return stream.write(data, len) == len; }, nullptr,
-        server.username, server.password, std::move(downloadOptions));
-    if (result != HttpDownloader::OK) {
-      state = BrowserState::ERROR;
-      errorMessage = tr(STR_FETCH_FEED_FAILED);
-      requestUpdate();
-      return;
-    }
+  if (!loadFeed(url, parser)) {
+    state = BrowserState::ERROR;
+    errorMessage = tr(STR_FETCH_FEED_FAILED);
+    requestUpdate();
+    return;
   }
 
   if (!parser) {
+    // Never keep bytes that do not parse; a retry must go back to the server.
+    if (pageCache) pageCache->erase(url);
     state = BrowserState::ERROR;
     errorMessage = parser.getErrorReason() == OpdsParserError::BUFFER_MEMORY ? tr(STR_OPDS_FEED_BUFFER_MEMORY_ERROR)
                                                                              : tr(STR_PARSE_FEED_FAILED);
@@ -593,6 +604,82 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   state = entryCount == 0 ? BrowserState::ERROR : BrowserState::BROWSING;
   if (entryCount == 0) errorMessage = tr(STR_NO_ENTRIES);
   requestUpdate();
+
+  if (!nextUrl.empty()) startNextPagePrefetch(nextUrl);
+}
+
+bool OpdsBookBrowserActivity::loadFeed(const std::string& url, OpdsParser& parser) {
+  // A foreground request never overlaps the background one: finish the
+  // prefetch when it is this very page, otherwise cancel it. Either way a
+  // completed page lands in the cache.
+  if (prefetcher) {
+    if (prefetcher->running() && prefetcher->url() != url) prefetcher->cancel();
+    prefetcher->join();
+    prefetcher->harvestInto(*pageCache);
+  }
+
+  if (pageCache) {
+    if (const OpdsPageBuffer* cached = pageCache->find(url)) {
+      LOG_DBG("OPDS", "Cached: %s (%zu bytes)", url.c_str(), cached->size());
+      parser.parse(cached->data(), cached->size());
+      return true;
+    }
+  }
+
+  // Keep the normalized server URL alive for the synchronous fetch so
+  // HttpDownloader can scope Basic auth even for legacy scheme-less entries.
+  const std::string authorizationOrigin = UrlUtils::ensureProtocol(server.url);
+  LOG_DBG("OPDS", "Fetching: %s", url.c_str());
+  // Tee the response into PSRAM so this page is cached before the user moves
+  // on; the parser still consumes it as it streams.
+  OpdsPageBuffer page(MemoryPool::Psram, OPDS_PAGE_MAX_BYTES);
+  const bool cachePage = pageCache != nullptr;
+  {
+    OpdsParserStream stream{parser};
+    HttpDownloader::DownloadOptions downloadOptions;
+    downloadOptions.transport = HttpDownloader::Transport::WOLFSSL;
+    downloadOptions.authorizationOrigin = authorizationOrigin;
+    const auto result = HttpDownloader::streamUrl(
+        url,
+        [&stream, &page, cachePage](const uint8_t* data, const size_t len) {
+          if (cachePage) page.append(data, len);  // overflow only skips caching
+          return stream.write(data, len) == len;
+        },
+        nullptr, server.username, server.password, std::move(downloadOptions));
+    if (result != HttpDownloader::OK) return false;
+  }
+
+  if (cachePage && parser && !page.failed()) pageCache->store(url, std::move(page));
+  return true;
+}
+
+void OpdsBookBrowserActivity::startNextPagePrefetch(const std::string& nextHref) {
+  if (!prefetcher) return;
+  // Same resolution navigateToEntry() and fetchFeed() apply, so the cache key
+  // matches when the user selects the Next page row.
+  const std::string nextPath = UrlUtils::buildUrl(UrlUtils::buildUrl(server.url, currentPath), nextHref);
+  const std::string nextFeedUrl = UrlUtils::buildUrl(server.url, nextPath);
+  if (pageCache->contains(nextFeedUrl)) return;
+
+  const ByteHeapSnapshot internal = byteHeapSnapshot(MemoryPool::Internal);
+  if (internal.free < OPDS_PREFETCH_MIN_INTERNAL_FREE || internal.largest < OPDS_PREFETCH_MIN_INTERNAL_BLOCK) {
+    LOG_DBG("OPDS", "Prefetch skipped: internal free=%zu largest=%zu", internal.free, internal.largest);
+    return;
+  }
+
+  OpdsPagePrefetcher::Request request;
+  request.url = nextFeedUrl;
+  request.username = server.username;
+  request.password = server.password;
+  request.authorizationOrigin = UrlUtils::ensureProtocol(server.url);
+  prefetcher->start(std::move(request), OPDS_PAGE_MAX_BYTES);
+}
+
+void OpdsBookBrowserActivity::stopPrefetch() {
+  if (!prefetcher) return;
+  prefetcher->cancel();
+  prefetcher->join();
+  prefetcher->harvestInto(*pageCache);
 }
 
 bool OpdsBookBrowserActivity::ensureEntryBuffer() {
@@ -656,6 +743,9 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   requestUpdate(true);
   return;
 #endif
+
+  // The book download must not share the network with a page prefetch.
+  stopPrefetch();
 
   // Build full download URL relative to the current feed, not the root server URL
   const std::string feedUrl = UrlUtils::buildUrl(server.url, currentPath);

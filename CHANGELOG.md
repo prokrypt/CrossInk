@@ -12,6 +12,7 @@
 - A new **Extend Mirror** sleep screen cover mode fills those same margins by reflecting the cover's edge content instead of repeating a single edge pixel.
 - TTF font support on ESP32-S3 devices. Whole-point sizes from 8pt to 22pt will be automatically available.
 - The OPDS browser shows how many books a category holds, in parentheses next to its arrow, when the catalog provides a count (a `thr:count` link attribute or a "12713 books" summary). Folder titles that start with a 📁 emoji show as "/name" instead, since the device fonts have no folder emoji.
+- On devices with PSRAM (Sticky, X4 Pro), the OPDS browser downloads the next page of a catalog in the background while you browse, and keeps pages you have visited in memory, so Next page, Previous page and Back open without waiting on the server.
 
 ### Changed
 
