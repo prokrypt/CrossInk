@@ -89,7 +89,8 @@ bool LibraryActivity::rebuildIndex(const bool showScanning, const bool force) {
   index.close();
   const bool useMetadata = SETTINGS.libraryUseMetadata != 0;
   const uint32_t generation = Storage.libraryContentGeneration();
-  if (!force && Storage.libraryScanCurrent() && index.open(library::libraryIndexPath()) && (index.header().metadataEnabled != 0) == useMetadata) {
+  if (!force && Storage.libraryScanCurrent() && index.open(library::libraryIndexPath()) &&
+      (index.header().metadataEnabled != 0) == useMetadata) {
     LOG_DBG("LIB", "Card unchanged since last scan; reusing index");
     scanFailed = false;
     resolveRecents();
@@ -631,8 +632,8 @@ void LibraryActivity::fillRow(const int row, CachedRow& out) {
       (SETTINGS.libraryShowSeries || SETTINGS.libraryShowGenre)) {
     library::ClixRecord record{};
     const uint16_t ordinal = ordinalForRow(row);
-    if (ordinal != UINT16_MAX && index.readRecord(ordinal, record) &&
-        index.readSeries(record, seriesScratch) && index.readGenre(record, genreScratch) &&
+    if (ordinal != UINT16_MAX && index.readRecord(ordinal, record) && index.readSeries(record, seriesScratch) &&
+        index.readGenre(record, genreScratch) &&
         ((SETTINGS.libraryShowSeries && !seriesScratch.empty()) ||
          (SETTINGS.libraryShowGenre && !genreScratch.empty()))) {
       subtitleScratch = rowScratch.author;
