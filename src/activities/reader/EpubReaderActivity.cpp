@@ -1507,6 +1507,11 @@ EpubReaderActivity::BookReaderSettingsData EpubReaderActivity::readBookReaderSet
   return loadBookReaderSettingsFile(epub.getCachePath());
 }
 
+bool EpubReaderActivity::bookUsesLandscapeLayout(const Epub& epub) {
+  const auto orientation = ReaderUtils::toRendererOrientation(readBookReaderSettings(epub).readerSettings.orientation);
+  return orientation == GfxRenderer::LandscapeClockwise || orientation == GfxRenderer::LandscapeCounterClockwise;
+}
+
 uint8_t EpubReaderActivity::loadBookRenderMode(const std::string& filePath) {
   Epub epub(filePath, "/.crosspoint");
   epub.setupCacheDir();
