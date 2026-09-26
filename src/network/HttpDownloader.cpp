@@ -72,6 +72,11 @@ class ProgressNotifier {
   void setTotal(const size_t total) { total_ = total; }
 
   void notify(size_t downloaded, bool force) {
+    // Known gap: with no Content-Length (chunked or close-delimited bodies)
+    // total_ stays 0 and callers never hear about progress, so the OPDS
+    // download screen sits at 0% until the transfer ends. Cancel still works
+    // through shouldCancel. If a server ever does this for books, report
+    // bytes on a timer with total 0 and draw an indeterminate bar.
     if (!progress_ || !*progress_ || total_ == 0) return;
 
     const uint32_t now = millis();
