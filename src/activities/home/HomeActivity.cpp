@@ -884,6 +884,8 @@ void HomeActivity::onEnter() {
   carouselFramesReady = false;
   carouselWarmupPending = isCarouselTheme;
   inputSinceEnter = false;
+  enteredAtMs = millis();
+  bootWorkSettled.store(false, std::memory_order_relaxed);
   libraryPrewarmHandOff = false;
 
   const auto& metrics = UITheme::getInstance().getMetrics();
@@ -1522,7 +1524,15 @@ void HomeActivity::onUserInput() {
 bool HomeActivity::preventAutoSleep() { return LibraryPrewarm::working(); }
 
 void HomeActivity::loop() {
-  LibraryPrewarm::tick(!inputSinceEnter || millis() - lastInputMs >= LIBRARY_PREWARM_RESUME_MS);
+  {
+    // Home's boot renders read covers, stats and carousel frames from the card;
+    // a walk running alongside halves that bandwidth and stalls the loop.
+    const unsigned long now = millis();
+    const bool settled =
+        bootWorkSettled.load(std::memory_order_acquire) || now - enteredAtMs >= LIBRARY_PREWARM_SETTLE_FALLBACK_MS;
+    const bool quiet = !inputSinceEnter || now - lastInputMs >= LIBRARY_PREWARM_RESUME_MS;
+    LibraryPrewarm::tick(settled && quiet && !homeRendering.load(std::memory_order_acquire));
+  }
 
   if (quickActionsLongPowerHandled) {
     if (!mappedInput.isPressed(MappedInputManager::Button::Power)) {
@@ -2130,6 +2140,20 @@ bool HomeActivity::handleShortcutAction(const CrossPointSettings::SHORT_PWRBTN a
 }
 
 void HomeActivity::render(RenderLock&&) {
+  // Hold the background Library walk off the card for the whole frame, and
+  // report once Home's first frames and cover work are finished.
+  homeRendering.store(true, std::memory_order_release);
+  LibraryPrewarm::pause();
+  struct RenderScope {
+    HomeActivity& home;
+    ~RenderScope() {
+      if (home.firstRenderDone && home.recentsLoaded && !home.carouselWarmupPending) {
+        home.bootWorkSettled.store(true, std::memory_order_release);
+      }
+      home.homeRendering.store(false, std::memory_order_release);
+    }
+  } renderScope{*this};
+
   if (quickActionsPopup.processRender(renderer, mappedInput)) {
     return;
   }

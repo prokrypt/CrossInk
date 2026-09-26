@@ -15,7 +15,8 @@ namespace LibraryPrewarm {
 // directory entry.
 void tick(bool idle);
 
-// Pauses a running build straight away (Home saw input).
+// Pauses a running build at its next directory entry (Home saw input or is
+// rendering). Safe to call from any task.
 void pause();
 
 // Home is leaving. With `handOffToLibrary` the build keeps running for the
