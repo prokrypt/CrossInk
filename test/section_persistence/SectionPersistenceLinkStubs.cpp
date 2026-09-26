@@ -20,6 +20,8 @@ int Epub::getTocIndexForSpineIndex(int) const { return -1; }
 bool Epub::readItemContentsToStream(const std::string&, Print&, size_t, bool) const { return false; }
 
 bool CssParser::loadFromCache() { return false; }
+size_t CssParser::SvHash::operator()(std::string_view sv) const noexcept { return std::hash<std::string_view>{}(sv); }
+size_t CssParser::SvHash::operator()(const std::string& s) const noexcept { return operator()(std::string_view(s)); }
 
 void Hyphenator::setPreferredLanguage(const std::string&) {}
 
