@@ -112,6 +112,18 @@ void HalPowerManager::endDisplayBusyWait() {
 #endif
 }
 
+void HalPowerManager::beginDisplayRefreshHold() {
+#if CONFIG_PM_ENABLE
+  if (displayPmLock != nullptr) esp_pm_lock_acquire(displayPmLock);
+#endif
+}
+
+void HalPowerManager::endDisplayRefreshHold() {
+#if CONFIG_PM_ENABLE
+  if (displayPmLock != nullptr) esp_pm_lock_release(displayPmLock);
+#endif
+}
+
 void HalPowerManager::setUsbDriveActive(bool active) {
 #if CONFIG_PM_ENABLE
   if (usbDrivePmLock == nullptr || usbDrivePmLockHeld == active) return;

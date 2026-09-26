@@ -477,6 +477,8 @@ void ActivityManager::renderTaskLoop() {
       taskEXIT_CRITICAL(&renderStateMux);
       // A waiter expects the frame to be visible when it wakes, so its render
       // keeps the blocking refresh.
+      // Always false on boards without PSRAM, where deferred refresh is off.
+      // cppcheck-suppress knownConditionTrueFalse
       deferredRender = !waiterPending && allowsDeferredRefresh(*currentActivity);
       renderer.setDeferFastRefresh(deferredRender);
       currentActivity->render(std::move(lock));
@@ -500,7 +502,7 @@ void ActivityManager::renderTaskLoop() {
     // call finishes this refresh before sending the next frame.
     if (deferredRender && renderer.isRefreshPending()) {
       if (!displayPmHeld) {
-        powerManager.beginDisplayBusyWait();  // no light sleep mid-waveform
+        powerManager.beginDisplayRefreshHold();  // no light sleep mid-waveform
         displayPmHeld = true;
       }
       lock.unlock();
@@ -510,6 +512,8 @@ void ActivityManager::renderTaskLoop() {
           break;
         }
         RenderLock finishLock;
+        // The refresh can complete while this task waits for the notification.
+        // cppcheck-suppress knownConditionTrueFalse
         if (!renderer.isRefreshPending()) break;
         if (!renderer.isRefreshBusy()) {
           renderer.waitRefreshComplete();
@@ -520,7 +524,7 @@ void ActivityManager::renderTaskLoop() {
     // Other renders finish any refresh left pending here with their own display
     // calls, and readers manage the refreshes they start themselves.
     if (displayPmHeld && (!deferredRender || !renderer.isRefreshPending())) {
-      powerManager.endDisplayBusyWait();
+      powerManager.endDisplayRefreshHold();
       displayPmHeld = false;
     }
   }
