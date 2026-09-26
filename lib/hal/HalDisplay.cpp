@@ -73,6 +73,7 @@ EInkDisplay::RefreshMode convertRefreshMode(HalDisplay::RefreshMode mode) {
 }
 
 void HalDisplay::displayBuffer(HalDisplay::RefreshMode mode, bool turnOffScreen) {
+  lastRefreshBw = true;
   HalSpiBus::Lock spiLock;
 
   if (gpio.deviceIsX3() && mode == RefreshMode::HALF_REFRESH) {
@@ -88,6 +89,7 @@ void HalDisplay::setInverted(bool inverted) {
 }
 
 void HalDisplay::displayBufferAsync(HalDisplay::RefreshMode mode) {
+  lastRefreshBw = true;
   if (gpio.deviceIsX3() && mode == RefreshMode::HALF_REFRESH) {
     einkDisplay.requestResync(1);
   }
@@ -98,6 +100,7 @@ void HalDisplay::displayBufferAsync(HalDisplay::RefreshMode mode) {
 void HalDisplay::waitRefreshComplete() { einkDisplay.waitRefreshComplete(); }
 
 void HalDisplay::displayBufferDeferred(HalDisplay::RefreshMode mode) {
+  lastRefreshBw = true;
   HalSpiBus::Lock spiLock;
   einkDisplay.displayBufferAsync(convertRefreshMode(mode));
 }
@@ -115,12 +118,14 @@ HalDisplay::GrayscaleCapabilities HalDisplay::grayscaleCapabilities(GrayscaleMod
 bool HalDisplay::supportsAsyncGrayscaleBase() const { return grayscaleCapabilities().asyncBase; }
 
 bool HalDisplay::displayGrayscaleBase(GrayscaleMode mode, RefreshMode fallback, bool turnOffScreen) {
+  lastRefreshBw = false;
   HalSpiBus::Lock spiLock;
   if (gpio.deviceIsX3() && fallback == HALF_REFRESH) einkDisplay.requestResync(1);
   return einkDisplay.displayGrayscaleBase(mode, convertRefreshMode(fallback), turnOffScreen);
 }
 
 void HalDisplay::refreshDisplay(HalDisplay::RefreshMode mode, bool turnOffScreen) {
+  lastRefreshBw = true;
   HalSpiBus::Lock spiLock;
 
   if (gpio.deviceIsX3() && mode == RefreshMode::HALF_REFRESH) {
@@ -148,6 +153,7 @@ void HalDisplay::copyGrayscaleBuffers(const uint8_t* lsbBuffer, const uint8_t* m
 }
 
 void HalDisplay::displayGrayscaleBase(RefreshMode fallback, bool turnOffScreen) {
+  lastRefreshBw = false;
   // X3: a HALF or FULL fallback means the caller wants a clean base (e.g. the
   // sleep cover, a full-screen swap from arbitrary prior content). Without
   // this, the X3 grayscale base takes its gentle differential happy path and
@@ -174,11 +180,13 @@ void HalDisplay::copyGrayscaleMsbBuffers(const uint8_t* msbBuffer) { einkDisplay
 void HalDisplay::cleanupGrayscaleBuffers(const uint8_t* bwBuffer) { einkDisplay.cleanupGrayscaleBuffers(bwBuffer); }
 
 void HalDisplay::displayGrayBuffer(bool turnOffScreen) {
+  lastRefreshBw = false;
   HalSpiBus::Lock spiLock;
   einkDisplay.displayGrayBuffer(turnOffScreen);
 }
 
 void HalDisplay::writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* rows, uint16_t yStart, uint16_t numRows) {
+  lastRefreshBw = false;
   HalSpiBus::Lock spiLock;
   einkDisplay.writeGrayscalePlaneStrip(lsbPlane ? EInkDisplay::GRAY_PLANE_LSB : EInkDisplay::GRAY_PLANE_MSB, rows,
                                        yStart, numRows);
@@ -193,6 +201,7 @@ bool HalDisplay::shouldSkipImageBlanking() const {
 }
 
 bool HalDisplay::displayGrayscaleBaseAsync(HalDisplay::RefreshMode fallback) {
+  lastRefreshBw = false;
   HalSpiBus::Lock spiLock;
   return einkDisplay.displayGrayscaleBaseAsync(convertRefreshMode(fallback));
 }
