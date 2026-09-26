@@ -55,6 +55,18 @@ Response:
 | `device` | string | `"X3"` or `"X4"` hardware detection |
 | `serial` | string | Device serial number from eFuse, or `"Not found"` when unavailable |
 
+### `POST /api/exit`
+
+Leaves File Transfer mode, exactly like pressing Back on the device: the web
+server stops and the device returns to where File Transfer was opened from.
+
+```bash
+curl -X POST http://crosspoint.local/api/exit
+```
+
+Responses have no body. Returns `204` once the exit is queued, or `409` while
+a WebSocket upload is still in progress.
+
 ## File Management
 
 ### `GET /api/files`

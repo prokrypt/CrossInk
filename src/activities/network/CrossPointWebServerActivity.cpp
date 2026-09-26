@@ -485,7 +485,8 @@ void CrossPointWebServerActivity::renderHeader() const {
 
 bool CrossPointWebServerActivity::exitRequested() const {
   return TouchHeaderBackButton::wasTapped(mappedInput, renderer) ||
-         mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasHomeGesture();
+         mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasHomeGesture() ||
+         (webServer && webServer->consumeExitRequest());
 }
 
 void CrossPointWebServerActivity::renderServerRunning() const {

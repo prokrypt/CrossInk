@@ -366,6 +366,7 @@ void CrossPointWebServer::begin() {
   server->on("/logo.png", HTTP_GET, [this] { handleLogo(); });
 
   server->on("/api/status", HTTP_GET, [this] { handleStatus(); });
+  server->on("/api/exit", HTTP_POST, [this] { handleExit(); });
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
   server->on("/download", HTTP_GET, [this] { handleDownload(); });
 
@@ -604,6 +605,18 @@ void CrossPointWebServer::handleNotFound() const {
   String message = "404 Not Found\n\n";
   message += "URI: " + server->uri() + "\n";
   server->send(404, "text/plain", message);
+}
+
+void CrossPointWebServer::handleExit() {
+  // Status code only, no body: 204 on success.
+  // Refuse while a WebSocket upload is still streaming; leaving would abort it.
+  if (wsUploadInProgress) {
+    server->send(409);
+    return;
+  }
+  LOG_DBG("WEB", "Exit requested via /api/exit");
+  server->send(204);
+  exitRequestPending = true;
 }
 
 void CrossPointWebServer::handleStatus() const {
