@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- In the OPDS browser, Back (the header button, the back swipe or the Back button) now goes up to the catalog you came from instead of stepping back through each Next/Previous page you visited.
 - Edge slides, two-finger swipes and header taps work reliably on the File Transfer screen while the web server is running.
 - Saved clipping lists now show a scrollbar when more clippings are available below the visible rows.
 - EPUB Safe Mode no longer pins inherited fonts and page layout as personal book settings.

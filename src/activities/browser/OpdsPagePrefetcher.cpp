@@ -88,12 +88,12 @@ void OpdsPagePrefetcher::run() {
   // OK means the whole body arrived; a cancel that lands after that keeps it.
   succeeded = result == HttpDownloader::OK && !page.failed() && !page.empty();
   if (!succeeded) {
-    LOG_DBG("OPDS", "Prefetch %s (result=%d, overflow=%d)",
+    LOG_INF("OPDS", "Prefetch %s (result=%d, overflow=%d)",
             cancelRequested.load(std::memory_order_acquire) ? "cancelled" : "failed", static_cast<int>(result),
             page.failed() ? 1 : 0);
     page.reset();
   } else {
-    LOG_DBG("OPDS", "Prefetch done: %zu bytes", page.size());
+    LOG_INF("OPDS", "Prefetch done: %zu bytes", page.size());
   }
 }
 
