@@ -9,6 +9,7 @@
 #include <Memory.h>
 #include <OpdsStream.h>
 #include <WiFi.h>
+#include <ZipFile.h>
 
 #include <utility>
 
@@ -670,34 +671,39 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
         mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       cancelRequested = true;
     }
-    return cancelRequested;
+    // Route touch in the same poll that latched it. This runs before every
+    // read; a tap left for the much rarer progress callback could be cleared
+    // by the next update() first. A Cancel tap sets cancelDownload.
+    if (uiReady) {
+      const fui::InputSnapshot snap = touchSnapshotFrom(mappedInput);
+      if (snap.touchPressed || snap.touchReleased) app.route(snap);
+    }
+    return cancelRequested || cancelDownload;
   };
   HttpDownloader::DownloadOptions downloadOptions;
   downloadOptions.shouldCancel = pollCancel;
   downloadOptions.bufferSize = OPDS_DOWNLOAD_BUFFER_SIZE;
   downloadOptions.transport = HttpDownloader::Transport::WOLFSSL;
   downloadOptions.authorizationOrigin = authorizationOrigin;
+  downloadOptions.stageAsPart = true;
+  downloadOptions.checkFreeSpace = true;
+  // A response with no Content-Length can end early and still look complete;
+  // a truncated EPUB has no central directory to find container.xml in.
+  downloadOptions.validate = [](const std::string& path) {
+    ZipFile zip(path);
+    size_t size = 0;
+    return zip.getInflatedFileSize("META-INF/container.xml", &size);
+  };
   int lastRenderedPercent = -1;
   unsigned long lastProgressUpdateMs = 0;
 
   const auto result = HttpDownloader::downloadToFile(
       downloadUrl, filename,
-      [this, &cancelRequested, &lastRenderedPercent, &lastProgressUpdateMs](const size_t downloaded,
-                                                                            const size_t total) {
+      [this, &lastRenderedPercent, &lastProgressUpdateMs](const size_t downloaded, const size_t total) {
+        // Input (Back, home gesture, the Cancel button) is polled by
+        // pollCancel before every read; this callback only drives the screen.
         downloadProgress = downloaded;
         downloadTotal = total;
-        // The activity loop is blocked for the whole download; pump input here
-        // so the Cancel button or a Back press can abort mid-transfer.
-        mappedInput.update();
-        if (mappedInput.wasHomeGesture()) {
-          goHomeAfterCancel = true;
-          cancelRequested = true;
-        }
-        if (mappedInput.wasReleased(MappedInputManager::Button::Back)) cancelRequested = true;
-        if (uiReady) {
-          const fui::InputSnapshot snap = touchSnapshotFrom(mappedInput);
-          if (snap.touchPressed || snap.touchReleased) app.route(snap);
-        }
         const int percent = total > 0 ? static_cast<int>(static_cast<uint64_t>(downloaded) * 100 / total) : 0;
         const unsigned long now = millis();
         if (percent >= 100 || lastRenderedPercent < 0 ||
@@ -723,7 +729,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
     state = BrowserState::BROWSING;
   } else {
     state = BrowserState::ERROR;
-    errorMessage = tr(STR_DOWNLOAD_FAILED);
+    errorMessage = result == HttpDownloader::INSUFFICIENT_SPACE ? tr(STR_SD_CARD_FULL) : tr(STR_DOWNLOAD_FAILED);
   }
   requestUpdate();
 }

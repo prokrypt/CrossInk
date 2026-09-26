@@ -29,5 +29,37 @@ def patch_user_settings(path: Path) -> None:
     print(f"Patched wolfSSL settings: {path.relative_to(PROJECT_DIR)}")
 
 
+# wolfSSL grows its input buffer to fit each record larger than the static
+# buffer, then frees it again as soon as the record is consumed. A server that
+# ignores max_fragment_length sends 16 KB records, so a large download on a
+# PSRAM-less C3 needs a fresh ~17 KB contiguous block for every record, and
+# fails with MEMORY_E once fragmentation leaves none. Keep the grown buffer
+# until the connection is freed: one allocation per connection, failing at the
+# first record rather than megabytes into the transfer.
+SHRINK_MARKER = "/* CrossInk: keep a grown input buffer until the connection is freed */"
+SHRINK_ORIGINAL = """    if (!forcedFree && (usedLength > STATIC_BUFFER_LEN ||
+            ssl->buffers.clearOutputBuffer.length > 0))
+        return;
+"""
+SHRINK_PATCHED = f"""    {SHRINK_MARKER}
+    if (!forcedFree)
+        return;
+"""
+
+
+def patch_input_buffer_shrink(path: Path) -> None:
+    text = path.read_text()
+    if SHRINK_MARKER in text:
+        return
+    if SHRINK_ORIGINAL not in text:
+        print(f"WARNING: wolfSSL ShrinkInputBuffer not found; input buffer patch skipped: {path.relative_to(PROJECT_DIR)}")
+        return
+    path.write_text(text.replace(SHRINK_ORIGINAL, SHRINK_PATCHED, 1))
+    print(f"Patched wolfSSL input buffer: {path.relative_to(PROJECT_DIR)}")
+
+
 for settings in PROJECT_DIR.glob(".pio/libdeps/*/Arduino-wolfSSL/src/user_settings.h"):
     patch_user_settings(settings)
+
+for internal in PROJECT_DIR.glob(".pio/libdeps/*/Arduino-wolfSSL/src/src/internal.c"):
+    patch_input_buffer_shrink(internal)
