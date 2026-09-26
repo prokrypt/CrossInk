@@ -1,24 +1,14 @@
 #pragma once
 
 #include <HalDisplay.h>
-#include <HalGPIO.h>
 
 #include <cstdint>
 
-// Network workflows replace large parts of the screen as their state changes.
-// X4-class panels use a single-pass clean refresh for those transitions;
-// repeated renders within the same state (progress, signal strength, selection)
-// remain fast.
+// Network workflows (WiFi, File Transfer, OTA, clock and KOReader sync) refresh with
+// the fast waveform on every state change, like the rest of the menus. The
+// state argument is kept so callers can share the helper without carrying
+// transition bookkeeping in each activity.
 class ScreenTransitionRefresh {
  public:
-  HalDisplay::RefreshMode modeFor(const uint8_t screenState) {
-    const bool screenChanged = !hasRendered_ || screenState != lastScreenState_;
-    lastScreenState_ = screenState;
-    hasRendered_ = true;
-    return screenChanged && !gpio.deviceIsX3() ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH;
-  }
-
- private:
-  uint8_t lastScreenState_ = 0;
-  bool hasRendered_ = false;
+  HalDisplay::RefreshMode modeFor(const uint8_t /*screenState*/) const { return HalDisplay::FAST_REFRESH; }
 };

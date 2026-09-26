@@ -3,16 +3,6 @@
 #include "src/util/EdgeSlide.h"
 #include "src/util/SwipeAdjustment.h"
 
-TEST(EdgeSlide, ScalesLightAdjustmentWithSwipeLength) {
-  EXPECT_EQ(SwipeAdjustment::amount(59, 800), 0);
-  EXPECT_EQ(SwipeAdjustment::amount(60, 800), 5);
-  EXPECT_GT(SwipeAdjustment::amount(400, 800), SwipeAdjustment::amount(100, 800));
-  EXPECT_EQ(SwipeAdjustment::amount(799, 800), 100);
-  EXPECT_EQ(SwipeAdjustment::amount(1200, 800), 100);
-  EXPECT_EQ(SwipeAdjustment::amount(60, 480), 5);
-  EXPECT_EQ(SwipeAdjustment::amount(479, 480), 100);
-}
-
 TEST(EdgeSlide, EdgeLightAdjustmentStepsByOnePoint) {
   EXPECT_EQ(SwipeAdjustment::edgeAmount(59, 800), 0);
   EXPECT_EQ(SwipeAdjustment::edgeAmount(60, 800), 1);
@@ -47,4 +37,25 @@ TEST(EdgeSlide, LeavesCenterAndDiagonalGesturesAlone) {
   EXPECT_EQ(EdgeSlide::directionFor(10, 500, 35, 450, 480, 800), EdgeSlide::Direction::None);
   EXPECT_EQ(EdgeSlide::directionFor(10, 400, 60, 340, 800, 480), EdgeSlide::Direction::None);
   EXPECT_EQ(EdgeSlide::directionFor(790, 500, 720, 350, 800, 800), EdgeSlide::Direction::None);
+}
+
+TEST(EdgeSlide, LiveAmountHasNoDeadZoneAfterRecognition) {
+  // Matches edgeAmount() from the recognition point onward.
+  EXPECT_EQ(SwipeAdjustment::liveAmount(60, 800), 1);
+  EXPECT_EQ(SwipeAdjustment::liveAmount(75, 800), 2);
+  EXPECT_EQ(SwipeAdjustment::liveAmount(429, 800), 25);
+  EXPECT_EQ(SwipeAdjustment::liveAmount(1200, 800), 50);
+  // Below the recognition point it keeps stepping by one point instead of holding.
+  EXPECT_EQ(SwipeAdjustment::liveAmount(59, 800), 0);
+  EXPECT_EQ(SwipeAdjustment::liveAmount(46, 800), 0);
+  EXPECT_EQ(SwipeAdjustment::liveAmount(45, 800), -1);
+  EXPECT_LT(SwipeAdjustment::liveAmount(0, 800), 0);
+  for (int d = -500; d < 800; ++d) {
+    const int step = SwipeAdjustment::liveAmount(d + 1, 800) - SwipeAdjustment::liveAmount(d, 800);
+    EXPECT_TRUE(step == 0 || step == 1) << d;
+  }
+  // Start at 20%, slide down to decrease, then back up past the touch-down point.
+  EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::liveAmount(429, 800)), 0);
+  EXPECT_GT(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::liveAmount(0, 800)), 20);
+  EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::liveAmount(-429, 800)), 52);
 }

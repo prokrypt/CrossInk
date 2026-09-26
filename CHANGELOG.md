@@ -11,12 +11,15 @@
 - A new **Extend** sleep screen cover mode fills the empty margins around a cover that doesn't match the screen's aspect ratio by repeating its edge pixels instead of leaving them blank.
 - A new **Extend Mirror** sleep screen cover mode fills those same margins by reflecting the cover's edge content instead of repeating a single edge pixel.
 - TTF font support on ESP32-S3 devices. Whole-point sizes from 8pt to 22pt will be automatically available.
+- The OPDS browser shows how many books a category holds, in parentheses next to its arrow, when the catalog provides a count (a `thr:count` link attribute or a "12713 books" summary). Folder titles that start with a 📁 emoji show as "/name" instead, since the device fonts have no folder emoji.
+- On devices with PSRAM (Sticky, X4 Pro), the OPDS browser downloads the next page of a catalog in the background while you browse, and keeps pages you have visited in memory, so Next page, Previous page and Back open without waiting on the server.
 
 ### Changed
 
 - USB Drive mounts faster: the next part of the SD card is read in the background while the current data is sent over USB, cutting about 5 seconds from mounting a FAT32 card on the X4 Pro.
 - Brightness and warmth gestures now respond while you drag, with longer swipes making larger adjustments.
-- Edge-slide brightness and warmth gestures now adjust in 1% steps instead of 5% and are half as sensitive: a full-length slide along the screen edge changes the level by about 50%.
+- Edge-slide and two-finger brightness and warmth gestures now adjust in 1% steps instead of 5% and are half as sensitive: a full-length slide changes the level by about 50%.
+- Reversing a brightness or warmth drag partway now moves the level past where it started instead of stopping there.
 - Idle power saving now puts the device into automatic light sleep between loop ticks instead of only lowering the CPU clock, cutting idle draw while leaving buttons, touch, and the frontlight working exactly as before. The screen, Wi-Fi transfers, and USB sessions stay awake while they are in use.
 - GitHub workflows and release documentation links now follow the `development` default branch.
 - Idle power saving now engages after 1 second instead of 3, and battery level is polled every 6 seconds instead of every 1.5, trading slightly less frequent battery updates for lower average power draw.
@@ -27,6 +30,8 @@
 
 - Chapters left partly indexed by v1.6.0 now re-index after updating instead of resuming with pages laid out under the old rules.
 - Edge slides, two-finger swipes and header taps work reliably on the File Transfer screen while the web server is running.
+- Dragging or scrolling on a list or menu no longer highlights or selects the row under your finger, and a short drag no longer opens it. Rows highlight once your finger rests on them briefly, so long-press still works.
+- Turning from an EPUB image page whose grayscale pass finished to another image page now runs a cleanup refresh, so the previous image no longer ghosts on the X4 Pro. Image pages skipped before their grayscale pass finishes no longer force a flash on the next page.
 - Saved clipping lists now show a scrollbar when more clippings are available below the visible rows.
 - EPUB Safe Mode no longer pins inherited fonts and page layout as personal book settings.
 - The X4 Pro Home button now steps back through dictionary lookup, chapter selection, and nested settings instead of jumping to Home.

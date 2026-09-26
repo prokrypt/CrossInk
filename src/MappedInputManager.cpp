@@ -140,6 +140,9 @@ size_t buttonIndex(MappedInputManager::Button button) { return static_cast<size_
 void MappedInputManager::update() const {
   gpio.update();
   expireReleaseSuppressions();
+#if CROSSINK_APP_CAP_TOUCH
+  updateSelectionTouchDown();
+#endif
 }
 
 bool MappedInputManager::wasPhysicallyReleased(const Button button) const {
@@ -321,6 +324,12 @@ bool MappedInputManager::wasScreenTapped(int& x, int& y) const {
       simulatorTouch.longPressFired = false;
       return false;
     }
+    // Mirror HalGPIO: a contact that moved past the stationary slop is a drag.
+    constexpr int SIMULATOR_TAP_SLOP_PX = 28;
+    if (std::abs(simulatorTouch.currentX - simulatorTouch.startX) > SIMULATOR_TAP_SLOP_PX ||
+        std::abs(simulatorTouch.currentY - simulatorTouch.startY) > SIMULATOR_TAP_SLOP_PX) {
+      return false;
+    }
     x = simulatorTouch.startX;
     y = simulatorTouch.startY;
     rememberTouchHeldTime();
@@ -390,6 +399,45 @@ bool MappedInputManager::wasScreenTouchDown(int& x, int& y) const {
   return true;
 }
 
+void MappedInputManager::updateSelectionTouchDown() const {
+  // Runs once per input frame so every reader in a frame sees the same edge.
+  selectPressThisFrame = false;
+  int x = 0;
+  int y = 0;
+  if (wasScreenTouchDown(x, y)) {
+    selectPressPending = true;
+    selectPressX = x;
+    selectPressY = y;
+  }
+  if (!selectPressPending) return;
+  // Released (a quick tap), suppressed, or moved: never highlight this contact.
+  if (!isScreenTouchHeld(x, y) || std::abs(x - selectPressX) > SELECT_PRESS_SLOP_PX ||
+      std::abs(y - selectPressY) > SELECT_PRESS_SLOP_PX) {
+    selectPressPending = false;
+    return;
+  }
+  unsigned long heldMs = 0;
+  if (!isScreenTouchTapCandidate(x, y, heldMs)) {
+    selectPressPending = false;
+    return;
+  }
+  if (heldMs < SELECT_PRESS_DELAY_MS) return;
+  selectPressPending = false;
+  selectPressThisFrame = true;
+}
+
+bool MappedInputManager::wasSelectionTouchDown(int& x, int& y) const {
+#ifdef SIMULATOR
+  // Scripted simulator contacts are instantaneous; keep their press edge.
+  return wasScreenTouchDown(x, y);
+#else
+  if (!selectPressThisFrame || !touchInputEnabled()) return false;
+  x = selectPressX;
+  y = selectPressY;
+  return true;
+#endif
+}
+
 bool MappedInputManager::isScreenTouchTapCandidate(int& x, int& y, unsigned long& heldMs) const {
   if (!touchInputEnabled()) return false;
 #ifdef SIMULATOR
@@ -436,7 +484,7 @@ bool MappedInputManager::wasRegistryTargetTapped(const uint8_t kind, int& id) co
 bool MappedInputManager::wasRegistryTargetTouchedDown(const uint8_t kind, int& id) const {
   int tx = 0;
   int ty = 0;
-  return wasScreenTouchDown(tx, ty) &&
+  return wasSelectionTouchDown(tx, ty) &&
          TouchRegistry::getInstance().hitTest(tx, ty, static_cast<TouchRegistry::Kind>(kind), id);
 }
 
@@ -514,7 +562,7 @@ bool MappedInputManager::wasListItemTouchedDown(int& index, const int itemCount,
                                                 const int listTop, const int listHeight, const bool hasSubtitle) const {
   int tx = 0;
   int ty = 0;
-  if (!wasScreenTouchDown(tx, ty)) return false;
+  if (!wasSelectionTouchDown(tx, ty)) return false;
   if (TouchRegistry::getInstance().hitTest(tx, ty, TouchRegistry::Item, index) && index >= 0 && index < itemCount) {
     return true;
   }
@@ -547,7 +595,7 @@ MappedInputManager::RowTouch MappedInputManager::rowTouch(int& row, const int to
   };
   int x = 0;
   int y = 0;
-  if (wasScreenTouchDown(x, y) && hit(x, y)) return RowTouch::Down;
+  if (wasSelectionTouchDown(x, y) && hit(x, y)) return RowTouch::Down;
   if (wasScreenTapped(x, y) && hit(x, y)) return RowTouch::Tap;
   return RowTouch::None;
 }
@@ -566,7 +614,7 @@ MappedInputManager::RowTouch MappedInputManager::colTouch(int& col, const int le
   };
   int x = 0;
   int y = 0;
-  if (wasScreenTouchDown(x, y) && hit(x, y)) return RowTouch::Down;
+  if (wasSelectionTouchDown(x, y) && hit(x, y)) return RowTouch::Down;
   if (wasScreenTapped(x, y) && hit(x, y)) return RowTouch::Tap;
   return RowTouch::None;
 }
@@ -611,6 +659,9 @@ bool MappedInputManager::wasSwipeWithPoints(SwipeDir& direction, int& startX, in
 
 bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
   progress = {};
+  // A slide that ends early (finger leaves the band, a second finger lands)
+  // reports the last held position so a live adjustment keeps its value.
+  progress.deltaY = edgeSlideLastY - edgeSlideStartY;
   if (!touchInputEnabled()) {
     progress.finished = edgeSlideSide != EdgeSlide::None;
     edgeSlideSide = EdgeSlide::None;
@@ -634,6 +685,7 @@ bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
     edgeSlideLastX = x;
     edgeSlideLastY = y;
     edgeSlideQualified = false;
+    progress.deltaY = 0;
   }
 
   if (edgeSlideSide == EdgeSlide::None) return false;
@@ -651,6 +703,7 @@ bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
     } else {
       edgeSlideLastX = x;
       edgeSlideLastY = y;
+      progress.deltaY = y - edgeSlideStartY;
       progress.direction = ::EdgeSlide::directionFor(edgeSlideStartX, edgeSlideStartY, x, y, width, height);
       edgeSlideQualified = progress.direction != EdgeSlide::None;
       if (edgeSlideQualified) progress.distance = std::abs(y - edgeSlideStartY);
@@ -681,6 +734,7 @@ bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
     edgeSlideSide = EdgeSlide::None;
     return true;
   }
+  progress.deltaY = y - edgeSlideStartY;
   progress.direction = ::EdgeSlide::directionFor(edgeSlideStartX, edgeSlideStartY, x, y, width, height);
   if (progress.direction != EdgeSlide::None) progress.distance = std::abs(y - edgeSlideStartY);
   edgeSlideSide = EdgeSlide::None;

@@ -14,7 +14,9 @@ namespace EpubGrayscale {
 bool runTiledGrayscalePass(GfxRenderer& renderer, const Page& page, const int fontId, const int marginLeft,
                            const int marginTop, const bool foregroundBlack, const bool needsTextGrayscale,
                            const bool needsImageGrayscale, uint8_t* scratch, const size_t scratchSize,
-                           const bool asyncRefreshPending, bool (*shouldCancel)(void*), void* cancelContext) {
+                           const bool asyncRefreshPending, bool (*shouldCancel)(void*), void* cancelContext,
+                           bool* grayscaleShown) {
+  if (grayscaleShown) *grayscaleShown = false;
   if ((!needsTextGrayscale && !needsImageGrayscale) || !renderer.supportsStripGrayscale()) {
     return false;
   }
@@ -92,6 +94,7 @@ bool runTiledGrayscalePass(GfxRenderer& renderer, const Page& page, const int fo
     if (cancelled()) return abortGrayscale();
     renderer.setRenderMode(GfxRenderer::BW);
     renderer.displayGrayBuffer();
+    if (grayscaleShown) *grayscaleShown = true;
     renderer.cleanupGrayscaleWithFrameBuffer();
     return true;
   }
@@ -138,6 +141,7 @@ bool runTiledGrayscalePass(GfxRenderer& renderer, const Page& page, const int fo
 
   renderer.setRenderMode(GfxRenderer::BW);
   renderer.displayGrayBuffer();
+  if (grayscaleShown) *grayscaleShown = true;
   renderer.cleanupGrayscaleWithFrameBuffer();
   return true;
 }

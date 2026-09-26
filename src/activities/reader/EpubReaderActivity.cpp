@@ -976,6 +976,23 @@ struct ReaderViewportLayout {
   uint16_t viewportHeight;
 };
 
+// Everything a drawn-ahead page frame depends on besides the page itself.
+uint32_t prerenderLayoutKey(const GfxRenderer& renderer, const ReaderViewportLayout& layout, const int fontId) {
+  uint32_t key = 2166136261u;
+  const auto mix = [&key](const uint32_t value) { key = (key ^ value) * 16777619u; };
+  mix(static_cast<uint32_t>(renderer.getOrientation()));
+  mix(static_cast<uint32_t>(layout.marginTop));
+  mix(static_cast<uint32_t>(layout.marginRight));
+  mix(static_cast<uint32_t>(layout.marginBottom));
+  mix(static_cast<uint32_t>(layout.marginLeft));
+  mix(layout.viewportWidth);
+  mix(layout.viewportHeight);
+  mix(static_cast<uint32_t>(fontId));
+  mix(ReaderUtils::readerForegroundBlack() ? 1u : 0u);
+  mix(static_cast<uint32_t>(ReaderUtils::readerBackgroundColor()));
+  return key;
+}
+
 ReaderViewportLayout computeReaderViewportLayout(GfxRenderer& renderer, const bool automaticPageTurnActive,
                                                  const bool showFootnoteHeader = false) {
   ReaderViewportLayout layout{};
@@ -2720,6 +2737,84 @@ void EpubReaderActivity::idlePrewarmNextPage() {
   }
   RenderLock lock(*this);
   prewarmNextPageFonts("Idle");
+  prerenderNextPage();
+}
+
+void EpubReaderActivity::clearPrerenderedPage() {
+  prerenderedReady = false;
+  prerenderedPage.reset();
+  prerenderAttemptSection = nullptr;
+}
+
+std::unique_ptr<Page> EpubReaderActivity::takePrerenderedPage(const uint32_t layoutKey) {
+  if (!prerenderedReady) return nullptr;
+  prerenderedReady = false;
+  auto page = std::move(prerenderedPage);
+  const bool matches = section && !activeFootnotePreview && prerenderedSection == section.get() &&
+                       prerenderedSpine == currentSpineIndex && prerenderedPageIndex == section->currentPage &&
+                       prerenderedKey == layoutKey;
+  return matches ? std::move(page) : nullptr;
+}
+
+// Draws the next page into a PSRAM frame while the reader is idle, so the turn
+// only copies it in and adds the status bar. The live framebuffer is saved and
+// restored around the draw, and nothing is sent to the panel.
+void EpubReaderActivity::prerenderNextPage() {
+  if (!section || section->isBuilding() || prerenderedReady || !psramHeapAvailable() || !renderer.hasFrameBuffer()) {
+    return;
+  }
+  const int nextPage = section->currentPage + 1;
+  if (nextPage >= static_cast<int>(section->pageCount)) return;
+  if (prerenderAttemptSection == section.get() && prerenderAttemptSpine == currentSpineIndex &&
+      prerenderAttemptPage == nextPage) {
+    return;
+  }
+  prerenderAttemptSection = section.get();
+  prerenderAttemptSpine = currentSpineIndex;
+  prerenderAttemptPage = nextPage;
+
+  auto page = section->loadPage(nextPage);
+  if (!page || page->hasImages()) return;
+
+  const size_t frameBytes = renderer.getBufferSize();
+  if (!prerenderFrameBuffer) prerenderFrameBuffer = makePsramByteBufferNoThrow(frameBytes);
+  if (!prerenderSavedFrame) prerenderSavedFrame = makePsramByteBufferNoThrow(frameBytes);
+  if (!prerenderFrameBuffer || !prerenderSavedFrame) return;
+
+  const unsigned long startedAt = millis();
+  const int fontId = activeSectionFontId != 0 ? activeSectionFontId : SETTINGS.getReaderFontId();
+  const ReaderViewportLayout layout = computeReaderViewportLayout(renderer, automaticPageTurnActive);
+  const bool foregroundBlack = ReaderUtils::readerForegroundBlack();
+
+  // Same glyph preparation as renderContents(): scan, prewarm, then draw.
+  std::optional<FontCacheManager::PrewarmScope> scope;
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    scope.emplace(*fcm, FontCacheManager::PreparationPolicy::Normal);
+    page->renderText(renderer, fontId, layout.marginLeft, layout.marginTop);
+    if (!scope->endScanAndPrewarm()) return;
+  }
+
+  uint8_t* frame = renderer.getFrameBuffer();
+  memcpy(prerenderSavedFrame.get(), frame, frameBytes);
+  renderer.clearScreen(ReaderUtils::readerBackgroundColor());
+  page->render(renderer, fontId, layout.marginLeft, layout.marginTop, foregroundBlack);
+  // Clipping ranges are resolved against section->currentPage.
+  const int visiblePage = section->currentPage;
+  section->currentPage = nextPage;
+  drawClippingHighlights(*page, fontId, layout.marginTop, layout.marginLeft);
+  section->currentPage = visiblePage;
+  drawPublisherPageMarkers(renderer, *page, layout.marginTop, renderer.getScreenHeight() - layout.marginBottom,
+                           foregroundBlack);
+  memcpy(prerenderFrameBuffer.get(), frame, frameBytes);
+  memcpy(frame, prerenderSavedFrame.get(), frameBytes);
+
+  prerenderedPage = std::move(page);
+  prerenderedSection = section.get();
+  prerenderedSpine = currentSpineIndex;
+  prerenderedPageIndex = nextPage;
+  prerenderedKey = prerenderLayoutKey(renderer, layout, fontId);
+  prerenderedReady = true;
+  LOG_DBG("ERS", "Prerendered spine=%d page=%d in %lums", currentSpineIndex, nextPage, millis() - startedAt);
 }
 
 // Scans the next page's text so its SD-font glyphs are resident before the turn.
@@ -6500,7 +6595,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   {
     // Unified page read: the in-progress build's in-RAM table if it has reached the page,
     // otherwise the on-disk file (finalized section, or a partial from a previous session).
-    auto p = section->loadPage(section->currentPage);
+    const int turnFontId = activeSectionFontId != 0 ? activeSectionFontId : SETTINGS.getReaderFontId();
+    auto p = takePrerenderedPage(prerenderLayoutKey(renderer, layout, turnFontId));
+    const bool prerendered = p != nullptr;
+    if (!p) p = section->loadPage(section->currentPage);
     if (!p) {
       pageLoadRetryCount++;
       if (pageLoadRetryCount <= MAX_PAGE_LOAD_RETRIES) {
@@ -6536,7 +6634,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
     const int renderFontId = activeSectionFontId != 0 ? activeSectionFontId : SETTINGS.getReaderFontId();
     if (!renderContents(std::move(p), renderFontId, layout.marginTop, layout.marginRight, layout.marginBottom,
-                        layout.marginLeft, /*updatePanel=*/true)) {
+                        layout.marginLeft, /*updatePanel=*/true, prerendered)) {
       currentPageFootnotes.clear();
 #if CROSSINK_APP_CAP_TOUCH
       currentPageFootnoteTouchTargets.fill({});
@@ -7058,7 +7156,11 @@ void EpubReaderActivity::prepareCurrentSectionForRelayout() {
 
 bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fontId, const int orientedMarginTop,
                                         const int orientedMarginRight, const int orientedMarginBottom,
-                                        const int orientedMarginLeft, const bool updatePanel) {
+                                        const int orientedMarginLeft, const bool updatePanel,
+                                        const bool usePrerenderedFrame) {
+  // A drawn-ahead frame serves at most this render; any other render may
+  // change what the next page should look like.
+  clearPrerenderedPage();
 #if CROSSINK_APP_CAP_TOUCH
   if (mappedInput.hasTouchHardware()) {
     if (!touchReaderPreviewAllocationAttempted) {
@@ -7198,7 +7300,12 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       needsImageGrayscale = false;
     }
   }
-  composePageBuffer();
+  if (usePrerenderedFrame) {
+    // Drawn by prerenderNextPage() with the same composition (no images).
+    memcpy(renderer.getFrameBuffer(), prerenderFrameBuffer.get(), renderer.getBufferSize());
+  } else {
+    composePageBuffer();
+  }
   renderStatusBar();
   if (pendingBookmarkFeedback) {
     const char* msg = tr(STR_BOOKMARK_ADDED);
@@ -7264,21 +7371,35 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
                                      pagesUntilFullRefresh > 1 && renderer.supportsDeferredGrayscaleBase() &&
                                      allocateDeferredGrayscalePlanes(renderer, deferredLsbPlane, deferredMsbPlane);
   bool baseRefreshPending = false;
+  // Completed image gray planes leave charge in the image region that a plain
+  // fast diff on the next page can't clear, so text or a new image there
+  // ghosts (#2190). Force the next page onto the HALF ghost-cleanup path.
+  const auto markGrayscaleShown = [&]() {
+    if (needsImageGrayscale) {
+      pagesUntilFullRefresh = 1;
+    }
+  };
   if (pageHasImages && !deferImageLoading) {
     // Keep the legacy blank/base sequence unless the controller can transition
     // directly to the complete image base.
     int16_t imgX, imgY, imgW, imgH;
     if (page->getImageBoundingBox(imgX, imgY, imgW, imgH)) {
       const bool directImageBase = renderer.shouldSkipImageBlanking();
+      // A countdown at or below one means a cleanup is due: the previous
+      // image page finished its grayscale pass and left gray residue (#2190),
+      // or the refresh cadence ran out. Run the strong cleanup here instead of
+      // fading straight from that residue to the new image.
+      const bool cleanBase = cleanImageBasePending || pagesUntilFullRefresh <= 1;
       // UC8179's base waveform transitions directly from the displayed page.
       // Keep blanking for other controllers and for a pending strong cleanup.
-      const bool blankImage = !directImageBase || cleanImageBasePending;
+      const bool blankImage = !directImageBase || cleanBase;
       if (blankImage) {
         renderer.fillRect(imgX + orientedMarginLeft, imgY + orientedMarginTop, imgW, imgH, false);
       }
-      if (cleanImageBasePending) {
+      if (cleanBase) {
         renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);
         cleanImageBasePending = false;
+        pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
       }
       if (!directImageBase) {
         renderer.displayBuffer(HalDisplay::FAST_REFRESH);
@@ -7293,14 +7414,12 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
     } else {
       renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);
+      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
     }
-    // The image's own page is handled above and doesn't count toward the full
-    // refresh cadence. But the grayscale pass below leaves gray charge in the
-    // image region that a plain fast diff on the *next* page can't clear, so
-    // text there ghosts gray (#2190). Force the next ordinary page onto the
-    // HALF ghost-cleanup path, which drives every pixel to its target
-    // regardless of residue.
-    pagesUntilFullRefresh = 1;
+    // The image's own page doesn't count toward the full refresh cadence. The
+    // cleanup for its gray residue is scheduled only once the grayscale pass
+    // below reaches the panel (markGrayscaleShown), so quickly skipped image
+    // pages stay flash-free.
   } else if (needsAnyGrayscale) {
     if (pagesUntilFullRefresh <= 1) {
       // Cleanup turns still need the stronger HALF pass, but X3 grayscale
@@ -7362,11 +7481,15 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   if (needsAnyGrayscale) {
     ensureGrayscaleStripScratch();
   }
+  bool tiledGrayscaleShown = false;
   if (EpubGrayscale::runTiledGrayscalePass(
           renderer, *page, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack, needsTextGrayscale,
           needsImageGrayscale, grayscaleStripScratch.get(), grayscaleStripScratchSize, overlapRefresh,
           [](void* context) { return static_cast<EpubReaderActivity*>(context)->pendingManualPageTurns.hasPending(); },
-          this)) {
+          this, &tiledGrayscaleShown)) {
+    if (tiledGrayscaleShown) {
+      markGrayscaleShown();
+    }
     return true;
   }
 
@@ -7424,6 +7547,7 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       return true;
     }
     renderer.displayGrayBuffer();
+    markGrayscaleShown();
     renderer.setRenderMode(GfxRenderer::BW);
     // restore the bw data
     renderer.restoreBwBuffer();

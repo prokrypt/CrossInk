@@ -219,7 +219,7 @@ void updateLiveLightSwipe(Activity& activity, ActivityManager& activityManager, 
   const int target = SwipeAdjustment::targetValue(state.initialValue, sign > 0, amount);
   const int current = brightness ? Frontlight.brightness() : Frontlight.warmth();
   const int difference = sign * (target - current);
-  if (difference != 0 || (brightness && amount > 0 && !Frontlight.isOn()))
+  if (difference != 0 || (brightness && amount != 0 && !Frontlight.isOn()))
     applyConfiguredSwipeAction(activity, activityManager, state.action, difference, false);
   if (brightness && amount == 0 && Frontlight.isOn() != state.initialOn) {
     Frontlight.setOn(state.initialOn);
@@ -335,7 +335,7 @@ bool applyLiveTwoFingerLightSwipe(Activity& activity, MappedInputManager& mapped
 
   const int displacement = state.movementSign * (state.vertical ? centerY - state.startY : centerX - state.startX);
   const int axisSize = state.vertical ? renderer.getScreenHeight() : renderer.getScreenWidth();
-  updateLiveLightSwipe(activity, activityManager, state, SwipeAdjustment::amount(std::max(0, displacement), axisSize));
+  updateLiveLightSwipe(activity, activityManager, state, SwipeAdjustment::liveAmount(displacement, axisSize));
   return true;
 }
 #endif
@@ -354,7 +354,7 @@ bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInp
   const int distance =
       vertical ? std::abs(completed.endY - completed.startY) : std::abs(completed.endX - completed.startX);
   const int axisSize = vertical ? renderer.getScreenHeight() : renderer.getScreenWidth();
-  return applyConfiguredSwipeAction(activity, activityManager, action, SwipeAdjustment::amount(distance, axisSize));
+  return applyConfiguredSwipeAction(activity, activityManager, action, SwipeAdjustment::edgeAmount(distance, axisSize));
 }
 
 #if CROSSINK_APP_CAP_TOUCH
@@ -380,9 +380,10 @@ bool applyEdgeSlideAction(Activity& activity, MappedInputManager& mappedInput, A
       break;
   }
   if (state.active) {
-    const int amount = state.direction == static_cast<int>(progress.direction)
-                           ? SwipeAdjustment::edgeAmount(progress.distance, mappedInput.getRenderer().getScreenHeight())
-                           : 0;
+    // Track the finger in both directions: reversing through the touch-down
+    // point keeps moving the value instead of holding at the starting value.
+    const int amount =
+        SwipeAdjustment::liveAmount(state.movementSign * progress.deltaY, mappedInput.getRenderer().getScreenHeight());
     updateLiveLightSwipe(activity, activityManager, state, amount);
     if (progress.finished) {
       mappedInput.suppressCurrentTouchContact();
@@ -397,6 +398,10 @@ bool applyEdgeSlideAction(Activity& activity, MappedInputManager& mappedInput, A
     state.active = true;
     state.action = action;
     state.direction = static_cast<int>(progress.direction);
+    state.movementSign = progress.direction == MappedInputManager::EdgeSlide::LeftUp ||
+                                 progress.direction == MappedInputManager::EdgeSlide::RightUp
+                             ? -1
+                             : 1;
     state.initialOn = Frontlight.isOn();
     state.initialValue = action == CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS ||
                                  action == CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_BRIGHTNESS

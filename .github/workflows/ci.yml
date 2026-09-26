@@ -132,7 +132,7 @@ jobs:
       - name: Build ${{ matrix.environment }} firmware
         run: |
           set -euo pipefail
-          pio run -j1 -e ${{ matrix.environment }} | tee pio-${{ matrix.environment }}.log
+          pio run -j4 -e ${{ matrix.environment }} | tee pio-${{ matrix.environment }}.log
 
       - name: Extract firmware stats
         run: |

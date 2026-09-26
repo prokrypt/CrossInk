@@ -1,6 +1,7 @@
 #pragma once
 #include <Epub.h>
 #include <Epub/FootnoteEntry.h>
+#include <Epub/Page.h>
 #include <Epub/Section.h>
 #include <Memory.h>
 #include <freertos/FreeRTOS.h>
@@ -160,6 +161,19 @@ class EpubReaderActivity final : public Activity {
   int idlePrewarmSpine = -1;
   int idlePrewarmPage = -1;
   int idlePrewarmFontId = 0;
+  // Next page drawn ahead while idle, into PSRAM (S3). Used by at most the next
+  // page-turn render; every renderContents() call clears it.
+  HeapByteBuffer prerenderFrameBuffer;
+  HeapByteBuffer prerenderSavedFrame;
+  std::unique_ptr<Page> prerenderedPage;
+  const Section* prerenderedSection = nullptr;
+  uint32_t prerenderedKey = 0;
+  int prerenderedSpine = -1;
+  int prerenderedPageIndex = -1;
+  bool prerenderedReady = false;
+  const Section* prerenderAttemptSection = nullptr;
+  int prerenderAttemptSpine = -1;
+  int prerenderAttemptPage = -1;
   bool paceSampleWarmupPending = true;
   uint32_t sessionPaceSampleSeconds = 0;
   uint16_t sessionPaceSampleCount = 0;
@@ -315,7 +329,8 @@ class EpubReaderActivity final : public Activity {
   uint16_t preparedNextViewportHeight = 0;
 
   bool renderContents(std::unique_ptr<Page> page, int fontId, int orientedMarginTop, int orientedMarginRight,
-                      int orientedMarginBottom, int orientedMarginLeft, bool updatePanel);
+                      int orientedMarginBottom, int orientedMarginLeft, bool updatePanel,
+                      bool usePrerenderedFrame = false);
   bool ensureGrayscaleStripScratch();
   void releaseGrayscaleStripScratch(bool force = false);
   void drawClippingHighlights(const Page& page, int fontId, int orientedMarginTop, int orientedMarginLeft) const;
@@ -500,6 +515,9 @@ class EpubReaderActivity final : public Activity {
   }
   bool backgroundSectionBuildHasHeap();
   void idlePrewarmNextPage();
+  void prerenderNextPage();
+  void clearPrerenderedPage();
+  std::unique_ptr<Page> takePrerenderedPage(uint32_t layoutKey);
   void prewarmNextPageFonts(const char* when);
   bool skipLoopDelay() override {
     return sectionBuildWantsTick() && !backgroundBuildPausedForLowMemory &&
