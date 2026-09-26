@@ -90,7 +90,7 @@ class CrossPointWebServer {
   bool running = false;
   bool exitRequestPending = false;  // set by POST /api/exit, consumed by the activity
   std::string exitFlashPath;        // optional `flash` argument of POST /api/exit
-  bool apMode = false;  // true when running in AP mode, false for STA mode
+  bool apMode = false;              // true when running in AP mode, false for STA mode
   uint16_t port = 80;
   uint16_t wsPort = 81;  // WebSocket port
   NetworkUDP udp;

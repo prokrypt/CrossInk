@@ -1597,8 +1597,8 @@ void setup() {
     activityManager.goHome(HomeMenuItem::NONE, homeRefreshMode);
     // File Transfer exit with a firmware to flash (POST /api/exit?flash=...):
     // open the update flow over Home so cancelling lands back on Home.
-    const std::string pendingFirmware = snapshotTarget == SILENT_REBOOT_TARGET_HOME ? consumeSilentRestartFirmwareUpdate()
-                                                                                    : std::string();
+    const std::string pendingFirmware =
+        snapshotTarget == SILENT_REBOOT_TARGET_HOME ? consumeSilentRestartFirmwareUpdate() : std::string();
     if (!pendingFirmware.empty()) {
       LOG_INF("MAIN", "Opening firmware update for %s", pendingFirmware.c_str());
       activityManager.pushActivity(
