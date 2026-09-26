@@ -335,7 +335,7 @@ bool applyLiveTwoFingerLightSwipe(Activity& activity, MappedInputManager& mapped
 
   const int displacement = state.movementSign * (state.vertical ? centerY - state.startY : centerX - state.startX);
   const int axisSize = state.vertical ? renderer.getScreenHeight() : renderer.getScreenWidth();
-  updateLiveLightSwipe(activity, activityManager, state, SwipeAdjustment::signedAmount(displacement, axisSize));
+  updateLiveLightSwipe(activity, activityManager, state, SwipeAdjustment::signedEdgeAmount(displacement, axisSize));
   return true;
 }
 #endif
@@ -354,7 +354,8 @@ bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInp
   const int distance =
       vertical ? std::abs(completed.endY - completed.startY) : std::abs(completed.endX - completed.startX);
   const int axisSize = vertical ? renderer.getScreenHeight() : renderer.getScreenWidth();
-  return applyConfiguredSwipeAction(activity, activityManager, action, SwipeAdjustment::amount(distance, axisSize));
+  return applyConfiguredSwipeAction(activity, activityManager, action,
+                                    SwipeAdjustment::edgeAmount(distance, axisSize));
 }
 
 #if CROSSINK_APP_CAP_TOUCH

@@ -3,16 +3,6 @@
 #include "src/util/EdgeSlide.h"
 #include "src/util/SwipeAdjustment.h"
 
-TEST(EdgeSlide, ScalesLightAdjustmentWithSwipeLength) {
-  EXPECT_EQ(SwipeAdjustment::amount(59, 800), 0);
-  EXPECT_EQ(SwipeAdjustment::amount(60, 800), 5);
-  EXPECT_GT(SwipeAdjustment::amount(400, 800), SwipeAdjustment::amount(100, 800));
-  EXPECT_EQ(SwipeAdjustment::amount(799, 800), 100);
-  EXPECT_EQ(SwipeAdjustment::amount(1200, 800), 100);
-  EXPECT_EQ(SwipeAdjustment::amount(60, 480), 5);
-  EXPECT_EQ(SwipeAdjustment::amount(479, 480), 100);
-}
-
 TEST(EdgeSlide, EdgeLightAdjustmentStepsByOnePoint) {
   EXPECT_EQ(SwipeAdjustment::edgeAmount(59, 800), 0);
   EXPECT_EQ(SwipeAdjustment::edgeAmount(60, 800), 1);
@@ -57,12 +47,4 @@ TEST(EdgeSlide, SignedEdgeAmountTracksReversal) {
   // Start at 20%, slide down to decrease, then back up past the touch-down point.
   EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::signedEdgeAmount(429, 800)), 0);
   EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::signedEdgeAmount(-429, 800)), 45);
-}
-
-TEST(EdgeSlide, SignedAmountTracksTwoFingerReversal) {
-  EXPECT_EQ(SwipeAdjustment::signedAmount(0, 800), 0);
-  EXPECT_EQ(SwipeAdjustment::signedAmount(60, 800), 5);
-  EXPECT_EQ(SwipeAdjustment::signedAmount(-60, 800), -5);
-  EXPECT_EQ(SwipeAdjustment::signedAmount(-59, 800), 0);
-  EXPECT_EQ(SwipeAdjustment::targetValue(20, false, SwipeAdjustment::signedAmount(-799, 800)), 100);
 }
