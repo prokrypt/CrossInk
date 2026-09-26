@@ -8,9 +8,14 @@
 // 3f3c5fc42e794c021edb9832856ef98c2d2065b9 (MIT). Callers retain ownership
 // of their persistence format and explicitly flush pending state on exit.
 class ReaderProgressSaveDebouncer {
-  static constexpr uint8_t PAGE_CHANGE_INTERVAL = 10;
-  static constexpr unsigned long MAX_SAVE_INTERVAL_MS = 5UL * 60UL * 1000UL;
+ public:
+  // Leaving the reader and going to sleep always flush, so these only bound
+  // what a crash, reset or dead battery can lose: at most this many page turns
+  // or this much time since the last save.
+  static constexpr uint8_t PAGE_CHANGE_INTERVAL = 30;
+  static constexpr unsigned long MAX_SAVE_INTERVAL_MS = 15UL * 60UL * 1000UL;
 
+ private:
   uint32_t lastPositionKey_ = 0;
   uint32_t lastMetadataKey_ = 0;
   unsigned long lastPersistedAtMs_ = 0;
