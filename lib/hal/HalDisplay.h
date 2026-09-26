@@ -55,6 +55,15 @@ class HalDisplay {
   void displayBufferAsync(RefreshMode mode = RefreshMode::FAST_REFRESH);
   // Block until a pending deferred refresh completes (no-op when none is).
   void waitRefreshComplete();
+  // Non-blocking refresh for menus: starts the waveform and returns. A copy of
+  // the frame keeps the differential baseline, so the framebuffer may be
+  // redrawn at once. Every other display call finishes the refresh first.
+  // Night Mode, X3 and panels without deferral take the blocking path.
+  void displayBufferDeferred(RefreshMode mode = RefreshMode::FAST_REFRESH);
+  // True while a started refresh has not been finished with waitRefreshComplete().
+  bool isRefreshPending() const;
+  // True while that refresh's waveform is still running on the panel.
+  bool isRefreshBusy();
   // True when displayBufferAsync() genuinely overlaps (panel driver defers);
   // false where it falls back to a blocking refresh.
   bool supportsAsyncRefresh() const;
