@@ -10,6 +10,8 @@
 #include <OpdsStream.h>
 #include <WiFi.h>
 
+#include <array>
+#include <cstdio>
 #include <utility>
 
 #include "CrossPointSettings.h"
@@ -345,12 +347,23 @@ void OpdsBookBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
   // strings, freed on scope exit.
   std::vector<fui::ListItem> items;
   items.reserve(entryCount);
+  // Right-aligned "<count> >" for navigation entries whose feed advertises a
+  // book count; same lifetime as `items`.
+  using CountLabel = std::array<char, 16>;
+  std::vector<CountLabel> countLabels(entryCount);
   for (size_t i = 0; i < entryCount; ++i) {
     const auto& entry = entries[i];
     fui::ListItem item;
     item.label = entry.title.c_str();
     if (entry.type == OpdsEntryType::BOOK && !entry.author.empty()) item.subtitle = entry.author.c_str();
-    if (entry.type == OpdsEntryType::NAVIGATION) item.value = ">";
+    if (entry.type == OpdsEntryType::NAVIGATION) {
+      if (entry.count >= 0) {
+        snprintf(countLabels[i].data(), countLabels[i].size(), "%ld >", static_cast<long>(entry.count));
+        item.value = countLabels[i].data();
+      } else {
+        item.value = ">";
+      }
+    }
     item.actionValue = static_cast<int16_t>(items.size());
     items.push_back(item);
   }
