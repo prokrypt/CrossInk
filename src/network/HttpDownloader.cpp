@@ -523,8 +523,26 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
 
   FsFile file;
   bool fileOpen = false;
+  bool spaceChecked = false;
+  bool insufficientSpace = false;
   auto openOutputFile = [&]() {
     if (fileOpen) return true;
+    if (options.checkFreeSpace && !spaceChecked) {
+      spaceChecked = true;
+      // Some SD transports cannot report capacity; let the write fail instead.
+      const uint64_t totalBytes = Storage.totalBytes();
+      if (totalBytes > 0 && sink.total > sink.resumeOffset) {
+        const uint64_t usedBytes = Storage.usedBytes();
+        const uint64_t freeBytes = totalBytes > usedBytes ? totalBytes - usedBytes : 0;
+        const uint64_t neededBytes = sink.total - sink.resumeOffset;
+        if (freeBytes < neededBytes) {
+          LOG_ERR("HTTP", "Insufficient SD space: free=%llu required=%llu", static_cast<unsigned long long>(freeBytes),
+                  static_cast<unsigned long long>(neededBytes));
+          insufficientSpace = true;
+          return false;
+        }
+      }
+    }
     if (sink.resumeOffset > 0) {
       file = Storage.open(writePath.c_str(), O_WRONLY | O_APPEND);
     } else {
@@ -563,6 +581,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
     file.flush();
     file.close();
   }
+  if (insufficientSpace) result = INSUFFICIENT_SPACE;
 
   if (result != OK) {
     LOG_ERR("HTTP", "Transfer failed: error=%d downloaded=%zu expected=%zu preservePartial=%d resumePartial=%d",

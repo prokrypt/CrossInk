@@ -679,6 +679,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   downloadOptions.transport = HttpDownloader::Transport::WOLFSSL;
   downloadOptions.authorizationOrigin = authorizationOrigin;
   downloadOptions.stageAsPart = true;
+  downloadOptions.checkFreeSpace = true;
   // A response with no Content-Length can end early and still look complete;
   // a truncated EPUB has no central directory to find container.xml in.
   downloadOptions.validate = [](const std::string& path) {
@@ -732,7 +733,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
     state = BrowserState::BROWSING;
   } else {
     state = BrowserState::ERROR;
-    errorMessage = tr(STR_DOWNLOAD_FAILED);
+    errorMessage = result == HttpDownloader::INSUFFICIENT_SPACE ? tr(STR_SD_CARD_FULL) : tr(STR_DOWNLOAD_FAILED);
   }
   requestUpdate();
 }

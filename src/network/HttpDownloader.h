@@ -25,6 +25,7 @@ class HttpDownloader {
     HTTP_ERROR,
     FILE_ERROR,
     ABORTED,
+    INSUFFICIENT_SPACE,
   };
 
   enum class Transport {
@@ -59,6 +60,10 @@ class HttpDownloader {
     // before it replaces destPath). Returning false fails the download and
     // removes the file. Catches bodies cut short without a Content-Length.
     std::function<bool(const std::string& path)> validate;
+    // Once the response length is known, fail with INSUFFICIENT_SPACE before
+    // writing anything if the SD card cannot hold the file. The first check
+    // can scan the whole FAT, so leave it off for small files.
+    bool checkFreeSpace = false;
   };
 
   /**
