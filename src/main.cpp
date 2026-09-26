@@ -385,7 +385,7 @@ RTC_NOINIT_ATTR char silentFirmwareUpdatePath[MAX_SILENT_FIRMWARE_PATH];
 // state.json saves an SD write on every wake; power loss clears it, so a cold
 // boot shows the splash.
 RTC_NOINIT_ATTR uint32_t splashlessWakeMagic;
-constexpr uint32_t SPLASHLESS_WAKE_MAGIC = 0x534C5750;  // "SLWP"
+constexpr uint32_t SPLASHLESS_WAKE_MAGIC = 0x534C5750;         // "SLWP"
 constexpr uint32_t SILENT_FIRMWARE_UPDATE_MAGIC = 0x46574E55;  // "FWNU"
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
@@ -1483,8 +1483,7 @@ void setup() {
                           FsHelpers::hasBmpExtension(APP_STATE.favoriteBootImagePath) &&
                           Storage.exists(APP_STATE.favoriteBootImagePath.c_str());
   }
-  const bool skipSplashOnWake =
-      isSleepWake && splashlessWakeArmed && !hasBootScreenDirectory && !hasPinnedBootScreen;
+  const bool skipSplashOnWake = isSleepWake && splashlessWakeArmed && !hasBootScreenDirectory && !hasPinnedBootScreen;
   const BootResume resume = isNetworkResume    ? BootResume::Network
                             : isSilentReboot   ? BootResume::Silent
                             : skipSplashOnWake ? BootResume::SplashlessWake

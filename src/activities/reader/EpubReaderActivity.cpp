@@ -2310,8 +2310,7 @@ void EpubReaderActivity::onEnter() {
   // instead would leave reader mode and the bookmark/clipping stores unbalanced.
   captureGlobalReaderSettings();
   epub->setupCacheDir();
-  progressSaveDebouncer.setShadowed(
-      ReaderProgressShadow::bind(ReaderProgressShadow::Kind::Epub, epub->getCachePath()));
+  progressSaveDebouncer.setShadowed(ReaderProgressShadow::bind(ReaderProgressShadow::Kind::Epub, epub->getCachePath()));
   {
     GfxRenderer::FrameBufferLoan loan(renderer);
     epub->ensureOptimizerImageIndex();
