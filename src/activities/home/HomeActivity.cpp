@@ -432,6 +432,8 @@ void appendCarouselCoverStateToKey(std::string& key, const RecentBook& book) {
   const std::string cachePath = getRecentBookCachePath(book);
   if (!cachePath.empty()) {
     appendHashedFileStateToKey(key, cachePath + "/progress.bin");
+    // EPUB progress alternates between two slots; either can hold the latest save.
+    if (FsHelpers::hasEpubExtension(book.path)) appendHashedFileStateToKey(key, cachePath + "/progress.bin.bak");
     if (FsHelpers::hasEpubExtension(book.path) || FsHelpers::hasXtcExtension(book.path)) {
       appendHashedFileStateToKey(key, cachePath + "/stats_v5.bin");
     }

@@ -4,9 +4,13 @@
 #include <HalStorage.h>
 #include <Logging.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <string>
+
+#include "ProgressRecord.h"
+#include "util/InPlaceFileWrite.h"
 
 namespace EpubReaderUtils {
 
@@ -19,59 +23,69 @@ struct Progress {
   bool hasVisibleTextOffset = false;
 };
 
-inline bool readProgressFile(const char* moduleName, const std::string& path, Progress& progress) {
+inline Progress toProgress(const progress_record::Fields& fields) {
+  Progress progress;
+  progress.spineIndex = fields.spineIndex;
+  progress.pageNumber = fields.pageNumber == UINT16_MAX ? 0 : fields.pageNumber;
+  progress.pageCount = fields.hasPageCount ? fields.pageCount : 0;
+  progress.hasPageCount = fields.hasPageCount;
+  progress.visibleTextOffset = fields.hasVisibleTextOffset ? fields.visibleTextOffset : 0;
+  progress.hasVisibleTextOffset = fields.hasVisibleTextOffset;
+  return progress;
+}
+
+inline progress_record::Slot readProgressSlot(const char* moduleName, const std::string& path) {
+  progress_record::Slot slot;
   if (!Storage.exists(path.c_str())) {
-    return false;
+    return slot;
   }
 
   FsFile f;
   if (!Storage.openFileForRead(moduleName, path, f)) {
-    return false;
+    return slot;
   }
-
-  uint8_t data[10];
+  uint8_t data[progress_record::RECORD_BYTES];
+  const size_t fileSize = f.fileSize();
   const int dataSize = f.read(data, sizeof(data));
   f.close();
-  if (dataSize != 4 && dataSize != 6 && dataSize != 10) {
-    LOG_ERR(moduleName, "Progress file has unexpected size: %d", dataSize);
-    return false;
+  if (dataSize < 0 || static_cast<size_t>(dataSize) != std::min(fileSize, sizeof(data))) {
+    LOG_ERR(moduleName, "Short read of progress file %s", path.c_str());
+    return slot;
   }
-
-  progress.spineIndex = static_cast<int>(static_cast<uint16_t>(data[0]) | (static_cast<uint16_t>(data[1]) << 8));
-  progress.pageNumber = static_cast<int>(static_cast<uint16_t>(data[2]) | (static_cast<uint16_t>(data[3]) << 8));
-  if (progress.pageNumber == UINT16_MAX) {
-    progress.pageNumber = 0;
+  slot = progress_record::decode(data, fileSize);
+  if (slot.kind == progress_record::SlotKind::Invalid) {
+    LOG_ERR(moduleName, "Progress file %s is damaged or has unexpected size: %u", path.c_str(),
+            static_cast<unsigned>(fileSize));
   }
-  if (dataSize == 6 || dataSize == 10) {
-    progress.pageCount = static_cast<int>(static_cast<uint16_t>(data[4]) | (static_cast<uint16_t>(data[5]) << 8));
-    progress.hasPageCount = true;
-  } else {
-    progress.pageCount = 0;
-    progress.hasPageCount = false;
-  }
-  if (dataSize == 10) {
-    progress.visibleTextOffset = static_cast<uint32_t>(data[6]) | (static_cast<uint32_t>(data[7]) << 8) |
-                                 (static_cast<uint32_t>(data[8]) << 16) | (static_cast<uint32_t>(data[9]) << 24);
-    progress.hasVisibleTextOffset = true;
-  }
-  return true;
+  return slot;
 }
 
-inline bool loadProgress(const Epub& epub, Progress& progress, const char* moduleName = "ERS") {
-  const std::string progressPath = epub.getCachePath() + "/progress.bin";
-  if (readProgressFile(moduleName, progressPath, progress)) {
-    return true;
-  }
+inline std::string progressPrimaryPath(const std::string& cachePath) { return cachePath + "/progress.bin"; }
+inline std::string progressBackupPath(const std::string& cachePath) { return cachePath + "/progress.bin.bak"; }
 
-  const std::string backupPath = progressPath + ".bak";
-  if (readProgressFile(moduleName, backupPath, progress)) {
-    LOG_DBG("ERS", "Recovered progress from backup");
-    return true;
+// Reads the current position from the two progress slots of an EPUB cache directory.
+inline bool loadProgressFromCachePath(const char* moduleName, const std::string& cachePath, Progress& progress) {
+  const progress_record::Slot primary = readProgressSlot(moduleName, progressPrimaryPath(cachePath));
+  const progress_record::Slot backup = readProgressSlot(moduleName, progressBackupPath(cachePath));
+  switch (progress_record::newest(primary, backup)) {
+    case progress_record::PRIMARY:
+      progress = toProgress(primary.fields);
+      return true;
+    case progress_record::BACKUP:
+      progress = toProgress(backup.fields);
+      return true;
+    case progress_record::NONE:
+      break;
   }
   return false;
 }
 
-// Persists reader progress for an EPUB to its cache directory. Returns true on success.
+inline bool loadProgress(const Epub& epub, Progress& progress, const char* moduleName = "ERS") {
+  return loadProgressFromCachePath(moduleName, epub.getCachePath(), progress);
+}
+
+// Persists reader progress for an EPUB to its cache directory. Returns true on success,
+// including when the stored position already matches and nothing is written.
 inline bool saveProgress(const Epub& epub, int spineIndex, int pageNumber, int pageCount,
                          const std::optional<uint32_t> visibleTextOffset = std::nullopt) {
   if (spineIndex < 0 || spineIndex > 0xFFFF || pageNumber < 0 || pageNumber > 0xFFFF || pageCount < 0 ||
@@ -79,71 +93,33 @@ inline bool saveProgress(const Epub& epub, int spineIndex, int pageNumber, int p
     LOG_ERR("ERS", "Progress values out of range: spine=%d page=%d count=%d", spineIndex, pageNumber, pageCount);
     return false;
   }
-  const std::string progressPath = epub.getCachePath() + "/progress.bin";
-  const std::string tmpPath = progressPath + ".tmp";
-  const std::string backupPath = progressPath + ".bak";
+  progress_record::Fields fields;
+  fields.spineIndex = static_cast<uint16_t>(spineIndex);
+  fields.pageNumber = static_cast<uint16_t>(pageNumber);
+  fields.pageCount = static_cast<uint16_t>(pageCount);
+  fields.hasPageCount = true;
+  fields.hasVisibleTextOffset = visibleTextOffset.has_value();
+  fields.visibleTextOffset = visibleTextOffset.value_or(0);
 
-  if (Storage.exists(tmpPath.c_str()) && !Storage.remove(tmpPath.c_str())) {
-    LOG_ERR("ERS", "Could not remove stale progress temp file");
-    return false;
-  }
+  const std::string primaryPath = progressPrimaryPath(epub.getCachePath());
+  const std::string backupPath = progressBackupPath(epub.getCachePath());
+  const progress_record::Slot primary = readProgressSlot("ERS", primaryPath);
+  const progress_record::Slot backup = readProgressSlot("ERS", backupPath);
 
-  FsFile f;
-  if (!Storage.openFileForWrite("ERS", tmpPath, f)) {
-    LOG_ERR("ERS", "Could not open progress temp file for write!");
-    return false;
-  }
-  uint8_t data[10];
-  data[0] = spineIndex & 0xFF;
-  data[1] = (spineIndex >> 8) & 0xFF;
-  data[2] = pageNumber & 0xFF;
-  data[3] = (pageNumber >> 8) & 0xFF;
-  data[4] = pageCount & 0xFF;
-  data[5] = (pageCount >> 8) & 0xFF;
-  size_t dataSize = 6;
-  if (visibleTextOffset.has_value()) {
-    data[6] = *visibleTextOffset & 0xFF;
-    data[7] = (*visibleTextOffset >> 8) & 0xFF;
-    data[8] = (*visibleTextOffset >> 16) & 0xFF;
-    data[9] = (*visibleTextOffset >> 24) & 0xFF;
-    dataSize = sizeof(data);
-  }
-  const size_t written = f.write(data, dataSize);
-  if (written != dataSize) {
-    LOG_ERR("ERS", "Short write saving progress: %u/%u bytes", (unsigned)written, (unsigned)dataSize);
-    f.close();
-    Storage.remove(tmpPath.c_str());
-    return false;
-  }
-  f.flush();
-  if (!f.sync()) {
-    LOG_ERR("ERS", "Failed to sync progress temp file");
-    f.close();
-    Storage.remove(tmpPath.c_str());
-    return false;
-  }
-  if (!f.close()) {
-    LOG_ERR("ERS", "Failed to close progress temp file");
-    Storage.remove(tmpPath.c_str());
-    return false;
+  // Reader exit, sync screens and relayouts often re-save the position already on
+  // the card; two small reads are far cheaper than a write.
+  const progress_record::SlotIndex current = progress_record::newest(primary, backup);
+  if (current != progress_record::NONE &&
+      progress_record::sameFields(current == progress_record::PRIMARY ? primary.fields : backup.fields, fields)) {
+    return true;
   }
 
-  if (Storage.exists(backupPath.c_str()) && !Storage.remove(backupPath.c_str())) {
-    LOG_ERR("ERS", "Could not remove old progress backup");
-    Storage.remove(tmpPath.c_str());
-    return false;
-  }
-  if (Storage.exists(progressPath.c_str()) && !Storage.rename(progressPath.c_str(), backupPath.c_str())) {
-    LOG_ERR("ERS", "Could not rotate progress backup");
-    Storage.remove(tmpPath.c_str());
-    return false;
-  }
-  if (!Storage.rename(tmpPath.c_str(), progressPath.c_str())) {
-    LOG_ERR("ERS", "Could not replace progress file");
-    if (Storage.exists(backupPath.c_str()) && !Storage.exists(progressPath.c_str())) {
-      Storage.rename(backupPath.c_str(), progressPath.c_str());
-    }
-    Storage.remove(tmpPath.c_str());
+  uint8_t record[progress_record::RECORD_BYTES];
+  progress_record::encode(fields, progress_record::nextSeq(primary, backup), record);
+  const std::string& targetPath =
+      progress_record::target(primary, backup) == progress_record::PRIMARY ? primaryPath : backupPath;
+  if (!writeFileInPlace("ERS", targetPath.c_str(), record, sizeof(record))) {
+    LOG_ERR("ERS", "Could not save progress to %s", targetPath.c_str());
     return false;
   }
   return true;
