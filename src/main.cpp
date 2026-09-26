@@ -380,6 +380,7 @@ RTC_NOINIT_ATTR uint32_t silentReaderPageBuildPackedTarget;
 RTC_NOINIT_ATTR uint32_t silentReaderPageBuildFlags;
 RTC_NOINIT_ATTR uint32_t silentFirmwareUpdateMagic;
 RTC_NOINIT_ATTR char silentFirmwareUpdatePath[MAX_SILENT_FIRMWARE_PATH];
+RTC_NOINIT_ATTR uint32_t silentRebootFrontlight;
 // Armed by enterDeepSleep() and consumed at the next boot, so the power-button
 // wake right after a sleep can skip the splash. Keeping it in RTC rather than
 // state.json saves an SD write on every wake; power loss clears it, so a cold
@@ -387,6 +388,8 @@ RTC_NOINIT_ATTR char silentFirmwareUpdatePath[MAX_SILENT_FIRMWARE_PATH];
 RTC_NOINIT_ATTR uint32_t splashlessWakeMagic;
 constexpr uint32_t SPLASHLESS_WAKE_MAGIC = 0x534C5750;         // "SLWP"
 constexpr uint32_t SILENT_FIRMWARE_UPDATE_MAGIC = 0x46574E55;  // "FWNU"
+constexpr uint32_t SILENT_REBOOT_FRONTLIGHT_OFF = 0xC1EA1100;
+constexpr uint32_t SILENT_REBOOT_FRONTLIGHT_ON = 0xC1EA1101;
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
@@ -413,6 +416,9 @@ using BootResume = SleepWakePolicy::Resume;
 static bool deepSleepInProgress = false;
 
 static void restartWithSilentToken() {
+  // SETTINGS.frontlightOn only tracks explicit toggles; wake and schedule
+  // policy change the light without saving it, so hand the live state over.
+  silentRebootFrontlight = Frontlight.isOn() ? SILENT_REBOOT_FRONTLIGHT_ON : SILENT_REBOOT_FRONTLIGHT_OFF;
 #ifdef SIMULATOR
   SimulatorLifecycle::setSilentRebootToken(silentRebootMagic, silentRebootTarget, silentRebootPayload);
 #endif
@@ -1308,9 +1314,13 @@ void setup() {
   // and KOReader Auth after their Wi-Fi child completes. C3 retains the smaller
   // network stack to preserve internal RAM.
   const bool useReaderRenderStack = !isNetworkResume || FREEINK_MCU_S3;
+  const bool hasSilentRebootLight = isSilentReboot && (silentRebootFrontlight == SILENT_REBOOT_FRONTLIGHT_ON ||
+                                                       silentRebootFrontlight == SILENT_REBOOT_FRONTLIGHT_OFF);
+  const bool silentRebootLightOn = silentRebootFrontlight == SILENT_REBOOT_FRONTLIGHT_ON;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
   silentRebootPayload = 0;
+  silentRebootFrontlight = 0;
   if (!isSilentReboot || snapshotTarget != SILENT_REBOOT_TARGET_READER) {
     clearSilentRestartReaderPageBuild();
   }
@@ -1430,8 +1440,11 @@ void setup() {
   ButtonNavigator::setMappedInputManager(mappedInputManager);
   logBootHeap("boot state ready");
   // Silent restarts are invisible recovery steps, so they always retain the
-  // current light state rather than applying wake or schedule policy.
-  const bool wasLightOnBeforeSleep = SETTINGS.frontlightOn != 0;
+  // current light state rather than applying wake or schedule policy. The
+  // saved flag can be stale (e.g. schedule kept the light off this wake), so
+  // prefer the live state the previous run handed over in RTC memory.
+  const bool wasLightOnBeforeSleep =
+      FrontlightSchedule::lightStateBeforeStart(hasSilentRebootLight, silentRebootLightOn, SETTINGS.frontlightOn != 0);
   const bool preserveLightAcrossRestart = FrontlightSchedule::shouldPreserveLightAcrossRestart(isSilentReboot);
   bool restoreLightOn = FrontlightSchedule::shouldRestoreLightOnStart(
       preserveLightAcrossRestart, SETTINGS.frontlightRestoreOnWake != 0, wasLightOnBeforeSleep);
@@ -1624,15 +1637,29 @@ void setup() {
     // X4's HALF refresh is the same single-pass clean transition already used
     // by network screens. Keep X3's existing full refresh behavior unchanged.
     const auto homeRefreshMode = gpio.deviceIsX3() ? HalDisplay::FULL_REFRESH : HalDisplay::HALF_REFRESH;
-    activityManager.goHome(HomeMenuItem::NONE, homeRefreshMode);
     // File Transfer exit with a firmware to flash (POST /api/exit?flash=...):
-    // open the update flow over Home so cancelling lands back on Home.
+    // open the update flow directly instead of over a live Home, whose
+    // background Library walk would otherwise keep competing for the SD card
+    // while the image is validated and flashed. Finishing pops an empty
+    // stack, which lands on Home.
     const std::string pendingFirmware =
         snapshotTarget == SILENT_REBOOT_TARGET_HOME ? consumeSilentRestartFirmwareUpdate() : std::string();
-    if (!pendingFirmware.empty()) {
+    auto firmwareUpdate = pendingFirmware.empty() ? nullptr
+                                                  : makeUniqueNoThrow<SdFirmwareUpdateActivity>(
+                                                        renderer, mappedInputManager, false, pendingFirmware);
+    if (firmwareUpdate) {
       LOG_INF("MAIN", "Opening firmware update for %s", pendingFirmware.c_str());
-      activityManager.pushActivity(
-          std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInputManager, false, pendingFirmware));
+      {
+        // Clear the pre-reboot File Transfer frame the way Home's first paint
+        // would; the update screen itself draws with FAST refreshes.
+        RenderLock lock;
+        renderer.clearScreen();
+        renderer.displayBuffer(homeRefreshMode);
+      }
+      activityManager.replaceActivity(std::move(firmwareUpdate));
+    } else {
+      if (!pendingFirmware.empty()) LOG_ERR("MAIN", "Cannot allocate firmware update for %s", pendingFirmware.c_str());
+      activityManager.goHome(HomeMenuItem::NONE, homeRefreshMode);
     }
   } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
              mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {

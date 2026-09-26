@@ -223,6 +223,11 @@ void XtcReaderActivity::loop() {
     return;
   }
 
+  // A popup selection suppresses the Confirm release that follows its press.
+  // Read it once: wasReleased() consumes that suppression, and a second read
+  // in this loop would otherwise turn the same release into a real press.
+  const bool confirmReleased = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+
   const bool atEndOfBook = currentPage >= xtc->getPageCount();
   // Paged back into the book: release the end screen app and its theme tokens.
   if (!atEndOfBook) {
@@ -252,7 +257,7 @@ void XtcReaderActivity::loop() {
     // The render task is still loading the suggestions. Keep the first menu press
     // for the menu instead of dropping it or letting it reach the plain end-screen
     // page-turn handling (which goes Home).
-    const auto key = EndOfBookOptions::readMenuKey(mappedInput);
+    const auto key = EndOfBookOptions::readMenuKey(mappedInput, confirmReleased);
     if (key != EndOfBookOptions::MenuKey::None && queuedEndOfBookKey == EndOfBookOptions::MenuKey::None) {
       queuedEndOfBookKey = key;
     }
@@ -272,7 +277,7 @@ void XtcReaderActivity::loop() {
   if (endOfBookMenuOpen) {
     endOfBookAction = queuedKey != EndOfBookOptions::MenuKey::None
                           ? endOfBookOptions->applyMenuKey(queuedKey, &openPath)
-                          : endOfBookOptions->handleMenuInput(mappedInput, &openPath);
+                          : endOfBookOptions->handleMenuInput(mappedInput, confirmReleased, &openPath);
     if (endOfBookAction == EndOfBookOptions::Action::LastPage) {
       RenderLock lock(*this);
       const uint32_t pageCount = xtc->getPageCount();
@@ -295,8 +300,7 @@ void XtcReaderActivity::loop() {
   }
 
   if (longPressMenuHandled) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
-        !mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+    if (confirmReleased || !mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
       longPressMenuHandled = false;
     }
     return;
@@ -311,14 +315,14 @@ void XtcReaderActivity::loop() {
     handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK, QuickLockTrigger::LongMenu);
     return;
   }
-  if (longPressMenuAction == CrossPointSettings::LONG_MENU_QUICK_LOCK &&
-      mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MENU_MS) {
+  if (longPressMenuAction == CrossPointSettings::LONG_MENU_QUICK_LOCK && confirmReleased &&
+      mappedInput.getHeldTime() >= LONG_PRESS_MENU_MS) {
     mappedInput.suppressNextConfirmRelease();
     handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK, QuickLockTrigger::LongMenu);
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || ReaderUtils::isTouchMenuGesture(mappedInput)) {
+  if (confirmReleased || ReaderUtils::isTouchMenuGesture(mappedInput)) {
     openReaderMenu();
     return;
   }
@@ -1036,12 +1040,15 @@ bool XtcReaderActivity::executeReaderShortcutAction(const CrossPointSettings::SH
       activityManager.goToFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CALIBRE_WIRELESS:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToCalibreWireless(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::JOIN_NETWORK:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToJoinNetworkFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CREATE_HOTSPOT:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToHotspotFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::FILE_BROWSER:
@@ -1071,12 +1078,15 @@ bool XtcReaderActivity::executeLongPressBackAction() {
       activityManager.goToFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_CALIBRE_WIRELESS:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToCalibreWireless(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_JOIN_NETWORK:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToJoinNetworkFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_CREATE_HOTSPOT:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToHotspotFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_FILE_BROWSER:
