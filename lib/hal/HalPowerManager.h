@@ -34,6 +34,12 @@ class HalPowerManager {
   // Held only for the duration of an EPD busy-wait (see beginDisplayBusyWait),
   // so tickless idle can never light-sleep mid-refresh.
   esp_pm_lock_handle_t displayPmLock = nullptr;
+  // cpuFreqLock is wanted while the device is active, except during an EPD
+  // busy-wait, where the CPU only waits on the panel and can idle at the DFS
+  // floor. cpuFreqLockHeld tracks what has actually been acquired.
+  bool cpuFreqLockHeld = false;
+  bool displayBusyWaitActive = false;
+  void syncCpuFreqLock();
   // Held while USB Drive owns the USB-OTG PHY. TinyUSB cannot service the host
   // across a light-sleep window, and USJ_NO_AUTO_LS_ON_CONNECTION only watches
   // the Serial/JTAG controller, not OTG.
