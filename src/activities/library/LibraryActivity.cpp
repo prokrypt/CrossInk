@@ -36,6 +36,11 @@ constexpr unsigned long ACTION_FEEDBACK_MS = 1000;
 constexpr int HEADER_CONTROL_SIZE = 44;
 constexpr int HEADER_CONTROL_GAP = 10;
 
+// Storage content generation covered by the last successful scan. RAM-only:
+// a boot or deep-sleep wake remounts the card, so the first visit rescans.
+bool librarySynced = false;
+uint32_t librarySyncedGeneration = 0;
+
 int headerControlRightInset() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   // Inline battery themes need a separate lane for the options button.
@@ -56,15 +61,17 @@ void LibraryActivity::onEnter() {
   seriesScratch.reserve(128);
   genreScratch.reserve(128);
   subtitleScratch.reserve(448);
+  rowCache = makeUniqueNoThrow<CachedRow[]>(ROW_CACHE_SIZE);
+  if (!rowCache) LOG_ERR("LIB", "Cannot allocate Library row cache; rows are read on every draw");
   sort = SETTINGS.librarySortMethod <= static_cast<uint8_t>(Sort::Genre) ? static_cast<Sort>(SETTINGS.librarySortMethod)
                                                                          : Sort::RecentlyRead;
   descending = SETTINGS.librarySortDescending != 0;
   app.on(ACTION_ROW, &LibraryActivity::onRowEvent, this);
   app.on(ACTION_CONTROL, &LibraryActivity::onControlEvent, this);
   app.setScreen(&LibraryActivity::listScreen, this);
-  // Reconcile on entry as card contents may change through USB, Wi-Fi or an
-  // external card reader. Unchanged books reuse the index's metadata.
-  rebuildIndex(!Storage.exists(library::libraryIndexPath()));
+  // Card contents may change through USB, Wi-Fi, transfers or file actions.
+  // Storage counts those, so an unchanged card reopens the index directly.
+  rebuildIndex(true);
   resetViewport();
   ignoreConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
   requestUpdate();
@@ -73,17 +80,34 @@ void LibraryActivity::onEnter() {
 void LibraryActivity::onExit() {
   index.close();
   filtered.reset();
+  rowCache.reset();
   Activity::onExit();
 }
 
-bool LibraryActivity::rebuildIndex(const bool showScanning) {
+bool LibraryActivity::rebuildIndex(const bool showScanning, const bool force) {
   uiReady = false;
+  index.close();
+  const bool useMetadata = SETTINGS.libraryUseMetadata != 0;
+  const uint32_t generation = Storage.libraryContentGeneration();
+  if (!force && librarySynced && generation == librarySyncedGeneration &&
+      index.open(library::libraryIndexPath()) && (index.header().metadataEnabled != 0) == useMetadata) {
+    LOG_DBG("LIB", "Card unchanged since last scan; reusing index");
+    scanFailed = false;
+    resolveRecents();
+    applyFilter();
+    return !scanFailed;
+  }
   index.close();
   if (showScanning) GUI.drawPopup(renderer, tr(STR_LIBRARY_SCANNING));
   library::BuildStats stats;
-  scanFailed = !library::buildLibraryIndex("/", stats, SETTINGS.libraryUseMetadata != 0);
+  scanFailed = !library::buildLibraryIndex("/", stats, useMetadata);
   if (scanFailed) LOG_ERR("LIB", "Library scan failed; retaining the previous index");
+  // Record the generation read before the walk: a change made during it
+  // leaves the counter ahead, so the next visit rescans.
+  librarySynced = !scanFailed;
+  librarySyncedGeneration = generation;
   if (!index.open(library::libraryIndexPath())) {
+    librarySynced = false;
     // A failed one-time upgrade leaves the previous index on the card. Keep
     // its books readable while the next visit retries the rebuild.
     if (!scanFailed || !index.openForReconciliation(library::libraryIndexPath())) {
@@ -204,7 +228,14 @@ bool LibraryActivity::readBook(const int row, RecentBook& book, const bool fullP
   return true;
 }
 
+void LibraryActivity::invalidateRowCache() {
+  if (!rowCache) return;
+  for (int i = 0; i < ROW_CACHE_SIZE; ++i) rowCache[i].row = -1;
+}
+
 void LibraryActivity::applyFilter() {
+  // Every change to sort, direction, filter, settings or the index lands here.
+  invalidateRowCache();
   filteredCount = 0;
   filterFailed = false;
   filtered.reset();
@@ -274,7 +305,9 @@ void LibraryActivity::resetViewport() {
 }
 
 void LibraryActivity::reloadAfterBookAction() {
-  rebuildIndex(false);
+  // Deleting or moving a book changes the storage generation and rescans;
+  // cache, stats and settings actions only refresh recents and rows.
+  rebuildIndex(true);
   selection = std::min(selection, std::max(CONTROL_COUNT, CONTROL_COUNT + rowCount() - 1));
   listNav.selected = selection - CONTROL_COUNT;
   listNav.top = topIndex;
@@ -344,7 +377,7 @@ void LibraryActivity::openSearch() {
 }
 
 void LibraryActivity::refreshLibrary() {
-  rebuildIndex(true);
+  rebuildIndex(true, /*force=*/true);
   resetViewport();
   requestUpdate();
 }
@@ -355,7 +388,7 @@ void LibraryActivity::openSettings() {
              [this, useMetadata](const ActivityResult&) {
                // cppcheck-suppress knownConditionTrueFalse ; the settings dialog may change SETTINGS before this runs
                if ((SETTINGS.libraryUseMetadata != 0) != useMetadata) {
-                 rebuildIndex(true);
+                 rebuildIndex(true, /*force=*/true);
                } else {
                  applyFilter();
                }
@@ -495,70 +528,94 @@ void LibraryActivity::listScreen(UiApp::ScreenType& screen, void* user) {
 
 void LibraryActivity::provideRow(void* user, const uint16_t row, fui::ListItem& item) {
   auto* self = static_cast<LibraryActivity*>(user);
-  if (!self->readBook(row, self->rowScratch, false)) {
+  const CachedRow& cached = self->rowFor(row);
+  if (!cached.ok) {
     item.label = tr(STR_LIBRARY_UNAVAILABLE);
     item.enabled = false;
     return;
   }
-  item.label = self->rowScratch.title.c_str();
-  if (!self->rowScratch.author.empty()) item.subtitle = self->rowScratch.author.c_str();
+  item.label = cached.title.c_str();
+  if (!cached.subtitle.empty()) item.subtitle = cached.subtitle.c_str();
+  item.icon = listIconFor(static_cast<UIIcon>(cached.icon), 32);
+  item.actionValue = static_cast<int16_t>(row);
+  if (cached.hasHeading) item.sectionHeading = cached.heading.c_str();
+}
+
+LibraryActivity::CachedRow& LibraryActivity::rowFor(const int row) {
+  CachedRow& entry = rowCache ? rowCache[row % ROW_CACHE_SIZE] : uncachedRow;
+  if (!rowCache || entry.row != row) {
+    fillRow(row, entry);
+    // Failed reads are retried on the next draw.
+    entry.row = entry.ok && rowCache ? row : -1;
+  }
+  return entry;
+}
+
+void LibraryActivity::fillRow(const int row, CachedRow& out) {
+  out.ok = false;
+  out.hasHeading = false;
+  out.subtitle.clear();
+  if (!readBook(row, rowScratch, false)) return;
+  out.ok = true;
+  out.title = rowScratch.title;
+  out.subtitle = rowScratch.author;
   if (SETTINGS.libraryListExpanded && SETTINGS.libraryUseMetadata &&
       (SETTINGS.libraryShowSeries || SETTINGS.libraryShowGenre)) {
     library::ClixRecord record{};
-    const uint16_t ordinal = self->ordinalForRow(row);
-    if (ordinal != UINT16_MAX && self->index.readRecord(ordinal, record) &&
-        self->index.readSeries(record, self->seriesScratch) && self->index.readGenre(record, self->genreScratch) &&
-        ((SETTINGS.libraryShowSeries && !self->seriesScratch.empty()) ||
-         (SETTINGS.libraryShowGenre && !self->genreScratch.empty()))) {
-      self->subtitleScratch = self->rowScratch.author;
-      if (!self->subtitleScratch.empty()) self->subtitleScratch.append(" · ");
-      if (SETTINGS.libraryShowSeries && !self->seriesScratch.empty()) {
-        self->subtitleScratch.append(tr(STR_LIBRARY_SERIES));
-        self->subtitleScratch.append(": ");
-        self->subtitleScratch.append(self->seriesScratch);
+    const uint16_t ordinal = ordinalForRow(row);
+    if (ordinal != UINT16_MAX && index.readRecord(ordinal, record) &&
+        index.readSeries(record, seriesScratch) && index.readGenre(record, genreScratch) &&
+        ((SETTINGS.libraryShowSeries && !seriesScratch.empty()) ||
+         (SETTINGS.libraryShowGenre && !genreScratch.empty()))) {
+      subtitleScratch = rowScratch.author;
+      if (!subtitleScratch.empty()) subtitleScratch.append(" · ");
+      if (SETTINGS.libraryShowSeries && !seriesScratch.empty()) {
+        subtitleScratch.append(tr(STR_LIBRARY_SERIES));
+        subtitleScratch.append(": ");
+        subtitleScratch.append(seriesScratch);
       }
-      if (SETTINGS.libraryShowGenre && !self->genreScratch.empty()) {
-        if (SETTINGS.libraryShowSeries && !self->seriesScratch.empty()) self->subtitleScratch.append(" · ");
-        self->subtitleScratch.append(tr(STR_LIBRARY_GENRE));
-        self->subtitleScratch.append(": ");
-        self->subtitleScratch.append(self->genreScratch);
+      if (SETTINGS.libraryShowGenre && !genreScratch.empty()) {
+        if (SETTINGS.libraryShowSeries && !seriesScratch.empty()) subtitleScratch.append(" · ");
+        subtitleScratch.append(tr(STR_LIBRARY_GENRE));
+        subtitleScratch.append(": ");
+        subtitleScratch.append(genreScratch);
       }
-      item.subtitle = self->subtitleScratch.c_str();
+      out.subtitle = subtitleScratch;
     }
   }
-  item.icon = listIconFor(UITheme::getFileIcon(self->rowScratch.path), 32);
-  item.actionValue = static_cast<int16_t>(row);
-  if (SETTINGS.libraryListExpanded && self->sort == Sort::DateAdded) {
-    const uint16_t date = self->dateGroupForRow(row);
-    if (row == 0 || date != self->dateGroupForRow(row - 1)) {
+  out.icon = static_cast<uint8_t>(UITheme::getFileIcon(rowScratch.path));
+  if (SETTINGS.libraryListExpanded && sort == Sort::DateAdded) {
+    const uint16_t date = dateGroupForRow(row);
+    if (row == 0 || date != dateGroupForRow(row - 1)) {
       if (date == 0) {
-        self->groupHeading = "?";
+        groupHeading = "?";
       } else {
         char heading[11];
         std::snprintf(heading, sizeof(heading), "%04u-%02u-%02u", 1980u + (date >> 9), (date >> 5) & 15u, date & 31u);
-        self->groupHeading = heading;
+        groupHeading = heading;
       }
-      item.sectionHeading = self->groupHeading.c_str();
+      out.hasHeading = true;
     }
-  } else if (SETTINGS.libraryListExpanded && (self->sort == Sort::Series || self->sort == Sort::Genre)) {
-    if (self->metadataGroupForRow(row, self->groupHeading)) {
-      library::foldInto(self->groupHeading, self->groupKeyScratch);
-      if (row == 0 || !self->metadataGroupForRow(row - 1, self->previousGroupScratch)) {
-        item.sectionHeading = self->groupHeading.c_str();
+  } else if (SETTINGS.libraryListExpanded && (sort == Sort::Series || sort == Sort::Genre)) {
+    if (metadataGroupForRow(row, groupHeading)) {
+      library::foldInto(groupHeading, groupKeyScratch);
+      if (row == 0 || !metadataGroupForRow(row - 1, previousGroupScratch)) {
+        out.hasHeading = true;
       } else {
-        library::foldInto(self->previousGroupScratch, self->previousGroupKeyScratch);
-        if (self->groupKeyScratch != self->previousGroupKeyScratch) item.sectionHeading = self->groupHeading.c_str();
+        library::foldInto(previousGroupScratch, previousGroupKeyScratch);
+        if (groupKeyScratch != previousGroupKeyScratch) out.hasHeading = true;
       }
     }
-  } else if (SETTINGS.libraryListExpanded && self->sort != Sort::RecentlyRead) {
-    const uint32_t initial = self->groupForRow(row);
-    if (row == 0 || initial != self->groupForRow(row - 1)) {
-      self->groupHeading.clear();
+  } else if (SETTINGS.libraryListExpanded && sort != Sort::RecentlyRead) {
+    const uint32_t initial = groupForRow(row);
+    if (row == 0 || initial != groupForRow(row - 1)) {
+      groupHeading.clear();
       utf8AppendCodepoint(initial ? (initial >= 'a' && initial <= 'z' ? initial - 'a' + 'A' : initial) : '#',
-                          self->groupHeading);
-      item.sectionHeading = self->groupHeading.c_str();
+                          groupHeading);
+      out.hasHeading = true;
     }
   }
+  if (out.hasHeading) out.heading = groupHeading;
 }
 
 bool LibraryActivity::metadataGroupForRow(const int row, std::string& out) {
