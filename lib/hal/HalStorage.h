@@ -76,6 +76,11 @@ class HalStorage {
   // it with the value they last synced against instead of rescanning the card.
   uint32_t libraryContentGeneration() const { return libraryGeneration.load(std::memory_order_acquire); }
   void markLibraryContentChanged(const char* reason = nullptr);
+  // The Library records the generation its last successful scan started at.
+  // The record survives deep sleep (not power loss or a reset), so a wake does
+  // not force a rescan when nothing changed before sleeping.
+  void noteLibraryScanned(uint32_t generation);
+  bool libraryScanCurrent() const;
 
   static HalStorage& getInstance() { return instance; }
 
@@ -90,6 +95,8 @@ class HalStorage {
   bool initialized = false;
   SemaphoreHandle_t storageMutex = nullptr;
   std::atomic<uint32_t> libraryGeneration{0};
+  std::atomic<bool> libraryScanned{false};
+  std::atomic<uint32_t> libraryScannedGeneration{0};
 #if FREEINK_CAP_USB_MSC
   std::unique_ptr<UsbDriveContext> usbDriveContext;
 #endif

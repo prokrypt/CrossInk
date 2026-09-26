@@ -11,7 +11,9 @@
 #include <Utf8.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 
 #include "activities/home/BookActions.h"
 #include "activities/home/FileBrowserActionActivity.h"
@@ -35,11 +37,12 @@ constexpr unsigned long LONG_PRESS_MS = 1000;
 constexpr unsigned long ACTION_FEEDBACK_MS = 1000;
 constexpr int HEADER_CONTROL_SIZE = 44;
 constexpr int HEADER_CONTROL_GAP = 10;
-
-// Storage content generation covered by the last successful scan. RAM-only:
-// a boot or deep-sleep wake remounts the card, so the first visit rescans.
-bool librarySynced = false;
-uint32_t librarySyncedGeneration = 0;
+// A released contact that travelled further than this is a drag, not a tap on
+// the row it started on. Matches the SDK's stationary tap slop.
+constexpr int DRAG_TAP_SLOP_PX = 28;
+// Vertical travel that scrolls the list when the SDK does not report a swipe,
+// such as a drag slower than its flick window. Matches its swipe distance.
+constexpr int DRAG_SCROLL_PX = 60;
 
 int headerControlRightInset() {
   const auto& metrics = UITheme::getInstance().getMetrics();
@@ -89,8 +92,7 @@ bool LibraryActivity::rebuildIndex(const bool showScanning, const bool force) {
   index.close();
   const bool useMetadata = SETTINGS.libraryUseMetadata != 0;
   const uint32_t generation = Storage.libraryContentGeneration();
-  if (!force && librarySynced && generation == librarySyncedGeneration &&
-      index.open(library::libraryIndexPath()) && (index.header().metadataEnabled != 0) == useMetadata) {
+  if (!force && Storage.libraryScanCurrent() && index.open(library::libraryIndexPath()) && (index.header().metadataEnabled != 0) == useMetadata) {
     LOG_DBG("LIB", "Card unchanged since last scan; reusing index");
     scanFailed = false;
     resolveRecents();
@@ -102,12 +104,7 @@ bool LibraryActivity::rebuildIndex(const bool showScanning, const bool force) {
   library::BuildStats stats;
   scanFailed = !library::buildLibraryIndex("/", stats, useMetadata);
   if (scanFailed) LOG_ERR("LIB", "Library scan failed; retaining the previous index");
-  // Record the generation read before the walk: a change made during it
-  // leaves the counter ahead, so the next visit rescans.
-  librarySynced = !scanFailed;
-  librarySyncedGeneration = generation;
   if (!index.open(library::libraryIndexPath())) {
-    librarySynced = false;
     // A failed one-time upgrade leaves the previous index on the card. Keep
     // its books readable while the next visit retries the rebuild.
     if (!scanFailed || !index.openForReconciliation(library::libraryIndexPath())) {
@@ -121,6 +118,9 @@ bool LibraryActivity::rebuildIndex(const bool showScanning, const bool force) {
       }
     }
   }
+  // Record the generation read before the walk: a change made during it
+  // leaves the counter ahead, so the next visit rescans.
+  if (!scanFailed) Storage.noteLibraryScanned(generation);
   resolveRecents();
   applyFilter();
   return !scanFailed;
@@ -430,12 +430,76 @@ void LibraryActivity::onControlEvent(const fui::ActionEvent& event, void* user) 
   self->activateControl(event.value);
 }
 
+void LibraryActivity::latchInput() {
+  int x = 0;
+  int y = 0;
+  if (mappedInput.wasScreenTouchDown(x, y)) {
+    touchTracking = true;
+    touchStartX = touchLastX = x;
+    touchStartY = touchLastY = y;
+  }
+  if (touchTracking && mappedInput.isScreenTouchHeld(x, y)) {
+    touchLastX = x;
+    touchLastY = y;
+  }
+  const int travelX = std::abs(touchLastX - touchStartX);
+  const int travelY = std::abs(touchLastY - touchStartY);
+  const bool released = touchTracking && mappedInput.wasScreenTouchReleased();
+
+  const auto header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
+  if (mappedInput.wasScreenTapped(x, y) && y < header.y + header.height &&
+      TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
+    pending.headerBack = true;
+  }
+
+  auto snap = touchSnapshotFrom(mappedInput);
+  if (snap.touchReleased && !snap.longPress && touchTracking && std::max(travelX, travelY) > DRAG_TAP_SLOP_PX) {
+    snap.touchReleased = false;
+  }
+  if (snap.touchPressed) {
+    pending.touchPress = true;
+    pending.touchRelease = false;
+    pending.pressX = snap.touchX;
+    pending.pressY = snap.touchY;
+  }
+  if (snap.touchReleased) {
+    pending.touchRelease = true;
+    pending.longPress = snap.longPress;
+    pending.releaseX = snap.touchX;
+    pending.releaseY = snap.touchY;
+  }
+
+  auto swipe = mappedInput.wasSwipe();
+  if (swipe == MappedInputManager::SwipeDir::None && released && travelY >= DRAG_SCROLL_PX && travelY > travelX) {
+    swipe = touchLastY < touchStartY ? MappedInputManager::SwipeDir::Up : MappedInputManager::SwipeDir::Down;
+  }
+  if (released) touchTracking = false;
+  if (swipe == MappedInputManager::SwipeDir::Up && pending.scrollPages < INT8_MAX) ++pending.scrollPages;
+  if (swipe == MappedInputManager::SwipeDir::Down && pending.scrollPages > INT8_MIN) --pending.scrollPages;
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) pending.confirmReleased = true;
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) pending.backReleased = true;
+  const auto step = [](int8_t& value, const int delta) {
+    value = static_cast<int8_t>(std::max<int>(INT8_MIN, std::min<int>(INT8_MAX, value + delta)));
+  };
+  buttonNavigator.onNextRelease([&] { step(pending.steps, 1); });
+  buttonNavigator.onPreviousRelease([&] { step(pending.steps, -1); });
+  buttonNavigator.onNextContinuous([&] { step(pending.pageSteps, 1); });
+  buttonNavigator.onPreviousContinuous([&] { step(pending.pageSteps, -1); });
+}
+
 void LibraryActivity::loop() {
-  RenderLock lock;
   if (sortPopup.isActive()) {
+    pending = {};
+    RenderLock lock;
     sortPopup.handleInput(mappedInput, [this] { requestUpdate(); });
     return;
   }
+  latchInput();
+  if (RenderLock::peek()) return;
+  RenderLock lock;
+  const PendingInput input = pending;
+  pending = {};
   if (pendingCacheDeletedFeedback && millis() - cacheDeletedFeedbackShowTime >= ACTION_FEEDBACK_MS) {
     pendingCacheDeletedFeedback = false;
     requestUpdate();
@@ -447,11 +511,7 @@ void LibraryActivity::loop() {
     }
     return;
   }
-  int tapX = 0;
-  int tapY = 0;
-  const auto header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
-  if (mappedInput.wasScreenTapped(tapX, tapY) && tapY < header.y + header.height &&
-      TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
+  if (input.headerBack) {
     onGoHome();
     return;
   }
@@ -463,22 +523,34 @@ void LibraryActivity::loop() {
       activateControl(selection);
     return;
   }
-  if (uiReady) {
-    const auto snap = touchSnapshotFrom(mappedInput);
-    if (snap.touchPressed || snap.touchReleased) {
-      const auto event = app.route(snap);
-      if (app.invalidated()) requestUpdate();
-      if (event) return;
+  if (uiReady && (input.touchPress || input.touchRelease)) {
+    bool routed = false;
+    if (input.touchPress) {
+      fui::InputSnapshot snap{};
+      snap.touchPressed = true;
+      snap.touchX = input.pressX;
+      snap.touchY = input.pressY;
+      routed = static_cast<bool>(app.route(snap));
     }
+    if (!routed && input.touchRelease) {
+      fui::InputSnapshot snap{};
+      snap.touchReleased = true;
+      snap.longPress = input.longPress;
+      snap.touchX = input.releaseX;
+      snap.touchY = input.releaseY;
+      routed = static_cast<bool>(app.route(snap));
+    }
+    if (app.invalidated()) requestUpdate();
+    if (routed) return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (input.confirmReleased) {
     if (selection < CONTROL_COUNT)
       activateControl(selection);
     else
       openBook(selection - CONTROL_COUNT);
     return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (input.backReleased) {
     if (!query.empty()) {
       query.clear();
       applyFilter();
@@ -488,12 +560,11 @@ void LibraryActivity::loop() {
       onGoHome();
     return;
   }
-  const auto swipe = mappedInput.wasSwipe();
-  if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
+  if (input.scrollPages != 0) {
     if (mappedInput.hasTouchHardware()) showSelection = false;
     listNav.top = topIndex;
     const int page = listNav.pageRowsFor(rowCount());
-    listNav.scrollBy(swipe == MappedInputManager::SwipeDir::Up ? page : -page, rowCount());
+    listNav.scrollBy(input.scrollPages * page, rowCount());
     topIndex = listNav.top;
     requestUpdate();
     return;
@@ -514,12 +585,15 @@ void LibraryActivity::loop() {
     }
     requestUpdate();
   };
-  buttonNavigator.onNextRelease([&] { move(ButtonNavigator::nextIndex(selection, count)); });
-  buttonNavigator.onPreviousRelease([&] { move(ButtonNavigator::previousIndex(selection, count)); });
-  buttonNavigator.onNextContinuous(
-      [&] { move(ButtonNavigator::nextPageIndex(selection, count, listNav.pageRowsFor(rowCount()))); });
-  buttonNavigator.onPreviousContinuous(
-      [&] { move(ButtonNavigator::previousPageIndex(selection, count, listNav.pageRowsFor(rowCount()))); });
+  for (int i = 0; i < std::abs(input.steps); ++i) {
+    move(input.steps > 0 ? ButtonNavigator::nextIndex(selection, count)
+                         : ButtonNavigator::previousIndex(selection, count));
+  }
+  for (int i = 0; i < std::abs(input.pageSteps); ++i) {
+    const int page = listNav.pageRowsFor(rowCount());
+    move(input.pageSteps > 0 ? ButtonNavigator::nextPageIndex(selection, count, page)
+                             : ButtonNavigator::previousPageIndex(selection, count, page));
+  }
 }
 
 void LibraryActivity::listScreen(UiApp::ScreenType& screen, void* user) {
