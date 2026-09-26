@@ -659,6 +659,9 @@ bool MappedInputManager::wasSwipeWithPoints(SwipeDir& direction, int& startX, in
 
 bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
   progress = {};
+  // A slide that ends early (finger leaves the band, a second finger lands)
+  // reports the last held position so a live adjustment keeps its value.
+  progress.deltaY = edgeSlideLastY - edgeSlideStartY;
   if (!touchInputEnabled()) {
     progress.finished = edgeSlideSide != EdgeSlide::None;
     edgeSlideSide = EdgeSlide::None;
@@ -682,6 +685,7 @@ bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
     edgeSlideLastX = x;
     edgeSlideLastY = y;
     edgeSlideQualified = false;
+    progress.deltaY = 0;
   }
 
   if (edgeSlideSide == EdgeSlide::None) return false;
@@ -716,7 +720,6 @@ bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
   int startY = 0;
   if (!decodeSwipe(startX, startY, x, y)) {
     if (!edgeSlideQualified) {
-      progress.deltaY = edgeSlideLastY - edgeSlideStartY;
       edgeSlideSide = EdgeSlide::None;
       return true;
     }
