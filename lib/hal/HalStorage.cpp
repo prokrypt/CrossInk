@@ -2,7 +2,6 @@
 #include "HalStorage.h"
 
 #include <Arduino.h>
-#include <BoardConfig.h>
 #include <FS.h>  // need to be included before SdFat.h for compatibility with FS.h's File class
 #include <HalClock.h>
 #include <HalPowerManager.h>
@@ -297,15 +296,11 @@ UsbDriveState HalStorage::usbDriveState() const {
 
 class HalStorage::StorageLock {
  public:
-  StorageLock() { xSemaphoreTake(HalStorage::getInstance().storageMutex, portMAX_DELAY); }
+  StorageLock() : spiLock() { xSemaphoreTake(HalStorage::getInstance().storageMutex, portMAX_DELAY); }
   ~StorageLock() { xSemaphoreGive(HalStorage::getInstance().storageMutex); }
 
  private:
-#if !FREEINK_SD_SDMMC
-  // SD shares the display's SPI bus. SDMMC cards have their own bus, and
-  // taking this lock there only stalls reads behind EPD refreshes.
   HalSpiBus::Lock spiLock;
-#endif
 };
 
 #define HAL_STORAGE_WRAPPED_CALL(method, ...) \
