@@ -1007,6 +1007,15 @@ bool handleX4ProHomeKeyShortcuts() {
 
   if (!wasX4ProHomeKeyTapped()) return completedPendingTap;
 
+  // With no double-tap action there is nothing to wait for, so a tap acts at
+  // once. Back/Home lets this frame's raw tap reach the activity's own route.
+  if (SETTINGS.homeButtonDoubleTapAction == CrossPointSettings::SHORT_PWRBTN::IGNORE) {
+    x4ProHomeKeyTapPending = false;
+    if (SETTINGS.homeButtonTapAction == CrossPointSettings::HOME_BUTTON_BACK_HOME) return completedPendingTap;
+    executeX4ProHomeButtonAction(SETTINGS.homeButtonTapAction, QuickLockTrigger::HomeTap);
+    return true;
+  }
+
   if (!x4ProHomeKeyTapPending) {
     lastX4ProHomeKeyTapAt = now;
     x4ProHomeKeyTapPending = true;
