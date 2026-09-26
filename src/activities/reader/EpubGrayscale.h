@@ -11,8 +11,10 @@ constexpr int GRAYSCALE_STRIP_ROWS = 80;
 
 // Preserves the live BW buffer and existing controller synchronization. False
 // leaves the caller responsible for its existing BW-snapshot fallback.
+// grayscaleShown, when given, reports whether the gray planes reached the panel
+// (true can still mean a queued turn cancelled the pass).
 bool runTiledGrayscalePass(GfxRenderer& renderer, const Page& page, int fontId, int marginLeft, int marginTop,
                            bool foregroundBlack, bool needsTextGrayscale, bool needsImageGrayscale, uint8_t* scratch,
                            size_t scratchSize, bool asyncRefreshPending, bool (*shouldCancel)(void*) = nullptr,
-                           void* cancelContext = nullptr);
+                           void* cancelContext = nullptr, bool* grayscaleShown = nullptr);
 }  // namespace EpubGrayscale
