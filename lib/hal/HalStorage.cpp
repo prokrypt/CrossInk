@@ -55,6 +55,22 @@ bool affectsLibrary(const char* path) {
 bool isFolderMutation(const char* path) { return path && path[0] != '\0' && !isHiddenPath(path); }
 }  // namespace
 
+// Deep sleep keeps RTC memory; power loss and resets do not clear it reliably,
+// so the pair is checked and cleared on every mount.
+constexpr uint32_t LIBRARY_SCAN_CURRENT_MAGIC = 0x4C494233;  // "LIB3"
+RTC_NOINIT_ATTR uint32_t rtcLibraryScanCurrent;
+RTC_NOINIT_ATTR uint32_t rtcLibraryScanCurrentCheck;
+
+void HalStorage::noteLibraryScanned(const uint32_t generation) {
+  libraryScannedGeneration.store(generation, std::memory_order_release);
+  libraryScanned.store(true, std::memory_order_release);
+}
+
+bool HalStorage::libraryScanCurrent() const {
+  return libraryScanned.load(std::memory_order_acquire) &&
+         libraryScannedGeneration.load(std::memory_order_acquire) == libraryContentGeneration();
+}
+
 void HalStorage::markLibraryContentChanged(const char* reason) {
   libraryGeneration.fetch_add(1, std::memory_order_acq_rel);
   LOG_DBG("SD", "Library content may have changed: %s", reason ? reason : "?");
@@ -172,8 +188,18 @@ HalStorage::~HalStorage() = default;
 
 bool HalStorage::begin() {
   HalSpiBus::Lock spiLock;
-  // A (re)mounted card may hold anything.
-  markLibraryContentChanged("mount");
+  const bool scanCarriedOver =
+      rtcLibraryScanCurrent == LIBRARY_SCAN_CURRENT_MAGIC && rtcLibraryScanCurrentCheck == ~LIBRARY_SCAN_CURRENT_MAGIC;
+  rtcLibraryScanCurrent = 0;
+  rtcLibraryScanCurrentCheck = 0;
+  if (scanCarriedOver) {
+    // Waking from deep sleep with no Library change since the last scan. Card
+    // edits made elsewhere while asleep need the Library's refresh button.
+    noteLibraryScanned(libraryContentGeneration());
+  } else {
+    // A cold boot or reset may follow edits made on a computer.
+    markLibraryContentChanged("mount");
+  }
   return SDCard.begin();
 }
 
@@ -269,6 +295,9 @@ class HalStorage::StorageLock {
   return SDCard.method(__VA_ARGS__);
 
 void HalStorage::shutdown() {
+  const bool current = libraryScanCurrent();
+  rtcLibraryScanCurrent = current ? LIBRARY_SCAN_CURRENT_MAGIC : 0;
+  rtcLibraryScanCurrentCheck = current ? ~LIBRARY_SCAN_CURRENT_MAGIC : 0;
   StorageLock lock;
   SDCard.shutdown();
 }

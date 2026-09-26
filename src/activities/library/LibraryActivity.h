@@ -77,11 +77,40 @@ class LibraryActivity final : public Activity {
   std::unique_ptr<CachedRow[]> rowCache;
   // Used when the cache could not be allocated.
   CachedRow uncachedRow;
+  // Input seen since the last processed frame. Rendering holds the render lock
+  // through the panel refresh, and waiting on it here would stall the main
+  // loop's touch polling: a swipe made during a refresh then loses its start
+  // point and can land as a tap on a row. Input is latched every loop and
+  // applied once the frame is out.
+  struct PendingInput {
+    bool touchPress = false;
+    bool touchRelease = false;
+    bool longPress = false;
+    bool headerBack = false;
+    bool confirmReleased = false;
+    bool backReleased = false;
+    int16_t pressX = 0;
+    int16_t pressY = 0;
+    int16_t releaseX = 0;
+    int16_t releaseY = 0;
+    int8_t scrollPages = 0;  // positive moves down the list
+    int8_t steps = 0;
+    int8_t pageSteps = 0;
+  };
+  PendingInput pending;
+  // Travel of the current contact, for drags the SDK reports as neither a tap
+  // nor a swipe.
+  bool touchTracking = false;
+  int touchStartX = 0;
+  int touchStartY = 0;
+  int touchLastX = 0;
+  int touchLastY = 0;
 
   static void listScreen(UiApp::ScreenType& screen, void* user);
   static void onRowEvent(const freeink::ui::ActionEvent& event, void* user);
   static void onControlEvent(const freeink::ui::ActionEvent& event, void* user);
   static void provideRow(void* user, uint16_t row, freeink::ui::ListItem& item);
+  void latchInput();
   void buildListScreen(UiApp::ScreenType& screen);
   void buildSortHeader(UiApp::ScreenType& screen);
   const char* sortLabel() const;
