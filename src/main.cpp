@@ -173,6 +173,14 @@ struct QuickLockBadgeBackdrop {
 QuickLockBadgeBackdrop quickLockBadgeBackdrop;
 }  // namespace
 
+#if !defined(SIMULATOR) && CONFIG_SPIRAM && !CONFIG_SPIRAM_BOOT_INIT
+// Arduino's psramInit() runs esp_psram_extram_test() on every boot, including
+// every deep-sleep wake: a write-then-read sweep of the whole 8 MB part before
+// setup() starts. esp_psram_init() has already identified the chip by then, so
+// skip the sweep and keep the wake path short.
+extern "C" bool testSPIRAM(void) { return true; }
+#endif
+
 static void logBootHeap(const char* stage) {
   LOG_DBG("BOOTMEM", "%s: free=%u maxAlloc=%u", stage, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
