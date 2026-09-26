@@ -173,6 +173,14 @@ struct QuickLockBadgeBackdrop {
 QuickLockBadgeBackdrop quickLockBadgeBackdrop;
 }  // namespace
 
+#if !defined(SIMULATOR) && CONFIG_SPIRAM && !CONFIG_SPIRAM_BOOT_INIT
+// Arduino's psramInit() runs esp_psram_extram_test() on every boot, including
+// every deep-sleep wake: a write-then-read sweep of the whole 8 MB part before
+// setup() starts. esp_psram_init() has already identified the chip by then, so
+// skip the sweep and keep the wake path short.
+extern "C" bool testSPIRAM(void) { return true; }
+#endif
+
 static void logBootHeap(const char* stage) {
   LOG_DBG("BOOTMEM", "%s: free=%u maxAlloc=%u", stage, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
@@ -839,7 +847,6 @@ bool dispatchButtonShortcut(const ButtonShortcutController::Result& result) {
 }
 
 namespace {
-constexpr uint16_t POST_SLEEP_SCREEN_SETTLE_MS = 500;
 constexpr uint8_t TILT_SLEEP_MAX_ATTEMPTS = 3;
 constexpr uint16_t TILT_SLEEP_RETRY_DELAY_MS = 10;
 
@@ -1147,14 +1154,14 @@ void enterDeepSleep(bool fromTimeout) {
     deepSleepInProgress = true;
     activityManager.goToSleep(fromTimeout);
 
+    // Sleep screens refresh synchronously and display.deepSleep() waits out any
+    // pending refresh and the power-off, so no settle delay is needed here. A
+    // delay would only widen the window in which a wake press is swallowed.
     if (isQuickResumeSleep) {
       saveSleepFrameBuffer();
-    } else {
-      if (Storage.exists(SLEEP_FRAME_FILE)) {
-        // A stale Quick Resume frame must not replace the selected sleep screen during wake.
-        Storage.remove(SLEEP_FRAME_FILE);
-      }
-      delay(POST_SLEEP_SCREEN_SETTLE_MS);
+    } else if (Storage.exists(SLEEP_FRAME_FILE)) {
+      // A stale Quick Resume frame must not replace the selected sleep screen during wake.
+      Storage.remove(SLEEP_FRAME_FILE);
     }
 
     if (halClock.isAvailable() && SETTINGS.autoBackupStats != 0) {
