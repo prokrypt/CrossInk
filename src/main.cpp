@@ -104,6 +104,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "components/icons/tablerFilledIcons.h"
 #include "fontIds.h"
 #include "network/UsbSerialFileTransfer.h"
+#include "platform/InputWake.h"
 #ifdef SIMULATOR
 #include <SimulatorLifecycle.h>
 
@@ -1308,6 +1309,7 @@ void setup() {
   // only on screens that explicitly allow the fallback.
   gpio.setSharedConfirmPowerShortPressEmitsPower(true);
   powerManager.begin();
+  InputWake::begin();
 
   const auto wakeupReason = gpio.getWakeupReason();
 #ifndef SIMULATOR
@@ -1904,13 +1906,15 @@ void loop() {
     powerManager.setPowerSaving(false);  // Make sure we're at full performance when skipLoopDelay is requested
     yield();                             // Give FreeRTOS a chance to run tasks, but return immediately
   } else {
+    // Both waits end early when a key or the touch INT line changes, so the
+    // longer idle tick no longer delays the first input after a pause.
     if (millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
       // If we've been inactive for a while, increase the delay to save power
       powerManager.setPowerSaving(true);  // Lower CPU frequency after extended inactivity
-      delay(50);
+      InputWake::wait(50);
     } else {
       // Short delay to prevent tight loop while still being responsive
-      delay(10);
+      InputWake::wait(10);
     }
   }
 }
