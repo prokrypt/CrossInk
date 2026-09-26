@@ -24,10 +24,14 @@
 - GitHub workflows and release documentation links now follow the `development` default branch.
 - Idle power saving now engages after 1 second instead of 3, and battery level is polled every 6 seconds instead of every 1.5, trading slightly less frequent battery updates for lower average power draw.
 - The Library opens instantly when nothing on the SD card has changed since its last scan, instead of rescanning the whole card on every visit. Moving the selection no longer re-reads each visible book from the card.
+- After a restart, Home starts indexing the Library in the background as soon as it appears, so the first Library visit usually opens without the "Reading your books" wait. Indexing pauses the moment you press a button or touch the screen and picks up where it left off.
+- Library scans no longer re-read books whose title and author could not be read last time; they keep their filename until the file changes or you use the Library's refresh, which retries them.
 - Fewer SD card writes: session state and reading stats are no longer rewritten when nothing changed, and the reading percentage shown on Home is saved once when you leave a book instead of every 10 pages.
+- Far fewer SD card writes when saving your place: EPUB progress now alternates between two small slot files that are overwritten in place, so a save costs about 2 sector writes instead of roughly a dozen, and a save that would store the position already on the card (such as closing a book without turning a page) writes nothing. Your place is now saved every 30 page turns or 15 minutes of reading instead of every 10 pages or 5 minutes; leaving the book or putting the device to sleep still saves it immediately, so only a crash, reset or dead battery can lose more pages than before. A save interrupted by power loss falls back to the previous save. TXT and XTC progress and the Home reading percentage are also overwritten in place instead of being truncated and rewritten.
 
 ### Fixed
 
+- In the OPDS browser, Back (the header button, the back swipe or the Back button) now goes up to the catalog you came from instead of stepping back through each Next/Previous page you visited.
 - Chapters left partly indexed by v1.6.0 now re-index after updating instead of resuming with pages laid out under the old rules.
 - Edge slides, two-finger swipes and header taps work reliably on the File Transfer screen while the web server is running.
 - Dragging or scrolling on a list or menu no longer highlights or selects the row under your finger, and a short drag no longer opens it. Rows highlight once your finger rests on them briefly, so long-press still works.
@@ -50,6 +54,10 @@
 - Keep clipped text, exported excerpts, and chapter titles on complete characters when shortened.
 - Keep clipping-selection button hints from covering book text.
 - Changing a reader font with incremental indexing now returns after the current reading position is ready, instead of waiting for the whole chapter to be re-indexed.
+- On the first page of an EPUB or XTC book, previous page and previous chapter (including the chapter-skip long press) now do nothing instead of redrawing or reloading the page.
+- A button press made while the end-of-book "Continue with" menu is still appearing is no longer lost: it moves the selection, opens the book, or goes back once the menu is ready.
+- The image viewer redraws the image after you close the pull-down top panel, the image action menu, or a prompt, instead of leaving the panel or menu on screen.
+- 8-bit and other paletted BMPs saved with a newer (V4/V5) header, as GIMP and ImageMagick write them, now show their real gray levels. White backgrounds no longer turn into dither dots and black no longer shows as dark gray, in the image viewer and on sleep and boot screens.
 
 ## [v1.6.0] - 2026-09-21
 

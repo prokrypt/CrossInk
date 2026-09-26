@@ -403,6 +403,41 @@ book is renamed or moved outside CrossInk, the path hash changes, so the old
 clipping file may no longer be associated with the book until the file is moved
 back or the clipping store is migrated.
 
+## EPUB `progress.bin` and `progress.bin.bak`
+
+### Slot record (20 bytes)
+
+The two files are fixed-size slots. Each save overwrites the slot holding the
+older record in place (no truncate, no rename), so a save touches one data
+sector plus the directory entry. A torn write fails the CRC and the reader uses
+the other slot, which holds the previous save. Saves whose position matches the
+current record are skipped.
+
+Binary layout (little endian):
+
+- `[0-1]` spine index (`uint16_t`)
+- `[2-3]` page number (`uint16_t`, `0xFFFF` reads as page 0)
+- `[4-5]` page count (`uint16_t`)
+- `[6-9]` visible-text offset (`uint32_t`, `0` when absent)
+- `[10]` marker `0xC5`
+- `[11]` flags (`bit0=visible-text offset present`)
+- `[12-15]` sequence number (`uint32_t`, compared modulo 2^32)
+- `[16-19]` CRC-32 (IEEE) of bytes `0-15`
+
+Selection: a legacy `progress.bin` wins (only older firmware writes it, and it
+writes `progress.bin` last); otherwise the valid slot with the newer sequence
+number. The next save targets whichever file is not a valid slot record,
+`progress.bin` first, then the older slot.
+
+Bytes `0-9` are the legacy record, so older firmware, which reads at most 10
+bytes, still finds a position in `progress.bin` (at most one save stale).
+
+### Legacy records
+
+4 bytes (spine, page), 6 bytes (plus page count), or 10 bytes (plus visible-text
+offset), written by older firmware through a temp file and a
+`progress.bin` -> `progress.bin.bak` rotation. Still read; replaced on the next save.
+
 ## `stats_v5.bin`
 
 ### Version 5

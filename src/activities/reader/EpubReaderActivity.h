@@ -261,6 +261,8 @@ class EpubReaderActivity final : public Activity {
   bool pendingReadFolderMove = false;
   // The end screen owns these UI resources only while it is visible.
   std::unique_ptr<EndOfBookOptions> endOfBookOptions;
+  // First menu press made while the end-of-book menu was still loading (main loop only).
+  EndOfBookOptions::MenuKey queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
@@ -459,6 +461,7 @@ class EpubReaderActivity final : public Activity {
   void clearPendingManualPageTurns(bool requestRecoveryRedraw = true);
   void finishManualPageTurnBrakeIfReady();
   void cancelSilentNextChapterPrefetchForForwardTurn();
+  bool isAtBookStart() const;
   void pageTurn(bool isForwardTurn, const char* source = "unknown");
   float getCurrentBookProgressPercent() const;
   void initializeCompletionPromptTrigger();

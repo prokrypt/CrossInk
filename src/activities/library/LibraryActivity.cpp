@@ -17,6 +17,7 @@
 
 #include "activities/home/BookActions.h"
 #include "activities/home/FileBrowserActionActivity.h"
+#include "activities/library/LibraryPrewarm.h"
 #include "activities/library/LibrarySettingsActivity.h"
 #include "activities/reader/EpubReaderActivity.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -87,6 +88,13 @@ void LibraryActivity::onExit() {
 bool LibraryActivity::rebuildIndex(const bool showScanning, const bool force) {
   uiReady = false;
   index.close();
+  // Home may have been indexing in the background; finishing that walk is
+  // cheaper than starting a new one, and usually it is already done.
+  // Only show the popup if the walk is not about to finish anyway.
+  if (LibraryPrewarm::active() && !LibraryPrewarm::finishForLibrary(300)) {
+    if (showScanning) GUI.drawPopup(renderer, tr(STR_LIBRARY_SCANNING));
+    LibraryPrewarm::finishForLibrary();
+  }
   const bool useMetadata = SETTINGS.libraryUseMetadata != 0;
   const uint32_t generation = Storage.libraryContentGeneration();
   if (!force && Storage.libraryScanCurrent() && index.open(library::libraryIndexPath()) &&
@@ -100,7 +108,8 @@ bool LibraryActivity::rebuildIndex(const bool showScanning, const bool force) {
   index.close();
   if (showScanning) GUI.drawPopup(renderer, tr(STR_LIBRARY_SCANNING));
   library::BuildStats stats;
-  scanFailed = !library::buildLibraryIndex("/", stats, useMetadata);
+  // A manual refresh also retries books whose metadata read failed before.
+  scanFailed = !library::buildLibraryIndex("/", stats, useMetadata, nullptr, /*retryFailedMetadata=*/force);
   if (scanFailed) LOG_ERR("LIB", "Library scan failed; retaining the previous index");
   if (!index.open(library::libraryIndexPath())) {
     // A failed one-time upgrade leaves the previous index on the card. Keep

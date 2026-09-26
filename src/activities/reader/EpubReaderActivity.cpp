@@ -2934,7 +2934,10 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  if (RenderLock::peek() && !touch.prev && !touch.next && mappedInput.wasReleased(MappedInputManager::Button::Back) &&
+  // The end-of-book screen has no build to cancel; its menu owns a short Back press.
+  const bool onEndOfBookScreen = currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount();
+  if (RenderLock::peek() && !onEndOfBookScreen && !touch.prev && !touch.next &&
+      mappedInput.wasReleased(MappedInputManager::Button::Back) &&
       mappedInput.getHeldTime() < ReaderUtils::GO_HOME_MS) {
     sectionBuildCancelRequested.store(true, std::memory_order_relaxed);
     goHomeAfterBuildCancel.store(true, std::memory_order_relaxed);
@@ -3064,6 +3067,8 @@ void EpubReaderActivity::loop() {
   const bool atEndOfBook = currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount();
   if (atEndOfBook) {
     clearPendingManualPageTurns();
+  } else {
+    queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
   }
 
   // Paged back into the book: release the end screen app and its theme tokens.
@@ -3074,8 +3079,10 @@ void EpubReaderActivity::loop() {
 
   // The render task is asynchronous. Prepare suggestions before an input can
   // leave the reader and move this EPUB into /Read/, while still allocating
-  // this UI state only when the end screen is reached.
-  if (atEndOfBook) {
+  // this UI state only when the end screen is reached. Skip while the render
+  // task is busy (it loads the same menu before drawing it) so this loop keeps
+  // polling buttons during the end-screen refresh instead of blocking on it.
+  if (atEndOfBook && !RenderLock::peek()) {
     RenderLock lock(*this);
     if (!endOfBookOptions) {
       endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);
@@ -3112,12 +3119,30 @@ void EpubReaderActivity::loop() {
   // The suggestion menu owns Confirm/Back/navigation before automatic page
   // turning and reader shortcuts. This keeps a hold from placing a bookmark
   // or opening dictionary selection behind the menu.
+  if (atEndOfBook && RenderLock::peek() && !(endOfBookOptions && endOfBookOptions->loaded())) {
+    // The render task is still loading the suggestions. Keep the first menu press
+    // for the menu instead of letting it fall through to the plain end-screen
+    // page-turn handling (which goes Home) or dropping it.
+    const auto key = EndOfBookOptions::readMenuKey(mappedInput);
+    if (key != EndOfBookOptions::MenuKey::None && queuedEndOfBookKey == EndOfBookOptions::MenuKey::None) {
+      queuedEndOfBookKey = key;
+    }
+    return;
+  }
   const bool endOfBookMenuOpen = atEndOfBook && endOfBookOptions && endOfBookOptions->menuActive();
+  if (!endOfBookMenuOpen) {
+    queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
+  }
   if (endOfBookMenuOpen) {
     longPressMenuHandled = false;
     lastPageTurnTime = millis();
     std::string openPath;
-    switch (endOfBookOptions->handleMenuInput(mappedInput, &openPath)) {
+    const auto queuedKey = queuedEndOfBookKey;
+    queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
+    const auto menuAction = queuedKey != EndOfBookOptions::MenuKey::None
+                                ? endOfBookOptions->applyMenuKey(queuedKey, &openPath)
+                                : endOfBookOptions->handleMenuInput(mappedInput, &openPath);
+    switch (menuAction) {
       case EndOfBookOptions::Action::OpenBook:
         activityManager.goToReader(openPath);
         return;
@@ -3269,6 +3294,7 @@ void EpubReaderActivity::loop() {
     if (sideLongPressSkipsChapter && !sideButtonLongPressHandled && (prevLongPressed || nextLongPressed)) {
       sideButtonLongPressHandled = true;
       clearPendingManualPageTurns();
+      if (!nextLongPressed && isAtBookStart()) return;
       if (!nextLongPressed && section && section->currentPage > 0) {
         section->currentPage = 0;
         requestUpdate();
@@ -3341,6 +3367,14 @@ void EpubReaderActivity::loop() {
       frontButtonLongPressHandled = true;
       if (SETTINGS.longPressButtonBehavior == CrossPointSettings::CHAPTER_SKIP) {
         clearPendingManualPageTurns();
+        if (!nextLongPressed && currentSpineIndex <= 0) {
+          // No previous chapter: go to the start of this one, or do nothing on the first page.
+          if (section && section->currentPage > 0) {
+            section->currentPage = 0;
+            requestUpdate();
+          }
+          return;
+        }
         if (currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount()) {
           if (nextLongPressed) {
             onGoHome();
@@ -3459,6 +3493,7 @@ void EpubReaderActivity::loop() {
 
   if (skipChapter) {
     clearPendingManualPageTurns();
+    if (!nextTriggered && isAtBookStart()) return;
     if (!nextTriggered && section && section->currentPage > 0) {
       section->currentPage = 0;
       requestUpdate();
@@ -5756,8 +5791,7 @@ bool EpubReaderActivity::drainPendingManualPageTurn() {
 
   ManualPageTurnRequest request;
   if (!pendingManualPageTurns.takeNext(request)) return false;
-  if (!section ||
-      (!activeFootnotePreview && !request.isForward && currentSpineIndex == 0 && section->currentPage == 0)) {
+  if (!section || (!request.isForward && isAtBookStart())) {
     clearPendingManualPageTurns(/*requestRecoveryRedraw=*/true);
     return false;
   }
@@ -5793,6 +5827,10 @@ void EpubReaderActivity::cancelSilentNextChapterPrefetchForForwardTurn() {
   // partial .bin behind.
   silentPrefetchCancelRequested.store(true, std::memory_order_relaxed);
   LOG_DBG("ERS", "Forward page turn requested while silent next-chapter indexing is busy; cancelling prefetch");
+}
+
+bool EpubReaderActivity::isAtBookStart() const {
+  return !activeFootnotePreview && section && currentSpineIndex == 0 && section->currentPage == 0;
 }
 
 void EpubReaderActivity::pageTurn(bool isForwardTurn, const char* source) {
@@ -5852,6 +5890,10 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn, const char* source) {
       globalStats.totalPagesTurned++;
     }
   } else {
+    if (isAtBookStart()) {
+      // First page of the book: nothing to go back to, so skip the redraw too.
+      return;
+    }
     recordCurrentPageReadingTime(source);
     armReadingPaceWarmup("back_page");
     if (section->currentPage > 0) {
