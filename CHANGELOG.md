@@ -56,6 +56,7 @@
 - Changing a reader font with incremental indexing now returns after the current reading position is ready, instead of waiting for the whole chapter to be re-indexed.
 - On the first page of an EPUB or XTC book, previous page and previous chapter (including the chapter-skip long press) now do nothing instead of redrawing or reloading the page.
 - A button press made while the end-of-book "Continue with" menu is still appearing is no longer lost: it moves the selection, opens the book, or goes back once the menu is ready.
+- The image viewer redraws the image after you close the pull-down top panel, the image action menu, or a prompt, instead of leaving the panel or menu on screen.
 
 ## [v1.6.0] - 2026-09-21
 
