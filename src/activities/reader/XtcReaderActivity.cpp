@@ -31,6 +31,8 @@
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "fontIds.h"
 #include "util/BookCacheUtils.h"
+#include "util/FileContentEquals.h"
+#include "util/InPlaceFileWrite.h"
 
 namespace {
 constexpr unsigned long MIN_READING_STATS_PAGE_MS = 2000UL;
@@ -1320,19 +1322,17 @@ bool XtcReaderActivity::saveProgress(const uint32_t page) {
   if (!xtc) {
     return false;
   }
-  HalFile f;
-  if (!Storage.openFileForWrite("XTR", xtc->getCachePath() + "/progress.bin", f)) {
-    return false;
-  }
   uint8_t data[4];
   data[0] = page & 0xFF;
   data[1] = (page >> 8) & 0xFF;
   data[2] = (page >> 16) & 0xFF;
   data[3] = (page >> 24) & 0xFF;
-  const bool written = f.write(data, sizeof(data)) == sizeof(data);
-  f.close();
-  if (!written) {
-    LOG_ERR("XTR", "Short write saving reader progress");
+  // Overwrite in place (no truncate, so no FAT churn and never an empty file),
+  // and skip the write entirely when the card already holds this position.
+  const std::string path = xtc->getCachePath() + "/progress.bin";
+  if (!fileContentEquals("XTR", path.c_str(), data, sizeof(data)) &&
+      !writeFileInPlace("XTR", path.c_str(), data, sizeof(data))) {
+    LOG_ERR("XTR", "Failed to save reader progress");
     return false;
   }
   progressSaveDebouncer.markPersisted(page);

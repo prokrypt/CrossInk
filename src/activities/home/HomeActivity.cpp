@@ -36,6 +36,7 @@
 #include "RecentBookProgress.h"
 #include "RecentBooksStore.h"
 #include "SavedItemsHomeActivity.h"
+#include "activities/library/LibraryPrewarm.h"
 #include "components/UITheme.h"
 #include "components/themes/dashboard/DashboardTheme.h"
 #include "components/themes/lyra/LyraCarouselTheme.h"
@@ -431,6 +432,8 @@ void appendCarouselCoverStateToKey(std::string& key, const RecentBook& book) {
   const std::string cachePath = getRecentBookCachePath(book);
   if (!cachePath.empty()) {
     appendHashedFileStateToKey(key, cachePath + "/progress.bin");
+    // EPUB progress alternates between two slots; either can hold the latest save.
+    if (FsHelpers::hasEpubExtension(book.path)) appendHashedFileStateToKey(key, cachePath + "/progress.bin.bak");
     if (FsHelpers::hasEpubExtension(book.path) || FsHelpers::hasXtcExtension(book.path)) {
       appendHashedFileStateToKey(key, cachePath + "/stats_v5.bin");
     }
@@ -880,6 +883,8 @@ void HomeActivity::onEnter() {
   minimalHomeNavIndex = -1;
   carouselFramesReady = false;
   carouselWarmupPending = isCarouselTheme;
+  inputSinceEnter = false;
+  libraryPrewarmHandOff = false;
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int recentBooksToLoad =
@@ -1081,6 +1086,10 @@ void HomeActivity::updateHighlightedBookContext(const bool allowEpubLoad) {
 
 void HomeActivity::onExit() {
   Activity::onExit();
+  // Opening the Library lets it finish the walk; anything else gets the card
+  // and heap back before it starts.
+  LibraryPrewarm::stop(libraryPrewarmHandOff);
+  libraryPrewarmHandOff = false;
 
   carouselMenuTouchDownIndex = -1;
   freeCoverBuffer();
@@ -1502,7 +1511,19 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
   return showedProgressPopup;
 }
 
+void HomeActivity::onUserInput() {
+  lastInputMs = millis();
+  inputSinceEnter = true;
+  LibraryPrewarm::pause();
+}
+
+// Keep the CPU at full speed while the background Library build runs so it
+// finishes and lets the chip sleep sooner; a paused build does not count.
+bool HomeActivity::preventAutoSleep() { return LibraryPrewarm::working(); }
+
 void HomeActivity::loop() {
+  LibraryPrewarm::tick(!inputSinceEnter || millis() - lastInputMs >= LIBRARY_PREWARM_RESUME_MS);
+
   if (quickActionsLongPowerHandled) {
     if (!mappedInput.isPressed(MappedInputManager::Button::Power)) {
       quickActionsLongPowerHandled = false;
@@ -2365,7 +2386,10 @@ void HomeActivity::onContinueReading() {
   }
 }
 
-void HomeActivity::onLibraryOpen() { activityManager.goToLibrary(); }
+void HomeActivity::onLibraryOpen() {
+  libraryPrewarmHandOff = true;
+  activityManager.goToLibrary();
+}
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 
@@ -2374,6 +2398,8 @@ void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
 
 void HomeActivity::onReadingStatsOpen() {
+  // Pushed screens stop Home's loop; don't leave a paused build holding heap.
+  LibraryPrewarm::stop(false);
   const int highlightedBookIdx = getHighlightedBookIndex();
   const std::string bookTitle =
       highlightedBookIdx >= 0 ? recentBooks[highlightedBookIdx].title : std::string(tr(STR_READING_STATS));
@@ -2417,6 +2443,7 @@ void HomeActivity::onReadingStatsOpen() {
 }
 
 void HomeActivity::onSavedItemsOpen() {
+  LibraryPrewarm::stop(false);
   startActivityForResult(std::make_unique<SavedItemsHomeActivity>(renderer, mappedInput),
                          [this](const ActivityResult&) { requestUpdate(); });
 }

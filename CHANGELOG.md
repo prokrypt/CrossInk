@@ -24,7 +24,9 @@
 - GitHub workflows and release documentation links now follow the `development` default branch.
 - Idle power saving now engages after 1 second instead of 3, and battery level is polled every 6 seconds instead of every 1.5, trading slightly less frequent battery updates for lower average power draw.
 - The Library opens instantly when nothing on the SD card has changed since its last scan, instead of rescanning the whole card on every visit. Moving the selection no longer re-reads each visible book from the card.
+- After a restart, Home starts indexing the Library in the background as soon as it appears, so the first Library visit usually opens without the "Reading your books" wait. Indexing pauses the moment you press a button or touch the screen and picks up where it left off.
 - Fewer SD card writes: session state and reading stats are no longer rewritten when nothing changed, and the reading percentage shown on Home is saved once when you leave a book instead of every 10 pages.
+- Far fewer SD card writes when saving your place: EPUB progress now alternates between two small slot files that are overwritten in place, so a save costs about 2 sector writes instead of roughly a dozen, and a save that would store the position already on the card (such as closing a book without turning a page) writes nothing. A save interrupted by power loss falls back to the previous save. TXT and XTC progress and the Home reading percentage are also overwritten in place instead of being truncated and rewritten.
 
 ### Fixed
 

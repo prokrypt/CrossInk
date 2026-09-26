@@ -11,10 +11,12 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 #include "RecentBooksStore.h"
 #include "activities/reader/EpubReaderUtils.h"
+#include "util/InPlaceFileWrite.h"
 
 namespace {
 constexpr uint32_t EPUB_PERCENT_CACHE_MAGIC = 0x45505250;  // "EPRP"
@@ -68,25 +70,21 @@ void saveCachedEpubPercentToCachePath(const std::string& cachePath, const float 
     return;
   }
 
-  FsFile file;
-  if (!Storage.openFileForWrite("RBPR", epubPercentCachePath(cachePath), file)) {
-    LOG_ERR("RBPR", "failed to open EPUB percent cache for write: %s", cachePath.c_str());
-    return;
-  }
-
-  const bool writeOk = serialization::tryWritePod(file, EPUB_PERCENT_CACHE_MAGIC) &&
-                       serialization::tryWritePod(file, EPUB_PERCENT_CACHE_VERSION) &&
-                       serialization::tryWritePod(file, basisPoints) && file.sync();
-  file.close();
-  if (!writeOk) {
+  // Same bytes tryWritePod() produced, written over the existing file: a torn
+  // write only costs a recompute, since the reader validates magic, version and range.
+  uint8_t record[sizeof(EPUB_PERCENT_CACHE_MAGIC) + sizeof(EPUB_PERCENT_CACHE_VERSION) + sizeof(basisPoints)];
+  memcpy(record, &EPUB_PERCENT_CACHE_MAGIC, sizeof(EPUB_PERCENT_CACHE_MAGIC));
+  memcpy(record + sizeof(EPUB_PERCENT_CACHE_MAGIC), &EPUB_PERCENT_CACHE_VERSION, sizeof(EPUB_PERCENT_CACHE_VERSION));
+  memcpy(record + sizeof(EPUB_PERCENT_CACHE_MAGIC) + sizeof(EPUB_PERCENT_CACHE_VERSION), &basisPoints,
+         sizeof(basisPoints));
+  if (!writeFileInPlace("RBPR", epubPercentCachePath(cachePath).c_str(), record, sizeof(record))) {
     LOG_ERR("RBPR", "failed to write EPUB percent cache: %s", cachePath.c_str());
   }
 }
 
 float loadEpubSizeProgressPercentFromCachePath(const std::string& cachePath) {
   EpubReaderUtils::Progress progress;
-  if (!EpubReaderUtils::readProgressFile("RBPR", cachePath + "/progress.bin", progress) &&
-      !EpubReaderUtils::readProgressFile("RBPR", cachePath + "/progress.bin.bak", progress)) {
+  if (!EpubReaderUtils::loadProgressFromCachePath("RBPR", cachePath, progress)) {
     return -1.0f;
   }
   if (!progress.hasPageCount || progress.pageCount <= 0) {
