@@ -20,13 +20,17 @@ void SdFirmwareUpdateActivity::onEnter() {
   // Build-identity marker — confirms which firmware build owns the SD update flow.
   LOG_INF("FW", "SdFirmwareUpdateActivity build=%s %s recovery=%d", __DATE__, __TIME__, recoveryMode ? 1 : 0);
   state = State::PICKING;
-  launchPicker();
+  // A preselected file is validated from loop(): selectFirmware() waits on the
+  // render task, which must not happen inside onEnter().
+  if (preselectedPath.empty()) launchPicker();
 }
 
 void SdFirmwareUpdateActivity::launchPicker() {
-  // Reuse the standard file browser, restricted to .bin files only.
+  // Reuse the standard file browser, restricted to .bin files only. Start in
+  // /firmware (where the upload script puts builds) when it exists.
+  const char* startDir = Storage.exists("/firmware") ? "/firmware" : "/";
   startActivityForResult(
-      std::make_unique<FileBrowserActivity>(renderer, mappedInput, "/", FileBrowserActivity::Mode::PickFirmware),
+      std::make_unique<FileBrowserActivity>(renderer, mappedInput, startDir, FileBrowserActivity::Mode::PickFirmware),
       [this](const ActivityResult& result) { onPickerResult(result); });
 }
 
@@ -47,7 +51,11 @@ void SdFirmwareUpdateActivity::onPickerResult(const ActivityResult& result) {
     finish();
     return;
   }
-  firmwarePath = path->path;
+  selectFirmware(path->path);
+}
+
+void SdFirmwareUpdateActivity::selectFirmware(std::string path) {
+  firmwarePath = std::move(path);
   LOG_DBG("FW", "Selected: %s", firmwarePath.c_str());
 
   {
@@ -190,6 +198,12 @@ void SdFirmwareUpdateActivity::performUpdate() {
 }
 
 void SdFirmwareUpdateActivity::loop() {
+  if (!preselectedPath.empty()) {
+    std::string path = std::move(preselectedPath);
+    preselectedPath.clear();
+    selectFirmware(std::move(path));
+    return;
+  }
   if (state == State::FAILED) {
     int x = 0;
     int y = 0;

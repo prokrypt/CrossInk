@@ -64,8 +64,19 @@ server stops and the device returns to where File Transfer was opened from.
 curl -X POST http://crosspoint.local/api/exit
 ```
 
-Responses have no body. Returns `204` once the exit is queued, or `409` while
-a WebSocket upload is still in progress.
+Optional form parameter:
+
+| Parameter | Description |
+|-----------|-------------|
+| `flash` | Path of a firmware `.bin` on the SD card. After leaving, the device opens **SD Card Firmware Update** for that file and asks for confirmation before flashing. |
+
+```bash
+curl -X POST -d "flash=/firmware/new.bin" http://crosspoint.local/api/exit
+```
+
+Responses have no body. Returns `204` once the exit is queued, `409` while a
+WebSocket upload is still in progress, `400` if `flash` is not a `.bin` path,
+or `404` if that file does not exist.
 
 ## File Management
 

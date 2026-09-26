@@ -27,6 +27,7 @@
 #include "QuickActions.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
+#include "SilentRestart.h"
 #include "WebDAVHandler.h"
 #include "WifiCredentialStore.h"
 #include "activities/boot_sleep/ImageFolderIndex.h"
@@ -614,8 +615,26 @@ void CrossPointWebServer::handleExit() {
     server->send(409);
     return;
   }
-  LOG_DBG("WEB", "Exit requested via /api/exit");
+  // Optional flash=<path to .bin>: after leaving, the device opens SD Card
+  // Firmware Update for that file and asks for confirmation before flashing.
+  std::string flashPath;
+  if (server->hasArg("flash")) {
+    const String requested = normalizeWebPath(server->arg("flash"));
+    String lower = requested;
+    lower.toLowerCase();
+    if (!lower.endsWith(".bin") || requested.length() >= MAX_SILENT_FIRMWARE_PATH || isProtectedPath(requested)) {
+      server->send(400);
+      return;
+    }
+    if (!Storage.exists(requested.c_str())) {
+      server->send(404);
+      return;
+    }
+    flashPath = requested.c_str();
+  }
+  LOG_DBG("WEB", "Exit requested via /api/exit (flash=%s)", flashPath.empty() ? "-" : flashPath.c_str());
   server->send(204);
+  exitFlashPath = std::move(flashPath);
   exitRequestPending = true;
 }
 
