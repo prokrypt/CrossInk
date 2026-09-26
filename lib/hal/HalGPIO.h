@@ -28,6 +28,12 @@ class HalGPIO {
   bool usbStateChanged = false;
   bool usbStateSampled = false;
   unsigned long lastUsbPollMs = 0;
+#if CROSSINK_APP_CAP_TOUCH
+  // Latched once the current contact leaves the stationary tap slop, so a drag
+  // that stays under the SDK's swipe distance is not reported as a tap.
+  bool touchDraggedPastTapSlop = false;
+  void trackTouchDrag();
+#endif
 
  public:
   // HAL-owned, normalized multi-touch representation. Activities must not
