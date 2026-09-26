@@ -10,7 +10,6 @@
 #include <string>
 
 #include "util/FileContentEquals.h"
-#include "util/WriteTiming.h"
 
 namespace {
 enum class StatsLoadResult : uint8_t { Ok, Invalid, NewerFormat };
@@ -201,10 +200,8 @@ bool saveToFile(const GlobalReadingStats& stats, const char* path, const char* b
   uint8_t data[GLOBAL_STATS_FILE_SIZE];
   serializeStats(stats, data);
 
-  ScopedWriteTimer timer("global-stats");
   // Reader exit saves unconditionally; a quick open-and-close changes nothing.
   const bool unchanged = fileContentEquals("GSTATS", path, data, sizeof(data));
-  timer.markChecked(unchanged);
   if (unchanged) return true;
 
   const std::string tmpPath = std::string(path) + ".tmp";
