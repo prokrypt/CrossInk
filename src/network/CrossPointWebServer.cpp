@@ -157,6 +157,7 @@ bool isWebSettingAvailable(const SettingInfo& setting) {
       case StrId::STR_HIDE_CLOCK:
       case StrId::STR_AUTO_BACKUP_STATS:
       case StrId::STR_CLOCK_UTC_OFFSET:
+      case StrId::STR_CLOCK_DST:
       case StrId::STR_CLOCK_FORMAT:
       case StrId::STR_DATE_FORMAT:
       case StrId::STR_DATE_SEPARATOR:
@@ -697,6 +698,7 @@ void CrossPointWebServer::handleExit() {
   // Status code only, no body: 204 on success.
   // Refuse while a WebSocket upload is still streaming; leaving would abort it.
   if (wsUploadInProgress) {
+    LOG_ERR("WEB", "/api/exit refused: WebSocket upload in progress");
     server->send(409);
     return;
   }
@@ -708,10 +710,12 @@ void CrossPointWebServer::handleExit() {
     String lower = requested;
     lower.toLowerCase();
     if (!lower.endsWith(".bin") || requested.length() >= MAX_SILENT_FIRMWARE_PATH || isProtectedPath(requested)) {
+      LOG_ERR("WEB", "/api/exit refused: invalid flash path %s", requested.c_str());
       server->send(400);
       return;
     }
     if (!Storage.exists(requested.c_str())) {
+      LOG_ERR("WEB", "/api/exit refused: %s not found", requested.c_str());
       server->send(404);
       return;
     }
@@ -901,9 +905,11 @@ bool CrossPointWebServer::scanFiles(const char* path, const FileVisitor visitor,
 
         if (info.isDirectory) {
           info.size = 0;
+          info.modified = 0;
           info.isEpub = false;
         } else {
           info.size = file.size();
+          info.modified = file.modificationTime();
           info.isEpub = isEpubFile(info.name);
         }
 
@@ -985,6 +991,7 @@ void CrossPointWebServer::handleFileListData() const {
         (*context.doc)["size"] = info.size;
         (*context.doc)["isDirectory"] = info.isDirectory;
         (*context.doc)["isEpub"] = info.isEpub;
+        if (info.modified != 0) (*context.doc)["mtime"] = info.modified;
 
         const size_t written = serializeJson(*context.doc, context.output, outputSize);
         if (written >= outputSize) {

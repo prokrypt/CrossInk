@@ -90,6 +90,16 @@ function formatFileSize(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)).toLocaleString() + " " + sizes[i];
 }
 
+// Decodes a packed FAT timestamp (date << 16 | time, the device's local time)
+// into "YYYY-MM-DD HH:MM". Returns "-" when the device sent none.
+function formatFileDate(packed) {
+  if (!packed) return "-";
+  const date = packed >>> 16;
+  const time = packed & 0xffff;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${1980 + (date >> 9)}-${pad((date >> 5) & 15)}-${pad(date & 31)} ${pad(time >> 11)}:${pad((time >> 5) & 63)}`;
+}
+
 // Maps each modal overlay id to its Escape/Cancel-button close function.
 // Click-outside uses closeUploadModal (a no-op mid-upload) to avoid
 // accidentally aborting an in-progress upload from a stray outside click.
@@ -127,12 +137,15 @@ async function hydrate() {
     if (closeFn) closeFn();
   });
 
-  // Enter confirms the rename/move text inputs
+  // Enter confirms the rename/move text inputs. Ignore the Enter that commits
+  // an IME composition and key auto-repeat, which would send a half-typed or
+  // duplicate request.
+  const isConfirmEnter = (e) => e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && !e.repeat;
   document.getElementById("renameNewName").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") confirmRename();
+    if (isConfirmEnter(e)) confirmRename();
   });
   document.getElementById("moveDestPath").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") confirmMove();
+    if (isConfirmEnter(e)) confirmMove();
   });
 
   const breadcrumbs = document.getElementById("directory-breadcrumbs");
@@ -190,7 +203,7 @@ async function hydrate() {
 
     // Add select-all checkbox column
     fileTableContent +=
-      '<tr><th style="width:40px"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)"></th><th>Name</th><th>Type</th><th>Size</th><th class="actions-col">Actions</th></tr>';
+      '<tr><th style="width:40px"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)"></th><th>Name</th><th>Type</th><th>Size</th><th class="modified-col">Modified</th><th class="actions-col">Actions</th></tr>';
 
     const sortedFiles = files.sort((a, b) => {
       // Directories first, then epub files, then other files, alphabetically within each group
@@ -213,6 +226,7 @@ async function hydrate() {
         fileTableContent += `<td><span class="file-icon">📁</span><a href="/files?path=${encodeURIComponent(folderPath)}" class="folder-link">${escapeHtml(file.name)}</a></td>`;
         fileTableContent += '<td><span class="folder-badge">FOLDER</span></td>';
         fileTableContent += "<td>-</td>";
+        fileTableContent += '<td class="modified-col">-</td>';
         fileTableContent += `<td class="actions-col"><div class="action-icon-group"><button class="delete-btn file-action-btn" data-action="delete" data-name="${escapeHtml(file.name)}" data-path="${encodeURIComponent(folderPath)}" data-is-folder="true" title="Delete folder">🗑️</button></div></td>`;
         fileTableContent += "</tr>";
       } else {
@@ -235,6 +249,7 @@ async function hydrate() {
           ? '<td><span class="epub-badge">EPUB</span></td>'
           : `<td>${escapeHtml(file.name.split(".").pop().toUpperCase())}</td>`;
         fileTableContent += `<td>${formatFileSize(file.size)}</td>`;
+        fileTableContent += `<td class="modified-col">${formatFileDate(file.mtime)}</td>`;
         fileTableContent += `<td class="actions-col"><div class="action-icon-group">`;
         fileTableContent += `<button class="move-btn file-action-btn" data-action="move" data-name="${escapeHtml(file.name)}" data-path="${encodeURIComponent(filePath)}" title="Move file">📂</button>`;
         fileTableContent += `<button class="rename-btn file-action-btn" data-action="rename" data-name="${escapeHtml(file.name)}" data-path="${encodeURIComponent(filePath)}" title="Rename file">✏️</button>`;
