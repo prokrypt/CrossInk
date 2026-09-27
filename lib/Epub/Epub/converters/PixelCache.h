@@ -70,6 +70,12 @@ struct PixelCache {
     flushedRows = 0;
     ok = false;
 
+    // The decoder clamps every block to the image height, so a block never
+    // writes more than h rows. Without this, a short upscaled image (a DC-only
+    // progressive JPEG block can span 121 rows for a 67-row image) never gets
+    // a cache and is re-decoded on every render pass.
+    if (maxBlockDstRows > h) maxBlockDstRows = h;
+
     int wantRows = maxBlockDstRows + 2;
     if (wantRows < MIN_BAND_ROWS) wantRows = MIN_BAND_ROWS;
     if (wantRows > h) wantRows = h;

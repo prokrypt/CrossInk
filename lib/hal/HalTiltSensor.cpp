@@ -35,7 +35,7 @@ void HalTiltSensor::begin() {
     LOG_INF("GYR", "SDK IMU initialized");
     return;
   }
-  LOG_ERR("GYR", "SDK IMU not found");
+  LOG_INF("GYR", "SDK IMU not found");
 }
 
 bool HalTiltSensor::wake() {

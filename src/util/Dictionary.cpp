@@ -135,8 +135,9 @@ std::string Dictionary::readConfiguredDictPath(const char* cachePath) {
   // Try per-book dictionary.bin first when cachePath is provided.
   if (cachePath && cachePath[0] != '\0') {
     snprintf(binPath, sizeof(binPath), "%s/%s", cachePath, DICT_BIN);
-    HalFile f;
-    if (Storage.openFileForRead("DICT", binPath, f)) {
+    // Quiet probe: a missing per-book file just means "Use Global".
+    HalFile f = Storage.open(binPath);
+    if (f) {
       const int sz = static_cast<int>(f.fileSize());
       if (sz > 0) {
         std::string result(sz, '\0');
@@ -155,8 +156,8 @@ std::string Dictionary::readConfiguredDictPath(const char* cachePath) {
 
   // Read global dictionary.bin.
   snprintf(binPath, sizeof(binPath), "%s/%s", GLOBAL_DICT_DIR, DICT_BIN);
-  HalFile f;
-  if (!Storage.openFileForRead("DICT", binPath, f)) return "";
+  HalFile f = Storage.open(binPath);  // quiet probe: no global dictionary configured
+  if (!f) return "";
   const int sz = static_cast<int>(f.fileSize());
   if (sz <= 0) {
     f.close();
