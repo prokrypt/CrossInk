@@ -2,6 +2,7 @@
 #include <HalDisplay.h>
 
 #include <array>
+#include <atomic>
 #include <functional>
 #include <optional>
 #include <string>
@@ -128,6 +129,20 @@ class HomeActivity final : public Activity {
   void loadAllBookStats();
   void loadRecentCovers(int coverHeight);
 
+  // Background Library indexing starts once Home's own boot work (first frames,
+  // covers, carousel warmup) is done, pauses while Home renders or sees input,
+  // and resumes after this long without further input.
+  static constexpr unsigned long LIBRARY_PREWARM_RESUME_MS = 500;
+  // Start anyway after this long if a theme never reports its covers loaded.
+  static constexpr unsigned long LIBRARY_PREWARM_SETTLE_FALLBACK_MS = 3000;
+  unsigned long lastInputMs = 0;
+  unsigned long enteredAtMs = 0;
+  bool inputSinceEnter = false;
+  // Written by the render task, read by the loop.
+  std::atomic<bool> homeRendering{false};
+  std::atomic<bool> bootWorkSettled{false};
+  bool libraryPrewarmHandOff = false;
+
  public:
   explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                         HomeMenuItem initialMenuItemValue = HomeMenuItem::NONE,
@@ -150,4 +165,6 @@ class HomeActivity final : public Activity {
   std::unique_ptr<Activity> createFrontlightReadingStatsActivity() override;
   void onFrontlightPanelClosed() override;
   bool handleFrontlightPanelResult(const FrontlightPanelResult& result) override;
+  void onUserInput() override;
+  bool preventAutoSleep() override;
 };

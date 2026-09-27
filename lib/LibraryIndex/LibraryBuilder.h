@@ -2,7 +2,7 @@
 
 // Builds the CLX1 index by walking the SD card once.
 //
-// The walk derives filename fallbacks and can read title, author, series, and subject metadata from
+// The walk derives filename fallbacks and can read title, author, series/order, and subject metadata from
 // EPUBs. Fresh metadata is reused from the previous index.
 //
 // Shape of the build, and why:
@@ -53,17 +53,30 @@ struct BuildStats {
   bool indexReplaced = false;
   bool ranksDegraded = false;
   bool dedupDegraded = false;
+  bool cancelled = false;  // the owner stopped the build; the previous index is untouched
+};
+
+// Lets a background owner pause or stop a build. `service` runs on the building
+// task between directory entries and during the later phases; it may block while
+// the owner wants the card and CPU back, and returns false to stop the build.
+struct BuildControl {
+  bool (*service)(void* context) = nullptr;
+  void* context = nullptr;
 };
 
 // Walk `rootPath`, write `/.crosspoint/library.idx`, and report what happened.
 // The previous index, including its monotonic "recently added" counter, is read
 // internally so callers cannot accidentally split one rebuild state across two
 // file opens.
-// `readMetadata` takes title, author, series, and subject from each EPUB. It
+// `readMetadata` takes title, author, series/order, and subject from each EPUB. It
 // stops the normal EPUB parser at the end of <metadata>, before the manifest,
 // without building the reader's spine, TOC, CSS, or section caches. Unchanged
-// books reuse these values from the prior Library index.
-bool buildLibraryIndex(const char* rootPath, BuildStats& stats, bool readMetadata = false);
+// books reuse these values from the prior Library index. An unchanged book
+// whose metadata read failed keeps its filename title rather than being parsed
+// again on every build; `retryFailedMetadata` (the Library's refresh) retries it.
+// `control` is optional; only one build may run at a time.
+bool buildLibraryIndex(const char* rootPath, BuildStats& stats, bool readMetadata = false,
+                       const BuildControl* control = nullptr, bool retryFailedMetadata = false);
 
 // Live index path, shared by the builder and activity.
 const char* libraryIndexPath();

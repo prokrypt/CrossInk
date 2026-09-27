@@ -121,16 +121,32 @@ h2 {
       overflow: auto;
       margin-bottom: 15px;
       border-radius: 6px;
+      /* Fixed height so the prev/next buttons stay put between images */
+      height: min(65vh, calc(90vh - 200px));
     }
 .image-preview-stage img {
       max-width: 100%;
-      max-height: 65vh;
+      max-height: 100%;
       object-fit: contain;
     }
 #imagePreviewDownload {
       display: inline-block;
       width: auto;
       text-decoration: none;
+    }
+.image-preview-actions {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+    }
+.image-preview-actions button {
+      width: auto;
+      margin: 0;
+      font-size: 1.4em;
+      line-height: 1;
+    }
+.image-preview-actions.single button {
+      display: none;
     }
 .picker-columns.picker-active {
       display: flex;
@@ -195,6 +211,9 @@ h2 {
       padding: 12px;
       text-align: left;
       border-bottom: 1px solid var(--border-color);
+    }
+.file-table .modified-col {
+      white-space: nowrap;
     }
 .file-table th {
       font-weight: 600;
@@ -1290,6 +1309,9 @@ h2 {
       }
       .file-table th {
         font-size: 0.85em;
+      }
+      .file-table .modified-col {
+        display: none;
       }
       .file-icon {
         margin-right: 4px;

@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <mbedtls/sha256.h>
@@ -10,7 +11,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <memory>
 
 #include "FirmwareBoardTag.h"
 #include "OtaBootSwitch.h"
@@ -22,7 +22,7 @@ constexpr uint8_t ESP_IMAGE_MAGIC = 0xE9;
 constexpr size_t MIN_FIRMWARE_SIZE = 64 * 1024;
 constexpr size_t SEC = SPI_FLASH_SEC_SIZE;  // 4 KiB
 constexpr size_t BLK = 64 * 1024;           // 64 KiB block-erase granularity
-constexpr size_t CHUNK = 4096;
+constexpr size_t CHUNK = 16 * 1024;
 constexpr size_t SHA_TRAILER = 32;
 constexpr uint8_t CHECKSUM_SEED = 0xEF;
 constexpr size_t HEADER_SIZE = 24;
@@ -69,6 +69,35 @@ const char* resultName(Result r) {
   return "?";
 }
 
+namespace {
+// Image I/O buffer. A large DMA-capable one lets an SDMMC card fill it in one
+// multi-block transfer and cuts per-read overhead on SPI cards; fall back to one
+// flash sector when the heap is too tight for it.
+class IoBuffer {
+ public:
+  IoBuffer() {
+    data_ = static_cast<uint8_t*>(heap_caps_malloc(CHUNK, MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+    if (data_) {
+      size_ = CHUNK;
+      return;
+    }
+    data_ = static_cast<uint8_t*>(heap_caps_malloc(SEC, MALLOC_CAP_8BIT));
+    size_ = data_ ? SEC : 0;
+  }
+  ~IoBuffer() { heap_caps_free(data_); }
+  IoBuffer(const IoBuffer&) = delete;
+  IoBuffer& operator=(const IoBuffer&) = delete;
+
+  explicit operator bool() const { return data_ != nullptr; }
+  uint8_t* get() const { return data_; }
+  size_t size() const { return size_; }
+
+ private:
+  uint8_t* data_ = nullptr;
+  size_t size_ = 0;
+};
+}  // namespace
+
 uint16_t runningPartitionChipId() {
   // Reading SPI flash is relatively expensive; the running image is immutable,
   // so cache its chip ID once per boot.
@@ -89,11 +118,12 @@ namespace {
 // Stream `length` bytes from `file` starting at the current read offset, feeding them through
 // both the XOR-checksum and SHA256 accumulators. Used by validateImageFile so the whole image
 // is verified end-to-end without holding it in RAM (ESP32-C3 only has ~380 KB).
-Result feedHashAndChecksum(HalFile& file, size_t length, uint8_t* xorAccum, mbedtls_sha256_context* sha, uint8_t* buf,
-                           board_tag::Scanner* tagScanner) {
+Result feedHashAndChecksum(HalFile& file, size_t length, uint8_t* xorAccum, mbedtls_sha256_context* sha,
+                           const IoBuffer& ioBuf, board_tag::Scanner* tagScanner) {
+  uint8_t* const buf = ioBuf.get();
   size_t remaining = length;
   while (remaining > 0) {
-    const size_t want = std::min<size_t>(CHUNK, remaining);
+    const size_t want = std::min<size_t>(ioBuf.size(), remaining);
     const int got = file.read(buf, want);
     if (got <= 0 || static_cast<size_t>(got) != want) return Result::READ_FAIL;
     if (sha) mbedtls_sha256_update(sha, buf, want);
@@ -144,7 +174,7 @@ Result validateOpenImageFile(HalFile& file, size_t partitionSize) {
   const uint8_t segCount = header[1];
   const bool hashAppended = header[23] != 0;
 
-  auto buf = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[CHUNK]);
+  const IoBuffer buf;
   if (!buf) {
     return Result::OOM;
   }
@@ -183,7 +213,7 @@ Result validateOpenImageFile(HalFile& file, size_t partitionSize) {
       return Result::BAD_SEGMENTS;
     }
 
-    const Result feedRes = feedHashAndChecksum(file, dataLen, &xorAccum, &shaCtx, buf.get(), &tagScanner);
+    const Result feedRes = feedHashAndChecksum(file, dataLen, &xorAccum, &shaCtx, buf, &tagScanner);
     if (feedRes != Result::OK) {
       mbedtls_sha256_free(&shaCtx);
       return feedRes;
@@ -278,7 +308,7 @@ Result flashValidatedFile(HalFile& file, ProgressCb onProgress, void* ctx) {
     return Result::READ_FAIL;
   }
 
-  auto buffer = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[CHUNK]);
+  const IoBuffer buffer;
   if (!buffer) {
     LOG_ERR("FLASH", "OOM");
     return Result::OOM;
@@ -299,9 +329,14 @@ Result flashValidatedFile(HalFile& file, ProgressCb onProgress, void* ctx) {
         return Result::ERASE_FAIL;
       }
       erasedUpto = streamPos + eraseLen;
+      // Once per 64 KiB block: lets the idle task and render task run without
+      // paying a tick per chunk.
+      delay(1);
     }
 
-    const size_t want = std::min<size_t>(CHUNK, firmwareSize - streamPos);
+    // Stop each chunk at the next erase boundary so the erase above always
+    // covers the whole write.
+    const size_t want = std::min<size_t>({buffer.size(), firmwareSize - streamPos, erasedUpto - streamPos});
     const int read = file.read(buffer.get(), want);
     if (read <= 0 || static_cast<size_t>(read) != want) {
       LOG_ERR("FLASH", "read @%u: got=%d want=%u", static_cast<unsigned>(streamPos), read, static_cast<unsigned>(want));
@@ -313,7 +348,6 @@ Result flashValidatedFile(HalFile& file, ProgressCb onProgress, void* ctx) {
     }
     streamPos += want;
     if (onProgress) onProgress(streamPos, firmwareSize, ctx);
-    delay(1);
   }
   if (!ota_boot::switchTo(dest)) {
     LOG_ERR("FLASH", "otadata switch failed");

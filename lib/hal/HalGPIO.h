@@ -134,6 +134,9 @@ class HalGPIO {
   unsigned long lastTouchHeldMs() const;
   bool wasSwipe(float& nxStart, float& nyStart, float& nxEnd, float& nyEnd) const;
   bool wasTouchActivity() const;
+  // GT911 sleep; see InputManager::setTouchSleep().
+  bool setTouchSleep(bool asleep);
+  bool isTouchAsleep() const;
 #else
   // cppcheck-suppress-begin functionStatic ; stubs mirror the touch-build instance API
   constexpr bool hasTouch() const { return false; }

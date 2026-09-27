@@ -90,6 +90,16 @@ function formatFileSize(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)).toLocaleString() + " " + sizes[i];
 }
 
+// Decodes a packed FAT timestamp (date << 16 | time, the device's local time)
+// into "YYYY-MM-DD HH:MM". Returns "-" when the device sent none.
+function formatFileDate(packed) {
+  if (!packed) return "-";
+  const date = packed >>> 16;
+  const time = packed & 0xffff;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${1980 + (date >> 9)}-${pad((date >> 5) & 15)}-${pad(date & 31)} ${pad(time >> 11)}:${pad((time >> 5) & 63)}`;
+}
+
 // Maps each modal overlay id to its Escape/Cancel-button close function.
 // Click-outside uses closeUploadModal (a no-op mid-upload) to avoid
 // accidentally aborting an in-progress upload from a stray outside click.
@@ -120,19 +130,27 @@ async function hydrate() {
 
   // Escape cancels whichever modal is currently open
   document.addEventListener("keydown", function (e) {
-    if (e.key !== "Escape") return;
     const openOverlay = document.querySelector(".modal-overlay.open");
     if (!openOverlay) return;
+    if (openOverlay.id === "imagePreviewModal" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      // A held key would queue a device download per auto-repeat
+      if (!e.repeat) stepImagePreview(e.key === "ArrowLeft" ? -1 : 1);
+      return;
+    }
+    if (e.key !== "Escape") return;
     const closeFn = MODAL_CANCEL_FNS[openOverlay.id];
     if (closeFn) closeFn();
   });
 
-  // Enter confirms the rename/move text inputs
+  // Enter confirms the rename/move text inputs. Ignore the Enter that commits
+  // an IME composition and key auto-repeat, which would send a half-typed or
+  // duplicate request.
+  const isConfirmEnter = (e) => e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && !e.repeat;
   document.getElementById("renameNewName").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") confirmRename();
+    if (isConfirmEnter(e)) confirmRename();
   });
   document.getElementById("moveDestPath").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") confirmMove();
+    if (isConfirmEnter(e)) confirmMove();
   });
 
   const breadcrumbs = document.getElementById("directory-breadcrumbs");
@@ -190,7 +208,7 @@ async function hydrate() {
 
     // Add select-all checkbox column
     fileTableContent +=
-      '<tr><th style="width:40px"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)"></th><th>Name</th><th>Type</th><th>Size</th><th class="actions-col">Actions</th></tr>';
+      '<tr><th style="width:40px"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)"></th><th>Name</th><th>Type</th><th>Size</th><th class="modified-col">Modified</th><th class="actions-col">Actions</th></tr>';
 
     const sortedFiles = files.sort((a, b) => {
       // Directories first, then epub files, then other files, alphabetically within each group
@@ -213,6 +231,7 @@ async function hydrate() {
         fileTableContent += `<td><span class="file-icon">📁</span><a href="/files?path=${encodeURIComponent(folderPath)}" class="folder-link">${escapeHtml(file.name)}</a></td>`;
         fileTableContent += '<td><span class="folder-badge">FOLDER</span></td>';
         fileTableContent += "<td>-</td>";
+        fileTableContent += '<td class="modified-col">-</td>';
         fileTableContent += `<td class="actions-col"><div class="action-icon-group"><button class="delete-btn file-action-btn" data-action="delete" data-name="${escapeHtml(file.name)}" data-path="${encodeURIComponent(folderPath)}" data-is-folder="true" title="Delete folder">🗑️</button></div></td>`;
         fileTableContent += "</tr>";
       } else {
@@ -235,6 +254,7 @@ async function hydrate() {
           ? '<td><span class="epub-badge">EPUB</span></td>'
           : `<td>${escapeHtml(file.name.split(".").pop().toUpperCase())}</td>`;
         fileTableContent += `<td>${formatFileSize(file.size)}</td>`;
+        fileTableContent += `<td class="modified-col">${formatFileDate(file.mtime)}</td>`;
         fileTableContent += `<td class="actions-col"><div class="action-icon-group">`;
         fileTableContent += `<button class="move-btn file-action-btn" data-action="move" data-name="${escapeHtml(file.name)}" data-path="${encodeURIComponent(filePath)}" title="Move file">📂</button>`;
         fileTableContent += `<button class="rename-btn file-action-btn" data-action="rename" data-name="${escapeHtml(file.name)}" data-path="${encodeURIComponent(filePath)}" title="Rename file">✏️</button>`;
@@ -260,13 +280,44 @@ function downloadUrl(filePath) {
   return `/download?path=${encodeURIComponent(filePath)}`;
 }
 
-function openImagePreview(url, name) {
+function openImagePreview(link) {
+  const url = link.getAttribute("href");
+  const name = link.textContent;
+  const links = previewLinks();
+  const row = link.closest("tr");
+  const info = [`${links.indexOf(link) + 1} / ${links.length}`, row.cells[3].textContent];
+  // No .modified-col without SD file times
+  const modified = row.querySelector(".modified-col")?.textContent;
+  if (modified && modified !== "-") info.push(`Modified ${modified}`);
+  const meta = document.getElementById("imagePreviewMeta");
+  meta.textContent = info.join(" · ");
   const img = document.getElementById("imagePreviewImg");
   document.getElementById("imagePreviewName").textContent = name;
+  // Browsers keep showing the previous image until the new one arrives
+  img.style.opacity = 0;
+  img.onload = img.onerror = (e) => {
+    img.style.opacity = "";
+    if (e.type !== "load") return;
+    info.splice(1, 0, `${img.naturalWidth} × ${img.naturalHeight}`);
+    meta.textContent = info.join(" · ");
+  };
   img.src = url;
   img.alt = name;
   document.getElementById("imagePreviewDownload").href = url;
+  document.getElementById("imagePreviewNav").classList.toggle("single", links.length < 2);
   document.getElementById("imagePreviewModal").classList.add("open");
+}
+
+// Only image rows get .image-preview-link (isImageFile); wraps at the ends.
+function previewLinks() {
+  return [...document.querySelectorAll("#file-table .image-preview-link")];
+}
+
+function stepImagePreview(dir) {
+  const links = previewLinks();
+  const current = document.getElementById("imagePreviewDownload").getAttribute("href");
+  const i = links.findIndex((l) => l.getAttribute("href") === current);
+  if (i >= 0 && links.length > 1) openImagePreview(links[(i + dir + links.length) % links.length]);
 }
 
 function closeImagePreview() {
@@ -1112,7 +1163,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const link = event.target.closest(".image-preview-link");
     if (!link) return;
     event.preventDefault();
-    openImagePreview(link.getAttribute("href"), link.textContent);
+    openImagePreview(link);
   });
 
   const qualitySlider = document.getElementById("qualitySlider");

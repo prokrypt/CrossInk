@@ -21,6 +21,7 @@
 #include "GlobalActions.h"
 #include "MappedInputManager.h"
 #include "QuickActions.h"
+#include "ReaderProgressShadow.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "XtcReaderChapterSelectionActivity.h"
@@ -31,6 +32,8 @@
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "fontIds.h"
 #include "util/BookCacheUtils.h"
+#include "util/FileContentEquals.h"
+#include "util/InPlaceFileWrite.h"
 
 namespace {
 constexpr unsigned long MIN_READING_STATS_PAGE_MS = 2000UL;
@@ -114,6 +117,7 @@ void XtcReaderActivity::onEnter() {
   }
 
   xtc->setupCacheDir();
+  progressSaveDebouncer.setShadowed(ReaderProgressShadow::bind(ReaderProgressShadow::Kind::Xtc, xtc->getCachePath()));
 
   // Activate reader-specific front button mapping (if configured).
   mappedInput.setReaderMode(true);
@@ -144,9 +148,11 @@ void XtcReaderActivity::onExit() {
 
   mappedInput.setReaderMode(false);
 
-  if (!flushQueuedProgress()) {
+  const bool progressFlushed = flushQueuedProgress();
+  if (!progressFlushed) {
     LOG_ERR("XTR", "Failed to flush debounced reader progress on exit");
   }
+  ReaderProgressShadow::unbind(progressFlushed);
 
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
@@ -217,32 +223,65 @@ void XtcReaderActivity::loop() {
     return;
   }
 
+  // A popup selection suppresses the Confirm release that follows its press.
+  // Read it once: wasReleased() consumes that suppression, and a second read
+  // in this loop would otherwise turn the same release into a real press.
+  const bool confirmReleased = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+
+  const bool atEndOfBook = currentPage >= xtc->getPageCount();
   // Paged back into the book: release the end screen app and its theme tokens.
-  {
+  if (!atEndOfBook) {
+    queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
     RenderLock lock(*this);
-    if (currentPage < xtc->getPageCount() && endOfBookOptions) {
+    if (endOfBookOptions) {
       endOfBookOptions.reset();
     }
+  }
+
+  // On the end screen, load the suggestions here while the render task is idle.
+  // While it is busy (it loads the same menu before drawing it), don't block on
+  // it, so this loop keeps polling buttons during the end-screen refresh.
+  if (atEndOfBook && !RenderLock::peek()) {
+    RenderLock lock(*this);
+    if (!endOfBookOptions) {
+      endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);
+      if (!endOfBookOptions) {
+        LOG_ERR("XTR", "OOM: EndOfBookOptions (%u bytes)", static_cast<unsigned>(sizeof(EndOfBookOptions)));
+      }
+    }
+    if (endOfBookOptions) {
+      endOfBookOptions->loadOnce(xtc->getPath());
+    }
+  }
+  if (atEndOfBook && RenderLock::peek() && !(endOfBookOptions && endOfBookOptions->loaded())) {
+    // The render task is still loading the suggestions. Keep the first menu press
+    // for the menu instead of dropping it or letting it reach the plain end-screen
+    // page-turn handling (which goes Home).
+    const auto key = EndOfBookOptions::readMenuKey(mappedInput, confirmReleased);
+    if (key != EndOfBookOptions::MenuKey::None && queuedEndOfBookKey == EndOfBookOptions::MenuKey::None) {
+      queuedEndOfBookKey = key;
+    }
+    return;
   }
 
   // While the end screen suggestion menu is showing it owns Confirm/Back/navigation
   // input. Anything it doesn't handle (e.g. long-press Back to the file browser) falls
   // through to the regular handlers below; page turns are absorbed by the end-of-book
-  // block.
+  // block. Menu input runs alongside a repaint (the menu's selection is atomic), so
+  // only the page change back into the book takes the render lock.
   EndOfBookOptions::Action endOfBookAction = EndOfBookOptions::Action::None;
   std::string openPath;
-  bool endOfBookNeedsUpdate = false;
-  {
-    RenderLock lock(*this);
-    if (currentPage >= xtc->getPageCount() && endOfBookOptions && endOfBookOptions->menuActive()) {
-      endOfBookAction = endOfBookOptions->handleMenuInput(mappedInput, &openPath);
-      if (endOfBookAction == EndOfBookOptions::Action::LastPage) {
-        const uint32_t pageCount = xtc->getPageCount();
-        currentPage = pageCount > 0 ? pageCount - 1 : 0;
-        endOfBookNeedsUpdate = true;
-      } else if (endOfBookAction == EndOfBookOptions::Action::Redraw) {
-        endOfBookNeedsUpdate = true;
-      }
+  const bool endOfBookMenuOpen = atEndOfBook && endOfBookOptions && endOfBookOptions->menuActive();
+  const auto queuedKey = queuedEndOfBookKey;
+  queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
+  if (endOfBookMenuOpen) {
+    endOfBookAction = queuedKey != EndOfBookOptions::MenuKey::None
+                          ? endOfBookOptions->applyMenuKey(queuedKey, &openPath)
+                          : endOfBookOptions->handleMenuInput(mappedInput, confirmReleased, &openPath);
+    if (endOfBookAction == EndOfBookOptions::Action::LastPage) {
+      RenderLock lock(*this);
+      const uint32_t pageCount = xtc->getPageCount();
+      currentPage = pageCount > 0 ? pageCount - 1 : 0;
     }
   }
   switch (endOfBookAction) {
@@ -254,17 +293,14 @@ void XtcReaderActivity::loop() {
       return;
     case EndOfBookOptions::Action::LastPage:
     case EndOfBookOptions::Action::Redraw:
-      if (endOfBookNeedsUpdate) {
-        requestUpdate();
-      }
+      requestUpdate();
       return;
     case EndOfBookOptions::Action::None:
       break;
   }
 
   if (longPressMenuHandled) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
-        !mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+    if (confirmReleased || !mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
       longPressMenuHandled = false;
     }
     return;
@@ -279,14 +315,14 @@ void XtcReaderActivity::loop() {
     handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK, QuickLockTrigger::LongMenu);
     return;
   }
-  if (longPressMenuAction == CrossPointSettings::LONG_MENU_QUICK_LOCK &&
-      mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MENU_MS) {
+  if (longPressMenuAction == CrossPointSettings::LONG_MENU_QUICK_LOCK && confirmReleased &&
+      mappedInput.getHeldTime() >= LONG_PRESS_MENU_MS) {
     mappedInput.suppressNextConfirmRelease();
     handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK, QuickLockTrigger::LongMenu);
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || ReaderUtils::isTouchMenuGesture(mappedInput)) {
+  if (confirmReleased || ReaderUtils::isTouchMenuGesture(mappedInput)) {
     openReaderMenu();
     return;
   }
@@ -342,6 +378,8 @@ void XtcReaderActivity::loop() {
             currentPage = pageCount > 0 ? pageCount - 1 : 0;
             needsUpdate = true;
           }
+        } else if (prevLongPressed && currentPage == 0) {
+          // First page of the book: nothing to skip back to.
         } else {
           uint32_t forwardReadSeconds = 0;
           const bool shouldRecordForwardRead =
@@ -446,6 +484,8 @@ void XtcReaderActivity::loop() {
             currentPage = pageCount > 0 ? pageCount - 1 : 0;
             needsUpdate = true;
           }
+        } else if (prevLongPressed && currentPage == 0) {
+          // First page of the book: nothing to skip back to.
         } else {
           uint32_t forwardReadSeconds = 0;
           const bool shouldRecordForwardRead =
@@ -536,6 +576,8 @@ void XtcReaderActivity::loop() {
         currentPage = pageCount > 0 ? pageCount - 1 : 0;
         needsUpdate = true;
       }
+    } else if (prevTriggered && currentPage == 0) {
+      // First page of the book: nothing to go back to, so skip the redraw too.
     } else if (prevTriggered) {
       recordCurrentPageReadingTime("page_back");
       if (currentPage >= static_cast<uint32_t>(skipAmount)) {
@@ -998,12 +1040,15 @@ bool XtcReaderActivity::executeReaderShortcutAction(const CrossPointSettings::SH
       activityManager.goToFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CALIBRE_WIRELESS:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToCalibreWireless(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::JOIN_NETWORK:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToJoinNetworkFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CREATE_HOTSPOT:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToHotspotFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::FILE_BROWSER:
@@ -1033,12 +1078,15 @@ bool XtcReaderActivity::executeLongPressBackAction() {
       activityManager.goToFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_CALIBRE_WIRELESS:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToCalibreWireless(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_JOIN_NETWORK:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToJoinNetworkFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_CREATE_HOTSPOT:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToHotspotFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_FILE_BROWSER:
@@ -1081,7 +1129,7 @@ void XtcReaderActivity::render(RenderLock&&) {
 
   const uint32_t pageToRender = currentPage;
   if (pageToRender >= xtc->getPageCount()) {
-    // This is the sole creation and load site: its app and theme tokens are
+    // Created here or by loop() only on the end screen: its app and theme tokens are
     // absent during normal reading and allocation failure leaves an empty end screen.
     if (!endOfBookOptions) {
       endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);
@@ -1320,27 +1368,30 @@ bool XtcReaderActivity::saveProgress(const uint32_t page) {
   if (!xtc) {
     return false;
   }
-  HalFile f;
-  if (!Storage.openFileForWrite("XTR", xtc->getCachePath() + "/progress.bin", f)) {
-    return false;
-  }
   uint8_t data[4];
   data[0] = page & 0xFF;
   data[1] = (page >> 8) & 0xFF;
   data[2] = (page >> 16) & 0xFF;
   data[3] = (page >> 24) & 0xFF;
-  const bool written = f.write(data, sizeof(data)) == sizeof(data);
-  f.close();
-  if (!written) {
-    LOG_ERR("XTR", "Short write saving reader progress");
+  // Overwrite in place (no truncate, so no FAT churn and never an empty file),
+  // and skip the write entirely when the card already holds this position.
+  const std::string path = xtc->getCachePath() + "/progress.bin";
+  if (!fileContentEquals("XTR", path.c_str(), data, sizeof(data)) &&
+      !writeFileInPlace("XTR", path.c_str(), data, sizeof(data))) {
+    LOG_ERR("XTR", "Failed to save reader progress");
     return false;
   }
   progressSaveDebouncer.markPersisted(page);
+  ReaderProgressShadow::notePersisted(page, 0);
   return true;
 }
 
 bool XtcReaderActivity::queueProgressSave(const uint32_t pageToRender) {
-  if (!progressSaveDebouncer.observe(pageToRender)) {
+  const bool saveDue = progressSaveDebouncer.observe(pageToRender);
+  if (progressSaveDebouncer.hasPending()) {
+    ReaderProgressShadow::notePending(pageToRender, 0);
+  }
+  if (!saveDue) {
     return true;
   }
   return saveProgress(pageToRender);

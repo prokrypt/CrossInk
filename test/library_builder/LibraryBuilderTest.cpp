@@ -47,6 +47,37 @@ bool recordAtPath(LibraryIndexFile& index, const std::string& path, ClixRecord& 
   return false;
 }
 
+// Build a genuine V5 name section by removing each V6 position and updating
+// record offsets. Changing only the version byte would leave V6 blobs behind.
+bool downgradeIndexToVersionFive() {
+  auto& bytes = fake::files[INDEX]->bytes;
+  ClixHeader header{};
+  std::memcpy(&header, bytes.data(), sizeof(header));
+  std::vector<uint8_t> old(bytes.begin(), bytes.begin() + header.nameStart);
+  for (uint16_t i = 0; i < header.bookCount; i++) {
+    ClixRecord record{};
+    std::memcpy(&record, bytes.data() + recordOffset(header, i), sizeof(record));
+    uint32_t next = header.nameLen;
+    if (i + 1 < header.bookCount) {
+      ClixRecord following{};
+      std::memcpy(&following, bytes.data() + recordOffset(header, i + 1), sizeof(following));
+      next = following.nameOff;
+    }
+    if (next < record.nameOff + sizeof(uint32_t) || next > header.nameLen) return false;
+    const uint32_t newOffset = static_cast<uint32_t>(old.size() - header.nameStart);
+    old.insert(old.end(), bytes.begin() + header.nameStart + record.nameOff,
+               bytes.begin() + header.nameStart + next - sizeof(uint32_t));
+    record.nameOff = newOffset;
+    std::memcpy(old.data() + recordOffset(header, i), &record, sizeof(record));
+  }
+  header.formatVersion = 5;
+  header.nameLen = static_cast<uint32_t>(old.size() - header.nameStart);
+  header.selfSize = static_cast<uint32_t>(old.size());
+  std::memcpy(old.data(), &header, sizeof(header));
+  bytes = std::move(old);
+  return true;
+}
+
 class LibraryBuilderTest : public ::testing::Test {
  protected:
   BuildStats stats;
@@ -154,6 +185,44 @@ TEST_F(LibraryBuilderTest, DirectoryIterationFailureRetainsPreviousIndex) {
   EXPECT_EQ(fake::files[INDEX]->bytes, old);
 }
 
+TEST_F(LibraryBuilderTest, OwnerCancellationRetainsPreviousIndex) {
+  initial();
+  const auto old = fake::files[INDEX]->bytes;
+  fake::add("/c.epub");
+  unsigned calls = 0;
+  BuildControl control;
+  control.context = &calls;
+  control.service = [](void* context) {
+    // Let the first entry through, then stop as a background owner would.
+    return ++*static_cast<unsigned*>(context) < 2;
+  };
+
+  EXPECT_FALSE(buildLibraryIndex("/", stats, false, &control));
+  EXPECT_TRUE(stats.cancelled);
+  EXPECT_GE(calls, 2u);
+  EXPECT_EQ(fake::files[INDEX]->bytes, old);
+
+  // The next build without an owner is unaffected by the earlier stop.
+  ASSERT_TRUE(buildLibraryIndex("/", stats, false));
+  EXPECT_FALSE(stats.cancelled);
+  EXPECT_EQ(stats.books, 3);
+}
+
+TEST_F(LibraryBuilderTest, OwnerThatNeverStopsBuildsNormally) {
+  unsigned calls = 0;
+  BuildControl control;
+  control.context = &calls;
+  control.service = [](void* context) {
+    ++*static_cast<unsigned*>(context);
+    return true;
+  };
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, false, &control));
+  EXPECT_FALSE(stats.cancelled);
+  EXPECT_GT(calls, 0u);
+  EXPECT_EQ(stats.books, 2);
+}
+
 TEST_F(LibraryBuilderTest, DirectoryOpenFailureRetainsPreviousIndex) {
   initial();
   const auto old = fake::files[INDEX]->bytes;
@@ -254,6 +323,7 @@ TEST_F(LibraryBuilderTest, MetadataStagingTruncatesAtUtf8Boundaries) {
 
 TEST_F(LibraryBuilderTest, SeriesAndGenreSurviveRebuildWithoutReparsing) {
   bookMetadata["/a.epub"].series = "Earthsea";
+  bookMetadata["/a.epub"].seriesIndex = "2.5";
   bookMetadata["/a.epub"].genre = "Fantasy";
   ASSERT_TRUE(buildLibraryIndex("/", stats, true));
   fake::parses = 0;
@@ -270,6 +340,36 @@ TEST_F(LibraryBuilderTest, SeriesAndGenreSurviveRebuildWithoutReparsing) {
   ASSERT_TRUE(index.readGenre(record, genre));
   EXPECT_EQ(series, "Earthsea");
   EXPECT_EQ(genre, "Fantasy");
+  uint32_t position = 0;
+  ASSERT_TRUE(index.readSeriesPosition(record, position));
+  EXPECT_NE(position, CLIX_UNKNOWN_SERIES_POSITION);
+}
+
+TEST_F(LibraryBuilderTest, SeriesSortUsesNumericOrderThenTitleAndPutsMissingNumbersLast) {
+  fake::add("/c.epub");
+  fake::add("/d.epub");
+  fake::add("/e.epub");
+  fake::add("/f.epub");
+  fake::add("/g.epub");
+  for (const char* path : {"/a.epub", "/b.epub", "/c.epub", "/d.epub", "/e.epub", "/f.epub", "/g.epub"})
+    bookMetadata[path].series = "Earthsea";
+  bookMetadata["/a.epub"].seriesIndex = "10";
+  bookMetadata["/b.epub"].seriesIndex = "2.5";
+  bookMetadata["/c.epub"].seriesIndex = "2";
+  bookMetadata["/d.epub"].seriesIndex = "invalid";
+  bookMetadata["/e.epub"].seriesIndex = "2";
+  bookMetadata["/f.epub"].seriesIndex = "-1";
+  bookMetadata["/g.epub"].seriesIndex = "0";
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  EXPECT_EQ(pathAt(index, SortOrder::SeriesAsc, 0), "/f.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::SeriesAsc, 1), "/g.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::SeriesAsc, 2), "/c.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::SeriesAsc, 3), "/e.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::SeriesAsc, 4), "/b.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::SeriesAsc, 5), "/a.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::SeriesAsc, 6), "/d.epub");
 }
 
 TEST_F(LibraryBuilderTest, SeriesAndGenreSortByFullFoldedNameWithMissingValuesLast) {
@@ -307,7 +407,20 @@ TEST_F(LibraryBuilderTest, SeriesSortRefinesLongSharedPrefixes) {
   EXPECT_EQ(pathAt(index, SortOrder::SeriesAsc, 1), "/a.epub");
 }
 
-TEST_F(LibraryBuilderTest, VersionThreeIndexReusesMetadataDuringSortUpgrade) {
+TEST_F(LibraryBuilderTest, SeriesPositionSortsAfterANameLongerThanTheKeySegment) {
+  const std::string series(48, 'a');
+  bookMetadata["/a.epub"].series = series;
+  bookMetadata["/b.epub"].series = series;
+  bookMetadata["/a.epub"].seriesIndex = "10";
+  bookMetadata["/b.epub"].seriesIndex = "2";
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  EXPECT_EQ(pathAt(index, SortOrder::SeriesAsc, 0), "/b.epub");
+  EXPECT_EQ(pathAt(index, SortOrder::SeriesAsc, 1), "/a.epub");
+}
+
+TEST_F(LibraryBuilderTest, VersionThreeIndexReparsesSeriesOrderDuringUpgrade) {
   bookMetadata["/a.epub"].series = "Earthsea";
   initial();
   LibraryIndexFile before;
@@ -316,13 +429,13 @@ TEST_F(LibraryBuilderTest, VersionThreeIndexReusesMetadataDuringSortUpgrade) {
   ASSERT_TRUE(recordAtPath(before, "/a.epub", original));
   before.close();
 
-  // Two-book v3 and v5 indexes have the same aligned nameStart. The v3
+  // Two-book v3 and v6 indexes have the same aligned nameStart. The v3
   // permutation section ends early, leaving padding before the name blob.
   fake::files[INDEX]->bytes[offsetof(ClixHeader, formatVersion)] = 3;
   fake::parses = 0;
   ASSERT_TRUE(buildLibraryIndex("/", stats, true));
-  EXPECT_EQ(fake::parses, 0u);
-  EXPECT_EQ(stats.metadataReused, 2);
+  EXPECT_EQ(fake::parses, 2u);
+  EXPECT_EQ(stats.metadataReused, 0);
   LibraryIndexFile after;
   ASSERT_TRUE(after.open(INDEX));
   EXPECT_EQ(after.header().formatVersion, CLIX_FORMAT_VERSION);
@@ -332,6 +445,59 @@ TEST_F(LibraryBuilderTest, VersionThreeIndexReusesMetadataDuringSortUpgrade) {
   std::string series;
   ASSERT_TRUE(after.readSeries(rebuilt, series));
   EXPECT_EQ(series, "Earthsea");
+}
+
+TEST_F(LibraryBuilderTest, VersionFiveIndexReparsesSeriesPositionsAndKeepsArrivalHistory) {
+  bookMetadata["/a.epub"].series = "Earthsea";
+  bookMetadata["/b.epub"].series = "Earthsea";
+  bookMetadata["/a.epub"].seriesIndex = "2";
+  bookMetadata["/b.epub"].seriesIndex = "1";
+  initial();
+  LibraryIndexFile before;
+  ASSERT_TRUE(before.open(INDEX));
+  ClixRecord original{};
+  ASSERT_TRUE(recordAtPath(before, "/a.epub", original));
+  before.close();
+
+  ASSERT_TRUE(downgradeIndexToVersionFive());
+  fake::parses = 0;
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+  EXPECT_EQ(fake::parses, 2u);
+  LibraryIndexFile after;
+  ASSERT_TRUE(after.open(INDEX));
+  EXPECT_EQ(pathAt(after, SortOrder::SeriesAsc, 0), "/b.epub");
+  ClixRecord rebuilt{};
+  ASSERT_TRUE(recordAtPath(after, "/a.epub", rebuilt));
+  EXPECT_EQ(rebuilt.firstSeen, original.firstSeen);
+}
+
+TEST_F(LibraryBuilderTest, InterruptedUpgradeKeepsValidOldLiveIndexOverStaleBackup) {
+  initial();
+  LibraryIndexFile before;
+  ASSERT_TRUE(before.open(INDEX));
+  ClixRecord original{};
+  ASSERT_TRUE(recordAtPath(before, "/a.epub", original));
+  before.close();
+  ASSERT_TRUE(downgradeIndexToVersionFive());
+
+  constexpr char BACKUP[] = "/.crosspoint/library.bak";
+  fake::files[BACKUP] = std::make_shared<fake::Node>(*fake::files[INDEX]);
+  ClixHeader backupHeader{};
+  std::memcpy(&backupHeader, fake::files[BACKUP]->bytes.data(), sizeof(backupHeader));
+  for (uint16_t i = 0; i < backupHeader.bookCount; i++) {
+    ClixRecord backupRecord{};
+    std::memcpy(&backupRecord, fake::files[BACKUP]->bytes.data() + recordOffset(backupHeader, i), sizeof(backupRecord));
+    backupRecord.firstSeen = 100 + i;
+    std::memcpy(fake::files[BACKUP]->bytes.data() + recordOffset(backupHeader, i), &backupRecord, sizeof(backupRecord));
+  }
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+  EXPECT_FALSE(Storage.exists(BACKUP));
+  LibraryIndexFile after;
+  ASSERT_TRUE(after.open(INDEX));
+  ClixRecord rebuilt{};
+  ASSERT_TRUE(recordAtPath(after, "/a.epub", rebuilt));
+  EXPECT_EQ(rebuilt.firstSeen, original.firstSeen);
 }
 
 TEST_F(LibraryBuilderTest, OldFoldVersionRebuildsTitleKeysWithoutReparsingBooks) {
@@ -383,7 +549,7 @@ TEST_F(LibraryBuilderTest, OldFoldVersionRebuildsTitleKeysWithoutReparsingBooks)
   EXPECT_EQ(rebuilt.firstSeen, original.firstSeen);
 }
 
-TEST_F(LibraryBuilderTest, VersionFourIndexKeepsFirstSeenAndMetadataDuringCreationTimeUpgrade) {
+TEST_F(LibraryBuilderTest, VersionFourIndexKeepsFirstSeenDuringUpgrade) {
   initial();
   LibraryIndexFile before;
   ASSERT_TRUE(before.open(INDEX));
@@ -391,14 +557,14 @@ TEST_F(LibraryBuilderTest, VersionFourIndexKeepsFirstSeenAndMetadataDuringCreati
   ASSERT_TRUE(recordAtPath(before, "/a.epub", original));
   before.close();
 
-  // For two books, the v4 and v5 side arrays fit before the same aligned
+  // For two books, the v4 and v6 side arrays fit before the same aligned
   // name section. This models an old index without changing its record data.
   fake::files[INDEX]->bytes[offsetof(ClixHeader, formatVersion)] = 4;
   fake::files[INDEX]->bytes[offsetof(ClixHeader, foldVersion)] = 1;
   fake::parses = 0;
   ASSERT_TRUE(buildLibraryIndex("/", stats, true));
-  EXPECT_EQ(fake::parses, 0u);
-  EXPECT_EQ(stats.metadataReused, 2);
+  EXPECT_EQ(fake::parses, 2u);
+  EXPECT_EQ(stats.metadataReused, 0);
   EXPECT_TRUE(stats.indexReplaced);
 
   LibraryIndexFile after;
@@ -427,8 +593,8 @@ TEST_F(LibraryBuilderTest, InterruptedUpgradeRestoresVersionThreeBackup) {
   fake::parses = 0;
 
   ASSERT_TRUE(buildLibraryIndex("/", stats, true));
-  EXPECT_EQ(fake::parses, 0u);
-  EXPECT_EQ(stats.metadataReused, 2);
+  EXPECT_EQ(fake::parses, 2u);
+  EXPECT_EQ(stats.metadataReused, 0);
   EXPECT_FALSE(Storage.exists(BACKUP));
   LibraryIndexFile after;
   ASSERT_TRUE(after.open(INDEX));
@@ -479,17 +645,52 @@ TEST_F(LibraryBuilderTest, VersionTwoIndexRebuildKeepsFirstSeenOrder) {
   EXPECT_EQ(rebuilt.firstSeen, original.firstSeen);
 }
 
-TEST_F(LibraryBuilderTest, ZeroTimestampAndFailedExtractionAreNeverFresh) {
+TEST_F(LibraryBuilderTest, ZeroTimestampIsNeverFresh) {
   fake::files["/a.epub"]->time = 0;
-  bookMetadata["/b.epub"].success = false;
   initial();
   fake::parses = 0;
 
   ASSERT_TRUE(buildLibraryIndex("/", stats, true));
 
-  EXPECT_EQ(fake::parses, 2u);
-  EXPECT_EQ(stats.metadataReused, 0);
-  EXPECT_TRUE(stats.indexReplaced);
+  EXPECT_EQ(fake::parses, 1u);
+  EXPECT_EQ(stats.metadataReused, 1);
+}
+
+TEST_F(LibraryBuilderTest, UnchangedFailedExtractionIsReusedUntilRetryIsRequested) {
+  bookMetadata["/b.epub"].success = false;
+  initial();
+  const auto old = fake::files[INDEX]->bytes;
+  fake::parses = 0;
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+
+  EXPECT_EQ(fake::parses, 0u);
+  EXPECT_EQ(stats.metadataReused, 2);
+  EXPECT_FALSE(stats.indexReplaced);
+  EXPECT_EQ(fake::files[INDEX]->bytes, old);
+
+  bookMetadata["/b.epub"].success = true;
+  bookMetadata["/b.epub"].title = "Recovered";
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true, nullptr, /*retryFailedMetadata=*/true));
+
+  EXPECT_EQ(fake::parses, 1u);
+  EXPECT_EQ(stats.metadataReused, 1);
+  LibraryIndexFile after;
+  ASSERT_TRUE(after.open(INDEX));
+  ClixRecord record{};
+  ASSERT_TRUE(recordAtPath(after, "/b.epub", record));
+  EXPECT_EQ(record.metadataStatus, CLIX_METADATA_EXTRACTED);
+}
+
+TEST_F(LibraryBuilderTest, ChangedFailedExtractionIsParsedAgain) {
+  bookMetadata["/b.epub"].success = false;
+  initial();
+  fake::files["/b.epub"]->time += 1;
+  fake::parses = 0;
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+
+  EXPECT_EQ(fake::parses, 1u);
 }
 
 TEST_F(LibraryBuilderTest, ZeroTimestampDoesNotReuseStaleEpubCache) {

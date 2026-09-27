@@ -261,6 +261,8 @@ class EpubReaderActivity final : public Activity {
   bool pendingReadFolderMove = false;
   // The end screen owns these UI resources only while it is visible.
   std::unique_ptr<EndOfBookOptions> endOfBookOptions;
+  // First menu press made while the end-of-book menu was still loading (main loop only).
+  EndOfBookOptions::MenuKey queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
@@ -383,6 +385,10 @@ class EpubReaderActivity final : public Activity {
   bool queueProgressSave(int spineIndex, int currentPage, int pageCount, bool forceSave = false);
   bool flushQueuedProgress();
   bool saveFootnoteOriginProgress();
+  // Saves the position now, the way onExit() does (the link origin while in a
+  // footnote). Used before handing off to anything that can silently restart
+  // the device, which reboots without running onExit().
+  void saveProgressBeforeRestart();
   void cacheCurrentSectionPosition();
   void pauseReadingPaceTimer(const char* reason = "unknown");
   void resumeReadingPaceTimer(const char* reason = "unknown");
@@ -459,6 +465,7 @@ class EpubReaderActivity final : public Activity {
   void clearPendingManualPageTurns(bool requestRecoveryRedraw = true);
   void finishManualPageTurnBrakeIfReady();
   void cancelSilentNextChapterPrefetchForForwardTurn();
+  bool isAtBookStart() const;
   void pageTurn(bool isForwardTurn, const char* source = "unknown");
   float getCurrentBookProgressPercent() const;
   void initializeCompletionPromptTrigger();
@@ -561,6 +568,10 @@ class EpubReaderActivity final : public Activity {
   // Returns false if the page cannot be loaded (missing cache / file error).
   static bool drawCurrentPageToBuffer(const std::string& filePath, GfxRenderer& renderer);
   static BookReaderSettingsData readBookReaderSettings(const Epub& epub);
+  // Whether the reader lays this book out in landscape: its own orientation
+  // override, else the global setting. Picks the section cache that position
+  // sync reads outside the reader.
+  static bool bookUsesLandscapeLayout(const Epub& epub);
   static uint8_t loadBookRenderMode(const std::string& filePath);
   static bool saveBookRenderMode(const std::string& filePath, uint8_t renderMode);
   static bool resetBookReaderSettings(const std::string& filePath);

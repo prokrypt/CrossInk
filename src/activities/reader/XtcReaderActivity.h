@@ -48,6 +48,8 @@ class XtcReaderActivity final : public Activity {
   ReaderProgressSaveDebouncer progressSaveDebouncer;
   // The end screen owns these UI resources only while it is visible.
   std::unique_ptr<EndOfBookOptions> endOfBookOptions;
+  // First menu press made while the end-of-book menu was still loading (main loop only).
+  EndOfBookOptions::MenuKey queuedEndOfBookKey = EndOfBookOptions::MenuKey::None;
 
   enum class StatusBarOverlayPosition { Bottom, Top };
   struct StatusBarInfo {
@@ -127,7 +129,11 @@ class XtcReaderActivity final : public Activity {
   std::string getCurrentBookTitle() const override { return xtc ? xtc->getTitle() : std::string{}; }
   bool getFrontlightPanelBookDetails(FrontlightPanelBookDetails& details) override;
   std::unique_ptr<Activity> createFrontlightReadingStatsActivity() override;
-  void onFrontlightPanelOpened() override { pauseReadingStatsTimer("frontlight_panel"); }
+  void onFrontlightPanelOpened() override {
+    pauseReadingStatsTimer("frontlight_panel");
+    // The panel leads to Settings, whose update and font downloads restart the device.
+    flushQueuedProgress();
+  }
   void onFrontlightPanelClosed() override;
   bool handleFrontlightPanelResult(const FrontlightPanelResult& result) override;
 

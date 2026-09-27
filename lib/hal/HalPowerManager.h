@@ -34,6 +34,12 @@ class HalPowerManager {
   // Held only for the duration of an EPD busy-wait (see beginDisplayBusyWait),
   // so tickless idle can never light-sleep mid-refresh.
   esp_pm_lock_handle_t displayPmLock = nullptr;
+  // cpuFreqLock is wanted while the device is active, except during an EPD
+  // busy-wait, where the CPU only waits on the panel and can idle at the DFS
+  // floor. cpuFreqLockHeld tracks what has actually been acquired.
+  bool cpuFreqLockHeld = false;
+  bool displayBusyWaitActive = false;
+  void syncCpuFreqLock();
   // Held while USB Drive owns the USB-OTG PHY. TinyUSB cannot service the host
   // across a light-sleep window, and USJ_NO_AUTO_LS_ON_CONNECTION only watches
   // the Serial/JTAG controller, not OTG.
@@ -45,9 +51,10 @@ class HalPowerManager {
                                           // path only — I2C/X3 path stores 0-100 directly)
   mutable unsigned long _batteryLastPollMs = 0;  // Timestamp of last battery read in milliseconds
 
-  enum LockMode { None, NormalSpeed };
-  LockMode currentLockMode = None;
-  SemaphoreHandle_t modeMutex = nullptr;  // Protect access to currentLockMode
+  // Live Lock instances. The render task, background work and deep-sleep prep
+  // can overlap, so each keeps the full clock until the last one ends.
+  uint8_t lockCount = 0;
+  SemaphoreHandle_t modeMutex = nullptr;  // Protect access to lockCount
 
  public:
 #if defined(BOARD_HAS_PSRAM)
@@ -58,9 +65,9 @@ class HalPowerManager {
   // DFS floor when power management is enabled. 80 MHz keeps APB pinned at
   // 80 MHz across every mode, so SPI dividers computed at bus setup stay valid
   // no matter what the CPU clock is doing.
-  static constexpr int DFS_MIN_FREQ = 80;                      // MHz
-  static constexpr unsigned long IDLE_POWER_SAVING_MS = 1000;  // ms
-  static constexpr unsigned long BATTERY_POLL_MS = 6000;       // ms
+  static constexpr int DFS_MIN_FREQ = 80;                     // MHz
+  static constexpr unsigned long IDLE_POWER_SAVING_MS = 250;  // ms
+  static constexpr unsigned long BATTERY_POLL_MS = 6000;      // ms
 
   void begin();
 
@@ -74,12 +81,19 @@ class HalPowerManager {
   void beginDisplayBusyWait();
   void endDisplayBusyWait();
 
+  // Keeps light sleep off while a refresh runs in the background and the
+  // render task goes on working, as the deferred menu refresh does. Unlike the
+  // busy-wait hooks it leaves the CPU clock alone, since renders can run in
+  // the meantime.
+  void beginDisplayRefreshHold();
+  void endDisplayRefreshHold();
+
   // Keeps the device out of light sleep while USB Drive is exposing the SD card
   // over USB-OTG. Idempotent, so repeated end calls on exit paths are safe.
   void setUsbDriveActive(bool active);
 
   // Setup wake up GPIO and enter deep sleep
-  // Should be called inside main loop() to handle the currentLockMode
+  // Should be called inside main loop() to handle the lockCount
   void startDeepSleep(HalGPIO& gpio) const;
 
   // Get battery percentage (range 0-100)
@@ -107,10 +121,10 @@ class HalPowerManager {
 
   // RAII helper class to manage power saving locks
   // Usage: create an instance of Lock in a scope to disable power saving, for example when running a task that needs
-  // full performance. When the Lock instance is destroyed (goes out of scope), power saving will be re-enabled.
+  // full performance. When the last Lock instance is destroyed (goes out of scope), power saving will be re-enabled.
+  // Locks may overlap across tasks and nest.
   class Lock {
     friend class HalPowerManager;
-    bool valid = false;
 
    public:
     explicit Lock();

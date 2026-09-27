@@ -444,6 +444,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Value 48 = UTC+0, 0 = UTC-12:00, 104 = UTC+14:00.
   // Quarter-hour granularity supports oddball zones like Nepal (+5:45) and Chatham (+12:45).
   uint8_t clockUtcOffsetQ = 48;
+  // Daylight-saving rule applied on top of clockUtcOffsetQ (DaylightSaving::Rule; 0 = off).
+  uint8_t clockDstRule = 0;
   // Clock display format: 0 = 24-hour, 1 = 12-hour
   uint8_t clockFormat = 0;
   // Date display format. Values match HalClock::DateFormat; 0 preserves the existing "Jan 01, 2026" default.
@@ -600,6 +602,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t libraryShowXtc = 1;
   uint8_t libraryShowTxt = 1;
   uint8_t libraryShowMarkdown = 1;
+  uint8_t libraryHideFinishedBooks = 0;
   // Hide file extensions in the file browser right-side value column (0 = show, 1 = hide)
   uint8_t hideFileExtension = 0;
   // File browser display row style (0 = one-line theme list, 1 = two-line compact display)

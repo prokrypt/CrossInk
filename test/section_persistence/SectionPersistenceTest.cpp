@@ -1,11 +1,14 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+// Std headers must come before the macro hacks: `#define class struct` breaks their templates.
 #define class struct
 #define private public
 #include "Epub/Section.h"

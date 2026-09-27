@@ -32,7 +32,8 @@ The main data directory is `.crosspoint` on the SD card. It stores render caches
 ├── home_carousel_cache.bin # Lyra Carousel home-screen snapshot cache
 ├── sleep_frame.bin         # Temporary sleep overlay framebuffer, when used
 ├── epub_12471232/          # Each EPUB is cached to epub_<hash>
-│   ├── progress.bin        # Reading position (chapter, page, etc.)
+│   ├── progress.bin        # Reading position slot A (chapter, page, etc.)
+│   ├── progress.bin.bak    # Reading position slot B; the newer valid slot wins
 │   ├── stats.bin           # Legacy per-book reading stats
 │   ├── stats_v5.bin        # Version 5 per-book reading stats
 │   ├── reader_settings.bin # Per-book reader settings, render mode, and auto-page-turn interval

@@ -58,6 +58,17 @@ struct ImageFolderIndexRecord {
 
 ## `/.crosspoint/library.idx`
 
+### Version 6
+
+Each book's name blob now ends with a `uint32_t` series position after the
+length-prefixed genre. The value is a sortable encoding of a finite signed
+IEEE-754 single-precision number; `0xFFFFFFFF` means missing or invalid. Series
+sorting compares folded series name, then this position, then title order. Missing
+positions follow numbered books within a series. Calibre `series_index` and
+EPUB 3 `group-position` supply the value. Version 5 and earlier indexes rebuild
+on the next Library scan; EPUB metadata is reread when enabled to obtain the new
+field, while `firstSeen` history survives reconciliation.
+
 ### Version 5
 
 Date Added now uses the filesystem creation timestamp. A title-ordered array of
@@ -126,15 +137,15 @@ reconciliation instead: `openForReconciliation()` accepts stale sort/search
 keys so each book's `firstSeen` arrival order survives across the rebuild
 even though its fold and permutations are regenerated.
 
-CrossInk's format version is `5`; older indexes rebuild automatically. Versions
-2, 3, and 4 can be read for reconciliation so arrival history survives. The fold
-version is `2`.
+CrossInk's format version is `6`; older indexes rebuild automatically. Versions
+2 through 5 can be read for reconciliation so arrival history survives. The fold
+version is `3`.
 
 ```c++
 struct ClixHeader {            // 64 bytes, padded to the first 512-byte sector
     char magic[4];              // "CLX1"
-    u8 formatVersion;           // 5
-    u8 foldVersion;             // 2
+    u8 formatVersion;           // 6
+    u8 foldVersion;             // 3
     u8 flags;                   // bit0: ranks degraded, bit1: dedup degraded, bit2: arrival degraded
     u8 metadataEnabled;         // 0 or 1
     u16 bookCount;
@@ -173,9 +184,9 @@ struct ClixFolderHeader {        // one per indexed folder, back to back
 The name blob for each record (found via `nameOff` into the `names` section)
 holds, back to back: an 8-byte FNV-1a path hash of the book's complete path
 (the identity used by rebuild reconciliation and by "is this book already in
-the index" lookups), the filename, then three length-prefixed fields —
+the index" lookups), the filename, then five length-prefixed fields —
 display author, title, the pre-spelling-harmonisation source author, series,
-and genre.
+and genre. Version 6 appends the four-byte series position.
 
 ## `book.bin`
 
@@ -403,6 +414,41 @@ book is renamed or moved outside CrossInk, the path hash changes, so the old
 clipping file may no longer be associated with the book until the file is moved
 back or the clipping store is migrated.
 
+## EPUB `progress.bin` and `progress.bin.bak`
+
+### Slot record (20 bytes)
+
+The two files are fixed-size slots. Each save overwrites the slot holding the
+older record in place (no truncate, no rename), so a save touches one data
+sector plus the directory entry. A torn write fails the CRC and the reader uses
+the other slot, which holds the previous save. Saves whose position matches the
+current record are skipped.
+
+Binary layout (little endian):
+
+- `[0-1]` spine index (`uint16_t`)
+- `[2-3]` page number (`uint16_t`, `0xFFFF` reads as page 0)
+- `[4-5]` page count (`uint16_t`)
+- `[6-9]` visible-text offset (`uint32_t`, `0` when absent)
+- `[10]` marker `0xC5`
+- `[11]` flags (`bit0=visible-text offset present`)
+- `[12-15]` sequence number (`uint32_t`, compared modulo 2^32)
+- `[16-19]` CRC-32 (IEEE) of bytes `0-15`
+
+Selection: a legacy `progress.bin` wins (only older firmware writes it, and it
+writes `progress.bin` last); otherwise the valid slot with the newer sequence
+number. The next save targets whichever file is not a valid slot record,
+`progress.bin` first, then the older slot.
+
+Bytes `0-9` are the legacy record, so older firmware, which reads at most 10
+bytes, still finds a position in `progress.bin` (at most one save stale).
+
+### Legacy records
+
+4 bytes (spine, page), 6 bytes (plus page count), or 10 bytes (plus visible-text
+offset), written by older firmware through a temp file and a
+`progress.bin` -> `progress.bin.bak` rotation. Still read; replaced on the next save.
+
 ## `stats_v5.bin`
 
 ### Version 5
@@ -435,6 +481,13 @@ Binary layout:
 - `[69-72]` `estimatedTimeLeftSeconds` (`uint32_t` LE, `0` means unavailable)
 
 ## `section.bin`
+
+### Version 78
+
+Version 78 keeps the serialized layout unchanged. It was bumped because inline
+CSS padding now affects dialogue and other styled text positions. Complete files
+use byte `78`; suspended partials use the previously unused sentinel `0xF2`, so
+version 77 partials (`0xF3`) rebuild instead of resuming under the new layout.
 
 ### Version 77
 

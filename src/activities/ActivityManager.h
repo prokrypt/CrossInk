@@ -97,6 +97,9 @@ class ActivityManager {
   TaskHandle_t renderTaskHandle = nullptr;
   static void renderTaskTrampoline(void* param);
   [[noreturn]] virtual void renderTaskLoop();
+  // Whether a FAST refresh in this activity's render may return before the waveform ends.
+  static bool allowsDeferredRefresh(const Activity& activity);
+  static constexpr uint32_t DEFERRED_REFRESH_POLL_MS = 5;
 
   // Set by requestUpdateAndWait(); read and cleared by the render task after render completes.
   // Note: only one waiting task is supported at a time
@@ -145,7 +148,8 @@ class ActivityManager {
   void goToNearbyBookReceive();
   void goToSettings(bool dismissOnUpSwipe = false);
   void goToFileBrowser(std::string path = {});
-  void goToLibrary();
+  // False when the Library could not be allocated and nothing changed.
+  bool goToLibrary();
   void goToBrowser();
   bool goToOpdsServer(uint32_t serverIndex, bool networkBootReady = false);
   void goToReader(std::string path, bool suppressBackRelease = false, bool allowFastInitialRefresh = false,

@@ -48,6 +48,7 @@ void HalPowerManager::begin() {
   } else {
     // Matches the initial isLowPower == false: the device boots active.
     esp_pm_lock_acquire(cpuFreqLock);
+    cpuFreqLockHeld = true;
   }
   if (esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "epd-refresh", &displayPmLock) != ESP_OK) {
     LOG_ERR("PWR", "Failed to create display no-light-sleep lock; refresh may light-sleep");
@@ -73,13 +74,51 @@ void HalPowerManager::begin() {
 #endif
 }
 
+#if CONFIG_PM_ENABLE
+// Caller holds modeMutex.
+void HalPowerManager::syncCpuFreqLock() {
+  if (cpuFreqLock == nullptr) return;
+  const bool wanted = !isLowPower && !displayBusyWaitActive;
+  if (wanted == cpuFreqLockHeld) return;
+  if (wanted) {
+    esp_pm_lock_acquire(cpuFreqLock);
+  } else {
+    esp_pm_lock_release(cpuFreqLock);
+  }
+  cpuFreqLockHeld = wanted;
+}
+#endif
+
 void HalPowerManager::beginDisplayBusyWait() {
+#if CONFIG_PM_ENABLE
+  if (displayPmLock != nullptr) esp_pm_lock_acquire(displayPmLock);
+  // The panel runs its waveform on its own; the CPU only waits for BUSY, so
+  // let DFS drop it to the floor for the duration. displayPmLock still keeps
+  // it out of light sleep.
+  if (modeMutex != nullptr) xSemaphoreTake(modeMutex, portMAX_DELAY);
+  displayBusyWaitActive = true;
+  syncCpuFreqLock();
+  if (modeMutex != nullptr) xSemaphoreGive(modeMutex);
+#endif
+}
+
+void HalPowerManager::endDisplayBusyWait() {
+#if CONFIG_PM_ENABLE
+  if (modeMutex != nullptr) xSemaphoreTake(modeMutex, portMAX_DELAY);
+  displayBusyWaitActive = false;
+  syncCpuFreqLock();
+  if (modeMutex != nullptr) xSemaphoreGive(modeMutex);
+  if (displayPmLock != nullptr) esp_pm_lock_release(displayPmLock);
+#endif
+}
+
+void HalPowerManager::beginDisplayRefreshHold() {
 #if CONFIG_PM_ENABLE
   if (displayPmLock != nullptr) esp_pm_lock_acquire(displayPmLock);
 #endif
 }
 
-void HalPowerManager::endDisplayBusyWait() {
+void HalPowerManager::endDisplayRefreshHold() {
 #if CONFIG_PM_ENABLE
   if (displayPmLock != nullptr) esp_pm_lock_release(displayPmLock);
 #endif
@@ -114,14 +153,15 @@ void HalPowerManager::setPowerSaving(bool enabled) {
     enabled = false;
   }
 
-  const LockMode mode = currentLockMode;
+  const bool locked = lockCount > 0;
 
-  if (mode == None && enabled && !isLowPower) {
+  if (!locked && enabled && !isLowPower) {
     LOG_DBG("PWR", "Going to low-power mode");
 #if CONFIG_PM_ENABLE
     // DFS owns the clock here: dropping the lock is what lets the CPU fall to
     // DFS_MIN_FREQ and lets the idle task light-sleep between loop ticks.
-    if (cpuFreqLock != nullptr) esp_pm_lock_release(cpuFreqLock);
+    isLowPower = true;
+    syncCpuFreqLock();
 #else
     if (!setCpuFrequencyMhz(LOW_POWER_FREQ)) {
       LOG_DBG("PWR", "Failed to set CPU frequency = %d MHz", LOW_POWER_FREQ);
@@ -133,10 +173,11 @@ void HalPowerManager::setPowerSaving(bool enabled) {
 #endif
     isLowPower = true;
 
-  } else if ((!enabled || mode != None) && isLowPower) {
+  } else if ((!enabled || locked) && isLowPower) {
     LOG_DBG("PWR", "Restoring normal CPU frequency");
 #if CONFIG_PM_ENABLE
-    if (cpuFreqLock != nullptr) esp_pm_lock_acquire(cpuFreqLock);
+    isLowPower = false;
+    syncCpuFreqLock();
 #else
     if (!setCpuFrequencyMhz(normalFreq)) {
       LOG_DBG("PWR", "Failed to set CPU frequency = %d MHz", normalFreq);
@@ -216,6 +257,9 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
   freeink::PowerManager::armPowerButtonWakeup();
   gpio_deep_sleep_hold_en();
+  // The ROM otherwise prints its boot banner at 115200 baud on every deep-sleep
+  // wake before the bootloader runs. setup() logs the reset and wake causes.
+  esp_deep_sleep_disable_rom_logging();
   esp_deep_sleep_start();
 }
 
@@ -268,25 +312,14 @@ bool HalPowerManager::getBatteryDiagnostics(BatteryDiagnostics& out) const {
 
 HalPowerManager::Lock::Lock() {
   xSemaphoreTake(powerManager.modeMutex, portMAX_DELAY);
-  // Current limitation: only one lock at a time
-  if (powerManager.currentLockMode != None) {
-    LOG_ERR("PWR", "Lock already held, ignore");
-    valid = false;
-  } else {
-    powerManager.currentLockMode = NormalSpeed;
-    valid = true;
-  }
+  ++powerManager.lockCount;
   xSemaphoreGive(powerManager.modeMutex);
-  if (valid) {
-    // Immediately restore normal CPU frequency if currently in low-power mode
-    powerManager.setPowerSaving(false);
-  }
+  // Immediately restore normal CPU frequency if currently in low-power mode
+  powerManager.setPowerSaving(false);
 }
 
 HalPowerManager::Lock::~Lock() {
   xSemaphoreTake(powerManager.modeMutex, portMAX_DELAY);
-  if (valid) {
-    powerManager.currentLockMode = None;
-  }
+  --powerManager.lockCount;
   xSemaphoreGive(powerManager.modeMutex);
 }

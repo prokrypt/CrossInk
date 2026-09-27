@@ -230,6 +230,8 @@ class SettingsActivity final : public Activity {
   ButtonNavigator buttonNavigator;
 
   int selectedCategoryIndex = 0;  // Currently selected category
+  // The dictionary scan walks the SD card, so it waits until the Reader tab needs it.
+  bool dictionariesDiscovered = false;
   int selectedSettingIndex = 0;
   int settingsCount = 0;
 

@@ -26,9 +26,26 @@ HalSpiBus::Lock::Lock() {
     return;
   }
   acquired = true;
+  bus.depth++;
 }
 
 HalSpiBus::Lock::~Lock() {
   if (!acquired) return;
-  xSemaphoreGiveRecursive(HalSpiBus::getInstance().mutex);
+  auto& bus = HalSpiBus::getInstance();
+  bus.depth--;
+  xSemaphoreGiveRecursive(bus.mutex);
+}
+
+bool HalSpiBus::releaseForIdle() {
+  if (mutex == nullptr || xSemaphoreGetMutexHolder(mutex) != xTaskGetCurrentTaskHandle() || depth != 1) {
+    return false;
+  }
+  depth = 0;
+  xSemaphoreGiveRecursive(mutex);
+  return true;
+}
+
+void HalSpiBus::reacquireAfterIdle() {
+  xSemaphoreTakeRecursive(mutex, portMAX_DELAY);
+  depth = 1;
 }

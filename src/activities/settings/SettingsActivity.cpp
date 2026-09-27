@@ -476,6 +476,11 @@ void SettingsActivity::enterCategory(int categoryIndex) {
   selectedCategoryIndex = categoryIndex;
   activeSubmenu = SettingAction::None;
   parentSubmenu = SettingAction::None;
+  if (selectedCategoryIndex == 1 && !isFileBrowserView() && !dictionariesDiscovered) {
+    dictionariesDiscovered = true;
+    dictionaryRegistry.discover();
+    rebuildSettingsLists();
+  }
   setCurrentSettingsForCategory();
   showSettingSelection = true;
 }
@@ -743,11 +748,10 @@ void SettingsActivity::onEnter() {
   renderer.setOrientation(entryOrientation);
   app.setDevice(uiTarget.deviceContext());
 
-  if (!isFileBrowserView()) {
-    // Dictionary names and paths are needed only while the full settings tree
-    // is open. Keep the catalog out of the lightweight File Browser editor.
-    dictionaryRegistry.discover();
-  }
+  // Dictionary names and paths are needed only by the Reader tab. Scanning
+  // for them waits until that tab opens (see enterCategory()), and the
+  // lightweight File Browser editor never scans.
+  dictionariesDiscovered = false;
 
   selectedCategoryIndex = isFileBrowserView() ? 3 : 0;
   selectedSettingIndex = 0;

@@ -15,6 +15,19 @@
 #include "fontIds.h"
 #include "network/FirmwareFlasher.h"
 
+namespace {
+// Each progress repaint is a ~0.5 s partial refresh that competes with the
+// flash loop for the CPU and, on shared-bus boards, the SPI bus; 10% steps keep
+// the bar moving without stretching the update.
+constexpr unsigned int PROGRESS_STEP_PERCENT = 10;
+
+unsigned int progressStep(size_t written, size_t total) {
+  if (total == 0) return 0;
+  const auto pct = static_cast<unsigned int>((static_cast<uint64_t>(written) * 100) / total);
+  return pct - pct % PROGRESS_STEP_PERCENT;
+}
+}  // namespace
+
 void SdFirmwareUpdateActivity::onEnter() {
   Activity::onEnter();
   // Build-identity marker — confirms which firmware build owns the SD update flow.
@@ -164,11 +177,12 @@ void SdFirmwareUpdateActivity::performUpdate() {
 
   auto progressCb = +[](size_t written, size_t total, void* ctx) {
     auto* self = static_cast<SdFirmwareUpdateActivity*>(ctx);
+    const bool stepChanged = progressStep(written, total) != progressStep(self->writtenBytes, total);
     self->writtenBytes = written;
     self->firmwareSize = total;
     // immediate=true: wake the render task directly. We're in a tight sync
     // loop so the main loop won't drain the requestedUpdate flag for us.
-    self->requestUpdate(true);
+    if (stepChanged) self->requestUpdate(true);
   };
 
   // Re-validate at flash time (TOCTOU): SD is removable, so don't trust the
@@ -243,8 +257,8 @@ void SdFirmwareUpdateActivity::render(RenderLock&&) {
   if (state == State::VALIDATING) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_VALIDATING_FIRMWARE));
   } else if (state == State::UPDATING) {
-    // Throttle redraws to once per percent.
-    const unsigned int pct = firmwareSize > 0 ? static_cast<unsigned int>((writtenBytes * 100) / firmwareSize) : 0;
+    // Throttle redraws to once per progress step.
+    const unsigned int pct = progressStep(writtenBytes, firmwareSize);
     if (pct == lastRenderedPercent) {
       return;
     }

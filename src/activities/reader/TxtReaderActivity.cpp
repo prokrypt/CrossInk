@@ -16,6 +16,7 @@
 #include "GlobalActions.h"
 #include "MappedInputManager.h"
 #include "QuickActions.h"
+#include "ReaderProgressShadow.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
@@ -23,6 +24,8 @@
 #include "activities/home/FileBrowserActionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/FileContentEquals.h"
+#include "util/InPlaceFileWrite.h"
 
 namespace {
 constexpr size_t CHUNK_SIZE = 8 * 1024;  // 8KB chunk for reading
@@ -130,6 +133,7 @@ void TxtReaderActivity::onEnter() {
   mappedInput.setReaderMode(true);
 
   txt->setupCacheDir();
+  progressSaveDebouncer.setShadowed(ReaderProgressShadow::bind(ReaderProgressShadow::Kind::Txt, txt->getCachePath()));
 
   // Save current txt as last opened file and add to recent books
   auto filePath = txt->getPath();
@@ -153,9 +157,11 @@ void TxtReaderActivity::onExit() {
   // Deactivate reader-specific front button mapping.
   mappedInput.setReaderMode(false);
 
-  if (!flushQueuedProgress()) {
+  const bool progressFlushed = flushQueuedProgress();
+  if (!progressFlushed) {
     LOG_ERR("TRS", "Failed to flush debounced reader progress on exit");
   }
+  ReaderProgressShadow::unbind(progressFlushed);
 
   // Reset orientation back to portrait for the rest of the UI
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
@@ -495,12 +501,15 @@ bool TxtReaderActivity::executeReaderShortcutAction(const CrossPointSettings::SH
       activityManager.goToFileTransfer(txt ? txt->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CALIBRE_WIRELESS:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToCalibreWireless(txt ? txt->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::JOIN_NETWORK:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToJoinNetworkFileTransfer(txt ? txt->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CREATE_HOTSPOT:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToHotspotFileTransfer(txt ? txt->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_DARK_MODE:
@@ -569,12 +578,15 @@ bool TxtReaderActivity::executeLongPressBackAction() {
       activityManager.goToFileTransfer(txt ? txt->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_CALIBRE_WIRELESS:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToCalibreWireless(txt ? txt->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_JOIN_NETWORK:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToJoinNetworkFileTransfer(txt ? txt->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_CREATE_HOTSPOT:
+      flushQueuedProgress();  // silent restart skips onExit()
       activityManager.goToHotspotFileTransfer(txt ? txt->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_TOGGLE_DARK_MODE:
@@ -873,17 +885,17 @@ bool TxtReaderActivity::getFrontlightPanelBookDetails(FrontlightPanelBookDetails
   return true;
 }
 
+uint32_t TxtReaderActivity::pageFileOffset(const int page) const {
+  return (page >= 0 && page < static_cast<int>(pageOffsets.size())) ? static_cast<uint32_t>(pageOffsets[page]) : 0;
+}
+
 bool TxtReaderActivity::saveProgress(const int page) {
   if (!txt) {
     return false;
   }
-  HalFile f;
-  if (!Storage.openFileForWrite("TRS", txt->getCachePath() + "/progress.bin", f)) {
-    return false;
-  }
   // 6-byte format: page(2 bytes LE) + file offset(4 bytes LE)
   // The offset lets drawCurrentPageToBuffer render without requiring index.bin.
-  const size_t offset = (page >= 0 && page < static_cast<int>(pageOffsets.size())) ? pageOffsets[page] : 0;
+  const uint32_t offset = pageFileOffset(page);
   uint8_t data[6];
   data[0] = page & 0xFF;
   data[1] = (page >> 8) & 0xFF;
@@ -891,18 +903,25 @@ bool TxtReaderActivity::saveProgress(const int page) {
   data[3] = (offset >> 8) & 0xFF;
   data[4] = (offset >> 16) & 0xFF;
   data[5] = (offset >> 24) & 0xFF;
-  const bool written = f.write(data, sizeof(data)) == sizeof(data);
-  f.close();
-  if (!written) {
-    LOG_ERR("TRS", "Short write saving reader progress");
+  // Overwrite in place (no truncate, so no FAT churn and never an empty file),
+  // and skip the write entirely when the card already holds this position.
+  const std::string path = txt->getCachePath() + "/progress.bin";
+  if (!fileContentEquals("TRS", path.c_str(), data, sizeof(data)) &&
+      !writeFileInPlace("TRS", path.c_str(), data, sizeof(data))) {
+    LOG_ERR("TRS", "Failed to save reader progress");
     return false;
   }
   progressSaveDebouncer.markPersisted(static_cast<uint32_t>(page));
+  ReaderProgressShadow::notePersisted(static_cast<uint32_t>(page), offset);
   return true;
 }
 
 bool TxtReaderActivity::queueProgressSave() {
-  if (!progressSaveDebouncer.observe(static_cast<uint32_t>(currentPage))) {
+  const bool saveDue = progressSaveDebouncer.observe(static_cast<uint32_t>(currentPage));
+  if (progressSaveDebouncer.hasPending()) {
+    ReaderProgressShadow::notePending(static_cast<uint32_t>(currentPage), pageFileOffset(currentPage));
+  }
+  if (!saveDue) {
     return true;
   }
   return saveProgress(currentPage);

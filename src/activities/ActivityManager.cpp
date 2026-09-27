@@ -221,11 +221,9 @@ void updateLiveLightSwipe(Activity& activity, ActivityManager& activityManager, 
   const int difference = sign * (target - current);
   if (difference != 0 || (brightness && amount != 0 && !Frontlight.isOn()))
     applyConfiguredSwipeAction(activity, activityManager, state.action, difference, false);
-  if (brightness && amount == 0 && Frontlight.isOn() != state.initialOn) {
-    Frontlight.setOn(state.initialOn);
-    SETTINGS.frontlightOn = state.initialOn ? 1 : 0;
-    activity.onExternalFrontlightChange();
-  }
+  // Without a dead zone, amount 0 is only a narrow band mid-drag, so restoring
+  // the initial on/off state here would blink the light off and back on while
+  // reversing through it. cancelLiveLightSwipe() restores it when needed.
   state.changed = (brightness ? Frontlight.brightness() : Frontlight.warmth()) != state.initialValue ||
                   Frontlight.isOn() != state.initialOn;
 }
@@ -456,19 +454,33 @@ void ActivityManager::renderTaskTrampoline(void* param) {
 }
 
 void ActivityManager::renderTaskLoop() {
+  bool renderQueued = false;
+  bool displayPmHeld = false;
   while (true) {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (!renderQueued) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    renderQueued = false;
     // Acquire the lock before reading currentActivity to avoid a TOCTOU race
     // where the main task deletes the activity between the null-check and render().
     RenderLock lock;
     TouchRegistry::getInstance().setEnabled(mappedInput.hasTouch());
     TouchRegistry::getInstance().beginFrame();
+    bool deferredRender = false;
     if (currentActivity) {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
       // Apply Night Mode to each activity's normal-polarity frame. SleepActivity
       // preserves it only for Quick Resume and clears it for other sleep screens.
       display.setInverted(SETTINGS.screenInverted != 0);
+      taskENTER_CRITICAL(&renderStateMux);
+      const bool waiterPending = waitingTaskHandle != nullptr;
+      taskEXIT_CRITICAL(&renderStateMux);
+      // A waiter expects the frame to be visible when it wakes, so its render
+      // keeps the blocking refresh.
+      // Always false on boards without PSRAM, where deferred refresh is off.
+      // cppcheck-suppress knownConditionTrueFalse
+      deferredRender = !waiterPending && allowsDeferredRefresh(*currentActivity);
+      renderer.setDeferFastRefresh(deferredRender);
       currentActivity->render(std::move(lock));
+      renderer.setDeferFastRefresh(false);
       restoredActivityNeedsRender = false;
     }
     TouchRegistry::getInstance().publish();
@@ -481,7 +493,54 @@ void ActivityManager::renderTaskLoop() {
     if (waiter) {
       xTaskNotify(waiter, 1, eIncrement);
     }
+
+    // A deferred menu refresh is still running on the panel. Release the render
+    // lock so input and screen changes proceed meanwhile, and finish the refresh
+    // once the waveform ends. A new render request goes first: its own display
+    // call finishes this refresh before sending the next frame.
+    if (deferredRender && renderer.isRefreshPending()) {
+      if (!displayPmHeld) {
+        powerManager.beginDisplayRefreshHold();  // no light sleep mid-waveform
+        displayPmHeld = true;
+      }
+      lock.unlock();
+      while (!renderQueued) {
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(DEFERRED_REFRESH_POLL_MS)) > 0) {
+          renderQueued = true;
+          break;
+        }
+        RenderLock finishLock;
+        // The refresh can complete while this task waits for the notification.
+        // cppcheck-suppress knownConditionTrueFalse
+        if (!renderer.isRefreshPending()) break;
+        if (!renderer.isRefreshBusy()) {
+          renderer.waitRefreshComplete();
+          break;
+        }
+      }
+    }
+    // Other renders finish any refresh left pending here with their own display
+    // calls, and readers manage the refreshes they start themselves.
+    if (displayPmHeld && (!deferredRender || !renderer.isRefreshPending())) {
+      powerManager.endDisplayRefreshHold();
+      displayPmHeld = false;
+    }
   }
+}
+
+bool ActivityManager::allowsDeferredRefresh(const Activity& activity) {
+#if defined(BOARD_HAS_PSRAM)
+  // Readers run their own overlapped refresh and grayscale flows. Sleep and
+  // Boot must reach the panel before the device powers down or moves on, and
+  // the image viewer follows its refresh with grayscale plane uploads.
+  return !activity.isReaderActivity() && activity.name != "Sleep" && activity.name != "Boot" &&
+         activity.name != "BmpViewer";
+#else
+  // The 48 KB baseline copy the deferred refresh needs is too much internal RAM
+  // for boards without PSRAM.
+  (void)activity;
+  return false;
+#endif
 }
 
 void ActivityManager::loop() {
@@ -931,13 +990,14 @@ void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));
 }
 
-void ActivityManager::goToLibrary() {
+bool ActivityManager::goToLibrary() {
   auto library = makeUniqueNoThrow<LibraryActivity>(renderer, mappedInput);
   if (!library) {
     LOG_ERR("ACT", "Cannot allocate Library activity");
-    return;
+    return false;
   }
   replaceActivity(std::move(library));
+  return true;
 }
 
 void ActivityManager::goToBrowser() {
@@ -997,8 +1057,28 @@ void ActivityManager::goToReaderAndRunMenuAction(std::string path, const uint8_t
 void ActivityManager::goToSleep(bool fromTimeout) {
   const bool canSnapshotOverlay = currentActivity && currentActivity->canSnapshotForSleepOverlay();
   const GfxRenderer::Orientation sleepPopupOrientation = renderer.getOrientation();
-  replaceActivity(std::make_unique<SleepActivity>(renderer, mappedInput, canSnapshotOverlay, getCurrentBookPath(),
-                                                  fromTimeout, sleepPopupOrientation));
+  std::string currentBookPath = getCurrentBookPath();
+  const bool renderBeforeExit = currentActivity && SleepActivity::rendersBeforeExit(currentBookPath, fromTimeout);
+  auto sleepActivity = std::make_unique<SleepActivity>(renderer, mappedInput, canSnapshotOverlay,
+                                                       std::move(currentBookPath), fromTimeout, sleepPopupOrientation);
+  if (renderBeforeExit) {
+    // Draw the sleep screen first, then let the outgoing activities save their
+    // progress and stats. Holding the render lock throughout keeps the render
+    // task from repainting the outgoing activity over the sleep screen.
+    RenderLock lock;
+    TouchRegistry::getInstance().clear();
+    sleepActivity->onEnter();
+    exitActivity(lock);
+    while (!stackActivities.empty()) {
+      stackActivities.back()->onExit();
+      stackActivities.pop_back();
+    }
+    pendingActivity.reset();
+    pendingAction = PendingAction::None;
+    currentActivity = std::move(sleepActivity);
+    return;
+  }
+  replaceActivity(std::move(sleepActivity));
   loop();  // Important: sleep screen must be rendered immediately, the caller will go to sleep right after this returns
 }
 

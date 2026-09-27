@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "OpdsPageCache.h"
+#include "OpdsPagePrefetcher.h"
 #include "OpdsServerStore.h"
 #include "activities/Activity.h"
 #include "activities/ScreenTransitionRefresh.h"
@@ -40,7 +42,16 @@ class OpdsBookBrowserActivity final : public Activity {
   BrowserState state = BrowserState::LOADING;
   ScreenTransitionRefresh screenTransitionRefresh;
   std::unique_ptr<OpdsEntry[]> entries;
+  // PSRAM devices only (null on C3): raw feed pages for Back/Prev, and the
+  // background download of the next page. Declared so the prefetcher is
+  // destroyed (joined) before the cache.
+  std::unique_ptr<OpdsPageCache> pageCache;
+  std::unique_ptr<OpdsPagePrefetcher> prefetcher;
   size_t entryCount = 0;
+  // Whether entries[0] / entries[entryCount - 1] are the synthetic Prev / Next
+  // page rows added from the feed's rel="previous" / rel="next" links.
+  bool hasPrevPageRow = false;
+  bool hasNextPageRow = false;
   std::vector<std::string> navigationHistory;
   std::string currentPath;
   std::string searchTemplate;
@@ -83,10 +94,17 @@ class OpdsBookBrowserActivity final : public Activity {
   void onWifiSelectionComplete(bool connected);
   void showLoadingBeforeFetch();
   void fetchFeed(const std::string& path);
+  // Fills parser from the PSRAM cache, a finished prefetch, or the network
+  // (caching the response). False only on a network failure.
+  bool loadFeed(const std::string& url, OpdsParser& parser);
+  void startNextPagePrefetch(const std::string& nextHref);
+  void stopPrefetch();
   bool ensureEntryBuffer();
   void clearEntries();
   bool appendEntry(OpdsEntry&& entry);
-  void navigateToEntry(const OpdsEntry& entry);
+  // pageLink: the synthetic Prev/Next page row, which replaces the current
+  // listing instead of pushing it onto the Back history.
+  void navigateToEntry(const OpdsEntry& entry, bool pageLink);
   void navigateBack();
   void downloadBook(const OpdsEntry& book);
   void launchSearch();
