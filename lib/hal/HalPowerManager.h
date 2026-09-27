@@ -56,6 +56,10 @@ class HalPowerManager {
   uint8_t lockCount = 0;
   SemaphoreHandle_t modeMutex = nullptr;  // Protect access to lockCount
 
+  // Set by a Wi-Fi screen that manages its own radio power (File Transfer in
+  // STA mode): an active Wi-Fi link then no longer forces power saving off.
+  bool radioIdleSleepAllowed = false;
+
  public:
 #if defined(BOARD_HAS_PSRAM)
   static constexpr int LOW_POWER_FREQ = 80;  // MHz
@@ -91,6 +95,10 @@ class HalPowerManager {
   // Keeps the device out of light sleep while USB Drive is exposing the SD card
   // over USB-OTG. Idempotent, so repeated end calls on exit paths are safe.
   void setUsbDriveActive(bool active);
+
+  // Lets setPowerSaving(true) take effect while Wi-Fi is up. The caller owns
+  // keeping the CPU and modem at full power while it moves data.
+  void setRadioIdleSleepAllowed(bool allowed) { radioIdleSleepAllowed = allowed; }
 
   // Setup wake up GPIO and enter deep sleep
   // Should be called inside main loop() to handle the lockCount
