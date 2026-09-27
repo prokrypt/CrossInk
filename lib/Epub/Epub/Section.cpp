@@ -255,7 +255,9 @@ bool Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
 }
 
 bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
-  if (!Storage.openFileForRead("SCT", filePath, file)) {
+  // Quiet open: no section file yet is the normal first-open case.
+  file = Storage.open(filePath.c_str());
+  if (!file) {
     return false;
   }
 
@@ -286,7 +288,8 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     if (version != SECTION_FILE_VERSION && version != SECTION_FILE_PARTIAL_VERSION) {
       // Explicit close() required: member variable persists beyond function scope
       file.close();
-      LOG_ERR("SCT", "Deserialization failed: Unknown version %u", version);
+      LOG_INF("SCT", "Stale section cache v%u (want v%u), rebuilding", static_cast<unsigned>(version),
+              static_cast<unsigned>(SECTION_FILE_VERSION));
       clearCache();
       return false;
     }

@@ -291,8 +291,9 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
     return renderCachedPixels(renderer, retained->pixels.get(), retained->width, retained->height, x, y);
   }
 
-  FsFile cacheFile;
-  if (!Storage.openFileForRead("IMG", cachePath, cacheFile)) {
+  // Quiet open: a missing cache is the normal first-render case.
+  FsFile cacheFile = Storage.open(cachePath.c_str());
+  if (!cacheFile) {
     invalidateRetainedPxcPath(cachePath);
     return false;
   }
@@ -412,8 +413,8 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
 
 bool ImageBlock::hasValidCache() const {
   const auto cachePath = getCachePath(imagePath);
-  FsFile cacheFile;
-  if (!Storage.openFileForRead("IMG", cachePath, cacheFile)) {
+  FsFile cacheFile = Storage.open(cachePath.c_str());  // quiet: a miss is expected
+  if (!cacheFile) {
     return false;
   }
 
