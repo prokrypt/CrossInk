@@ -1235,6 +1235,10 @@ void ActivityManager::endGlobalSettingsEdit() {
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }
 
+bool ActivityManager::allowsRadioIdleSleep() const {
+  return currentActivity && currentActivity->allowsRadioIdleSleep();
+}
+
 std::string ActivityManager::getCurrentBookPath() const {
   if (currentActivity) {
     const std::string path = currentActivity->getCurrentBookPath();
