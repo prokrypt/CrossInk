@@ -25,55 +25,13 @@
 #include <builtinFonts/all.h>
 #include <uzlib.h>
 
-#include "AppCapabilities.h"
-
-#ifdef SIMULATOR
-using esp_reset_reason_t = int;
-using esp_sleep_wakeup_cause_t = int;
-enum : int {
-  ESP_RST_UNKNOWN = 0,
-  ESP_RST_POWERON,
-  ESP_RST_EXT,
-  ESP_RST_SW,
-  ESP_RST_PANIC,
-  ESP_RST_INT_WDT,
-  ESP_RST_TASK_WDT,
-  ESP_RST_WDT,
-  ESP_RST_DEEPSLEEP,
-  ESP_RST_BROWNOUT,
-  ESP_RST_SDIO,
-  ESP_RST_USB,
-  ESP_RST_JTAG,
-  ESP_RST_EFUSE,
-  ESP_RST_PWR_GLITCH,
-  ESP_RST_CPU_LOCKUP
-};
-enum : int {
-  ESP_SLEEP_WAKEUP_UNDEFINED = 0,
-  ESP_SLEEP_WAKEUP_ALL,
-  ESP_SLEEP_WAKEUP_EXT0,
-  ESP_SLEEP_WAKEUP_EXT1,
-  ESP_SLEEP_WAKEUP_TIMER,
-  ESP_SLEEP_WAKEUP_TOUCHPAD,
-  ESP_SLEEP_WAKEUP_ULP,
-  ESP_SLEEP_WAKEUP_GPIO,
-  ESP_SLEEP_WAKEUP_UART,
-  ESP_SLEEP_WAKEUP_WIFI,
-  ESP_SLEEP_WAKEUP_COCPU,
-  ESP_SLEEP_WAKEUP_COCPU_TRAP_TRIG,
-  ESP_SLEEP_WAKEUP_BT
-};
-inline esp_reset_reason_t esp_reset_reason() { return ESP_RST_UNKNOWN; }
-inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_WAKEUP_UNDEFINED; }
-#else
-#include <esp_sleep.h>
-#include <esp_system.h>
-#endif
-
 #include <algorithm>
 #include <array>
 #include <cstring>
 #include <string>
+
+#include "AppCapabilities.h"
+#include "util/BootReason.h"
 
 #ifndef SIMULATOR
 #include <nvs.h>
@@ -94,6 +52,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "activities/boot_sleep/ImageFolderIndex.h"
 #include "activities/home/BookActions.h"
 #include "activities/reader/KOReaderSyncActivity.h"
+#include "activities/reader/ReaderProgressShadow.h"
 #include "activities/reader/ReadingStatsUtils.h"
 #include "activities/reader/StatsBackup.h"
 #include "activities/settings/FontDownloadActivity.h"
@@ -119,6 +78,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "util/Dictionary.h"
 #include "util/DictionaryRegistry.h"
 #include "util/FrontlightSchedule.h"
+#include "util/LocalClock.h"
 #include "util/ScreenshotUtil.h"
 #include "util/SleepWakePolicy.h"
 
@@ -246,77 +206,6 @@ EpdFont ui12RegularFont(&inter_12_regular);
 EpdFont ui12BoldFont(&inter_12_bold);
 EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont, nullptr, nullptr, &uiSymbols10Font);
 
-const char* resetReasonName(const esp_reset_reason_t reason) {
-  switch (reason) {
-    case ESP_RST_POWERON:
-      return "POWERON";
-    case ESP_RST_EXT:
-      return "EXT";
-    case ESP_RST_SW:
-      return "SW";
-    case ESP_RST_PANIC:
-      return "PANIC";
-    case ESP_RST_INT_WDT:
-      return "INT_WDT";
-    case ESP_RST_TASK_WDT:
-      return "TASK_WDT";
-    case ESP_RST_WDT:
-      return "WDT";
-    case ESP_RST_DEEPSLEEP:
-      return "DEEPSLEEP";
-    case ESP_RST_BROWNOUT:
-      return "BROWNOUT";
-    case ESP_RST_SDIO:
-      return "SDIO";
-    case ESP_RST_USB:
-      return "USB";
-    case ESP_RST_JTAG:
-      return "JTAG";
-    case ESP_RST_EFUSE:
-      return "EFUSE";
-    case ESP_RST_PWR_GLITCH:
-      return "PWR_GLITCH";
-    case ESP_RST_CPU_LOCKUP:
-      return "CPU_LOCKUP";
-    case ESP_RST_UNKNOWN:
-    default:
-      return "UNKNOWN";
-  }
-}
-
-const char* wakeupCauseName(const esp_sleep_wakeup_cause_t cause) {
-  switch (cause) {
-    case ESP_SLEEP_WAKEUP_UNDEFINED:
-      return "UNDEFINED";
-    case ESP_SLEEP_WAKEUP_ALL:
-      return "ALL";
-    case ESP_SLEEP_WAKEUP_EXT0:
-      return "EXT0";
-    case ESP_SLEEP_WAKEUP_EXT1:
-      return "EXT1";
-    case ESP_SLEEP_WAKEUP_TIMER:
-      return "TIMER";
-    case ESP_SLEEP_WAKEUP_TOUCHPAD:
-      return "TOUCHPAD";
-    case ESP_SLEEP_WAKEUP_ULP:
-      return "ULP";
-    case ESP_SLEEP_WAKEUP_GPIO:
-      return "GPIO";
-    case ESP_SLEEP_WAKEUP_UART:
-      return "UART";
-    case ESP_SLEEP_WAKEUP_WIFI:
-      return "WIFI";
-    case ESP_SLEEP_WAKEUP_COCPU:
-      return "COCPU";
-    case ESP_SLEEP_WAKEUP_COCPU_TRAP_TRIG:
-      return "COCPU_TRAP";
-    case ESP_SLEEP_WAKEUP_BT:
-      return "BT";
-    default:
-      return "UNKNOWN";
-  }
-}
-
 const char* wakeupRouteName(const HalGPIO::WakeupReason reason) {
   switch (reason) {
     case HalGPIO::WakeupReason::PowerButton:
@@ -379,7 +268,16 @@ RTC_NOINIT_ATTR uint32_t silentReaderPageBuildPackedTarget;
 RTC_NOINIT_ATTR uint32_t silentReaderPageBuildFlags;
 RTC_NOINIT_ATTR uint32_t silentFirmwareUpdateMagic;
 RTC_NOINIT_ATTR char silentFirmwareUpdatePath[MAX_SILENT_FIRMWARE_PATH];
+RTC_NOINIT_ATTR uint32_t silentRebootFrontlight;
+// Armed by enterDeepSleep() and consumed at the next boot, so the power-button
+// wake right after a sleep can skip the splash. Keeping it in RTC rather than
+// state.json saves an SD write on every wake; power loss clears it, so a cold
+// boot shows the splash.
+RTC_NOINIT_ATTR uint32_t splashlessWakeMagic;
+constexpr uint32_t SPLASHLESS_WAKE_MAGIC = 0x534C5750;         // "SLWP"
 constexpr uint32_t SILENT_FIRMWARE_UPDATE_MAGIC = 0x46574E55;  // "FWNU"
+constexpr uint32_t SILENT_REBOOT_FRONTLIGHT_OFF = 0xC1EA1100;
+constexpr uint32_t SILENT_REBOOT_FRONTLIGHT_ON = 0xC1EA1101;
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
@@ -406,6 +304,9 @@ using BootResume = SleepWakePolicy::Resume;
 static bool deepSleepInProgress = false;
 
 static void restartWithSilentToken() {
+  // SETTINGS.frontlightOn only tracks explicit toggles; wake and schedule
+  // policy change the light without saving it, so hand the live state over.
+  silentRebootFrontlight = Frontlight.isOn() ? SILENT_REBOOT_FRONTLIGHT_ON : SILENT_REBOOT_FRONTLIGHT_OFF;
 #ifdef SIMULATOR
   SimulatorLifecycle::setSilentRebootToken(silentRebootMagic, silentRebootTarget, silentRebootPayload);
 #endif
@@ -1145,14 +1046,16 @@ void enterDeepSleep(bool fromTimeout) {
          SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
     // Every sleep mode leaves a complete retained frame on the e-ink panel. Keep
     // it visible until the first useful reader or Home paint replaces it.
-    APP_STATE.showBootScreen = false;
-
-    APP_STATE.saveToFile();
+    splashlessWakeMagic = SPLASHLESS_WAKE_MAGIC;
 
     // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
     // a WiFi activity would otherwise silentRestart() here and reboot instead.
     deepSleepInProgress = true;
     activityManager.goToSleep(fromTimeout);
+    // Persist after the sleep screen is up so the write does not delay it. The
+    // reader's onExit() usually saves the same state already, so this write is
+    // then skipped as unchanged.
+    APP_STATE.saveToFile();
 
     // Sleep screens refresh synchronously and display.deepSleep() waits out any
     // pending refresh and the power-off, so no settle delay is needed here. A
@@ -1301,9 +1204,13 @@ void setup() {
   // and KOReader Auth after their Wi-Fi child completes. C3 retains the smaller
   // network stack to preserve internal RAM.
   const bool useReaderRenderStack = !isNetworkResume || FREEINK_MCU_S3;
+  const bool hasSilentRebootLight = isSilentReboot && (silentRebootFrontlight == SILENT_REBOOT_FRONTLIGHT_ON ||
+                                                       silentRebootFrontlight == SILENT_REBOOT_FRONTLIGHT_OFF);
+  const bool silentRebootLightOn = silentRebootFrontlight == SILENT_REBOOT_FRONTLIGHT_ON;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
   silentRebootPayload = 0;
+  silentRebootFrontlight = 0;
   if (!isSilentReboot || snapshotTarget != SILENT_REBOOT_TARGET_READER) {
     clearSilentRestartReaderPageBuild();
   }
@@ -1327,6 +1234,13 @@ void setup() {
     powerManager.startDeepSleep(gpio);
   }
 #endif
+
+  // One-shot, consumed only once the wake is real (a press too short to wake
+  // goes back to sleep above with the flag still armed). Cleared before any
+  // painting so a hang in the blocking paint path resets into a normal splash
+  // boot instead of a splashless loop with no frame.
+  const bool splashlessWakeArmed = splashlessWakeMagic == SPLASHLESS_WAKE_MAGIC;
+  splashlessWakeMagic = 0;
 
 #ifndef SIMULATOR
   // X4 Pro and X4 Classic both map Up to the GPIO0 boot strap. Use Down for
@@ -1389,9 +1303,12 @@ void setup() {
   logBootHeap("storage ready");
 
   HalSystem::checkPanic();
+  // Before anything reads progress.bin: replay a position a crash or reset kept
+  // off the card.
+  ReaderProgressShadow::recoverPending();
 
   SETTINGS.loadFromFile();
-  Storage.installDateTimeCallback(&SETTINGS.clockUtcOffsetQ);
+  Storage.installDateTimeCallback(LocalClock::offsetQAtUtc);
   APP_STATE.loadFromFile();
   mirrorWakeShortPressToNvs();
   // Needs SETTINGS for the clock's UTC offset, so it cannot run any earlier.
@@ -1413,8 +1330,11 @@ void setup() {
   ButtonNavigator::setMappedInputManager(mappedInputManager);
   logBootHeap("boot state ready");
   // Silent restarts are invisible recovery steps, so they always retain the
-  // current light state rather than applying wake or schedule policy.
-  const bool wasLightOnBeforeSleep = SETTINGS.frontlightOn != 0;
+  // current light state rather than applying wake or schedule policy. The
+  // saved flag can be stale (e.g. schedule kept the light off this wake), so
+  // prefer the live state the previous run handed over in RTC memory.
+  const bool wasLightOnBeforeSleep =
+      FrontlightSchedule::lightStateBeforeStart(hasSilentRebootLight, silentRebootLightOn, SETTINGS.frontlightOn != 0);
   const bool preserveLightAcrossRestart = FrontlightSchedule::shouldPreserveLightAcrossRestart(isSilentReboot);
   bool restoreLightOn = FrontlightSchedule::shouldRestoreLightOnStart(
       preserveLightAcrossRestart, SETTINGS.frontlightRestoreOnWake != 0, wasLightOnBeforeSleep);
@@ -1425,7 +1345,8 @@ void setup() {
     uint8_t utcHour = 0;
     uint8_t utcMinute = 0;
     if (halClock.getTime(utcHour, utcMinute)) {
-      const uint16_t localTimeOfDay = FrontlightSchedule::localTimeOfDay(utcHour, utcMinute, SETTINGS.clockUtcOffsetQ);
+      const uint16_t localTimeOfDay =
+          FrontlightSchedule::localTimeOfDay(utcHour, utcMinute, LocalClock::currentOffsetQ());
       restoreLightOn = FrontlightSchedule::containsTimeOfDay(SETTINGS.frontlightScheduleStart,
                                                              SETTINGS.frontlightScheduleEnd, localTimeOfDay);
     } else {
@@ -1459,15 +1380,14 @@ void setup() {
   // Without either, retain the fast splashless resume path.
   bool hasBootScreenDirectory = false;
   bool hasPinnedBootScreen = false;
-  if (SETTINGS.customBootscreenEnabled && isSleepWake && !APP_STATE.showBootScreen) {
+  if (SETTINGS.customBootscreenEnabled && isSleepWake && splashlessWakeArmed) {
     std::string bootScreenDirectory;
     hasBootScreenDirectory = ImageFolderIndex::resolveBootScreenDirectory(bootScreenDirectory);
     hasPinnedBootScreen = !APP_STATE.favoriteBootImagePath.empty() &&
                           FsHelpers::hasBmpExtension(APP_STATE.favoriteBootImagePath) &&
                           Storage.exists(APP_STATE.favoriteBootImagePath.c_str());
   }
-  const bool skipSplashOnWake =
-      isSleepWake && !APP_STATE.showBootScreen && !hasBootScreenDirectory && !hasPinnedBootScreen;
+  const bool skipSplashOnWake = isSleepWake && splashlessWakeArmed && !hasBootScreenDirectory && !hasPinnedBootScreen;
   const BootResume resume = isNetworkResume    ? BootResume::Network
                             : isSilentReboot   ? BootResume::Silent
                             : skipSplashOnWake ? BootResume::SplashlessWake
@@ -1495,11 +1415,6 @@ void setup() {
               static_cast<unsigned long>(snapshotTarget), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       break;
     case BootResume::SplashlessWake:
-      // One-shot flag: re-arm the splash for the next ordinary boot. Save
-      // before any painting so a hang in the blocking paint path can't strand
-      // us in a splashless-with-no-frame loop on the next boot.
-      APP_STATE.showBootScreen = true;
-      APP_STATE.saveToFile();
       if (shouldRestoreSleepFrame && loadSleepFrameBuffer()) {
         const bool useDifferentialRefresh = gpio.deviceIsX3();
         if (useDifferentialRefresh) {
@@ -1613,15 +1528,29 @@ void setup() {
     // X4's HALF refresh is the same single-pass clean transition already used
     // by network screens. Keep X3's existing full refresh behavior unchanged.
     const auto homeRefreshMode = gpio.deviceIsX3() ? HalDisplay::FULL_REFRESH : HalDisplay::HALF_REFRESH;
-    activityManager.goHome(HomeMenuItem::NONE, homeRefreshMode);
     // File Transfer exit with a firmware to flash (POST /api/exit?flash=...):
-    // open the update flow over Home so cancelling lands back on Home.
+    // open the update flow directly instead of over a live Home, whose
+    // background Library walk would otherwise keep competing for the SD card
+    // while the image is validated and flashed. Finishing pops an empty
+    // stack, which lands on Home.
     const std::string pendingFirmware =
         snapshotTarget == SILENT_REBOOT_TARGET_HOME ? consumeSilentRestartFirmwareUpdate() : std::string();
-    if (!pendingFirmware.empty()) {
+    auto firmwareUpdate = pendingFirmware.empty() ? nullptr
+                                                  : makeUniqueNoThrow<SdFirmwareUpdateActivity>(
+                                                        renderer, mappedInputManager, false, pendingFirmware);
+    if (firmwareUpdate) {
       LOG_INF("MAIN", "Opening firmware update for %s", pendingFirmware.c_str());
-      activityManager.pushActivity(
-          std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInputManager, false, pendingFirmware));
+      {
+        // Clear the pre-reboot File Transfer frame the way Home's first paint
+        // would; the update screen itself draws with FAST refreshes.
+        RenderLock lock;
+        renderer.clearScreen();
+        renderer.displayBuffer(homeRefreshMode);
+      }
+      activityManager.replaceActivity(std::move(firmwareUpdate));
+    } else {
+      if (!pendingFirmware.empty()) LOG_ERR("MAIN", "Cannot allocate firmware update for %s", pendingFirmware.c_str());
+      activityManager.goHome(HomeMenuItem::NONE, homeRefreshMode);
     }
   } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
              mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
