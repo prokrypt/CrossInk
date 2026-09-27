@@ -94,7 +94,7 @@ class HalStorage {
     return true;
   }
 
-  HalFile open(const char* path, oflag_t) {
+  HalFile open(const char* path, oflag_t = O_RDONLY) {
     const auto found = files_.find(path);
     return found == files_.end() ? HalFile{} : HalFile(found->second);
   }
