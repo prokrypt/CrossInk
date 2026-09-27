@@ -845,7 +845,7 @@ bool SleepActivity::renderBitmapSleepScreen(Bitmap& bitmap) const {
   // that the LSB pass immediately clears. Absolute and Overlay bases still
   // push the B/W frame, so they keep it.
   const bool drawBwFrame = !hasGreyscale || !direct;
-  const unsigned long decodeStartMs = millis();
+  [[maybe_unused]] const unsigned long decodeStartMs = millis();
 
   if (drawBwFrame) {
     if (!renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY)) return false;
