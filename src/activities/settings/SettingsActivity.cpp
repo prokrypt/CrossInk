@@ -169,12 +169,10 @@ void drawSystemVersionFooter(const GfxRenderer& renderer, const int pageWidth, c
       pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing - systemVersionFooterBottomInset;
   const int bottomLineY = detailsLineY - lineHeight;
 
-  // Branch, commit ("*" marks uncommitted changes), build number and UTC build time.
-  char details[112];
-  const char* buildNumber = BuildInfo::buildNumber();
-  snprintf(details, sizeof(details), "%s %s%s%s%s %s", BuildInfo::gitBranch(), CROSSINK_GIT_SHA,
-           strcmp(CROSSINK_GIT_DIRTY, "1") == 0 ? "*" : "", buildNumber[0] != '\0' ? " #" : "", buildNumber,
-           BuildInfo::buildTime());
+  // Short branch and commit; "*" marks uncommitted changes.
+  char details[64];
+  snprintf(details, sizeof(details), "%s %s%s", BuildInfo::shortBranch(), CROSSINK_GIT_SHA,
+           strcmp(CROSSINK_GIT_DIRTY, "1") == 0 ? "*" : "");
   drawCenteredTextLine(renderer, pageWidth, detailsLineY, renderer.truncatedText(SMALL_FONT_ID, details, maxWidth));
 
   if (renderer.getTextWidth(SMALL_FONT_ID, label.c_str()) <= maxWidth) {

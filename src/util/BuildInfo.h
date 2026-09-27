@@ -6,6 +6,8 @@
 // force a full rebuild each time.
 namespace BuildInfo {
 const char* gitBranch();
+// Batch number ("b11") for batch branches, else the branch without its prefix folder.
+const char* shortBranch();
 const char* buildNumber();
 const char* buildTime();
 }  // namespace BuildInfo

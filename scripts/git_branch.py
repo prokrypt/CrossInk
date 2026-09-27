@@ -114,6 +114,15 @@ def get_build_number(project_dir):
     return number if number.isdigit() else ''
 
 
+def short_branch_label(branch):
+    # Batch branches (test/combined-0927-b11) show as their batch number; other
+    # branches drop their prefix folder (claude/, feature/, fix/).
+    batch = re.search(r'combined-\d+-(b\d+)$', branch)
+    if batch:
+        return batch.group(1)
+    return branch.rsplit('/', 1)[-1] or 'unknown'
+
+
 def register_build_info(env, project_dir):
     # The build time changes on every build. Defining it globally would change
     # every compile command and force a full rebuild, so scope these defines to
@@ -127,6 +136,7 @@ def register_build_info(env, project_dir):
     build_time = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%MZ')
     defines = [
         ('CROSSINK_GIT_BRANCH', f'\\"{branch}\\"'),
+        ('CROSSINK_GIT_BRANCH_SHORT', f'\\"{short_branch_label(branch)}\\"'),
         ('CROSSINK_BUILD_NUMBER', f'\\"{get_build_number(project_dir)}\\"'),
         ('CROSSINK_BUILD_TIME', f'\\"{build_time}\\"'),
     ]
