@@ -17,12 +17,14 @@
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
 #ifndef SIMULATOR
+#include <FreeInkDisplay.h>
 #include <esp_image_format.h>
 #include <esp_ota_ops.h>
 #endif
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <iterator>
 
@@ -829,6 +831,33 @@ void CrossPointWebServer::handleStatus() const {
     static const BatteryMonitor monitor;
     battery["millivolts"] = monitor.readMillivolts();
     battery["charging"] = monitor.isCharging();
+
+    // Temperatures in C, one entry per sensor the board has. The panel value
+    // is the UC8179's own sensor, sampled after a refresh at most once a
+    // minute; ageMs says how old it is.
+    JsonObject temps = doc["temperatures"].to<JsonObject>();
+    const float chipC = temperatureRead();
+    if (!std::isnan(chipC)) {
+      JsonObject t = temps["chip"].to<JsonObject>();
+      t["source"] = CONFIG_IDF_TARGET;
+      t["c"] = std::round(chipC * 10.0f) / 10.0f;
+    }
+    int16_t gaugeDeciC = 0;
+    if (monitor.readTemperatureDeciC(gaugeDeciC)) {
+      JsonObject t = temps["battery"].to<JsonObject>();
+      t["source"] = BoardConfig::ACTIVE.batteryGauge.gaugeType == BoardConfig::GaugeType::Cw2017 ? "cw2017" : "bq27220";
+      t["c"] = gaugeDeciC / 10.0f;
+    }
+#if FREEINK_UC8179_PANEL_TEMP
+    int8_t panelC = 0;
+    uint32_t panelAgeMs = 0;
+    if (freeink::uc8179PanelTemperature(panelC, panelAgeMs)) {
+      JsonObject t = temps["panel"].to<JsonObject>();
+      t["source"] = "uc8179";
+      t["c"] = panelC;
+      t["ageMs"] = panelAgeMs;
+    }
+#endif
   }
 #endif
 

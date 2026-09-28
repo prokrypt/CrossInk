@@ -2,6 +2,7 @@
 
 ### Added
 
+- The web status API (`/api/status`) reports a `temperatures` block: the chip temperature, the battery fuel gauge's temperature on boards that have one (such as the X3), and on the X4 Pro the e-ink panel controller's own sensor, sampled after a screen refresh at most once a minute. Sensors a board lacks are left out.
 - View a selected book's reading stats from its Library or File Browser action menu.
 - Library replaces Recent Books with a searchable book list, and adds various book metadata sort options.
 - Reset a book's reader settings from the in-reader Settings tab.
