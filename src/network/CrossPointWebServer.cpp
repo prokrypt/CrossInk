@@ -742,7 +742,7 @@ void CrossPointWebServer::handleStatus() const {
   const String ipAddr = apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
 
   JsonDocument doc;
-  doc["version"] = CROSSINK_VERSION;
+  doc["version"] = AppVersion::version();
   doc["ip"] = ipAddr;
   doc["mode"] = apMode ? "AP" : "STA";
   doc["rssi"] = apMode ? 0 : WiFi.RSSI();
@@ -784,8 +784,8 @@ void CrossPointWebServer::handleStatus() const {
   // touches the SD card beyond the capacity cached at mount.
   JsonObject build = doc["build"].to<JsonObject>();
   build["env"] = CROSSINK_PIOENV;
-  build["gitSha"] = CROSSINK_GIT_SHA;
-  build["gitDirty"] = CROSSINK_GIT_DIRTY;
+  build["gitSha"] = AppVersion::gitSha();
+  build["gitDirty"] = AppVersion::gitDirtyFlag();
   build["gitBranch"] = BuildInfo::gitBranch();
   build["buildNumber"] = BuildInfo::buildNumber();
   build["buildTime"] = BuildInfo::buildTime();
