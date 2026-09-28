@@ -836,12 +836,14 @@ void CrossPointWebServer::handleStatus() const {
     // is the UC8179's own sensor, sampled after a refresh at most once a
     // minute; ageMs says how old it is.
     JsonObject temps = doc["temperatures"].to<JsonObject>();
+#if !CONFIG_IDF_TARGET_ESP32C3  // the C3's sensor driver costs ~3.8 KB of flash
     const float chipC = temperatureRead();
     if (!std::isnan(chipC)) {
       JsonObject t = temps["chip"].to<JsonObject>();
       t["source"] = CONFIG_IDF_TARGET;
       t["c"] = std::round(chipC * 10.0f) / 10.0f;
     }
+#endif
     int16_t gaugeDeciC = 0;
     if (monitor.readTemperatureDeciC(gaugeDeciC)) {
       JsonObject t = temps["battery"].to<JsonObject>();
