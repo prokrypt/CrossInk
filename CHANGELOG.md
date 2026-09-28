@@ -3,6 +3,8 @@
 ### Added
 
 - The web status API (`/api/status`) reports a `temperatures` block: the chip temperature on ESP32-S3 devices, the battery fuel gauge's temperature on boards that have one (such as the X3), and on the X4 Pro the e-ink panel controller's own sensor, sampled after a screen refresh at most once a minute. Sensors a board lacks are left out.
+- Assign Library to power, long-press, button-chord, Home-button, or Quick Actions shortcuts to open the book list directly.
+- Customize the top and bottom reader status bars separately, including item positions and progress bars, in EPUB, TXT, and XTC books. Each bar can be previewed where it appears while reading.
 - View a selected book's reading stats from its Library or File Browser action menu.
 - Library replaces Recent Books with a searchable book list, and adds various book metadata sort options.
 - Reset a book's reader settings from the in-reader Settings tab.
@@ -17,6 +19,8 @@
 - On devices with PSRAM (Sticky, X4 Pro), the OPDS browser downloads the next page of a catalog in the background while you browse, and keeps pages you have visited in memory, so Next page, Previous page and Back open without waiting on the server.
 - The web file manager's image preview has previous and next buttons, and the left and right arrow keys, to step through the images in the current folder. Other file types are skipped, and stepping wraps around at either end. The preview also shows the image's position in the folder, its pixel dimensions, its file size and, when the file list has one, its modified date.
 - The Settings > System footer shows the firmware's branch (the batch number, such as `b11`, for combined test builds) and commit, with `*` when built from uncommitted changes, under the version. The System list stops above the footer instead of running under it. The web status API reports the full branch, build number (the commit count unless the build sets `CROSSINK_BUILD_NUMBER`; left out for shallow checkouts) and UTC build time.
+- In-reader menu for X3/X4/X4 Classic have been updated to a modified version of the in-reader menu for touch devices
+- Chapter pages and book progress information is displayed in the frontlight drawer when in the reader for X4 Pro
 
 ### Changed
 
@@ -36,9 +40,16 @@
 - Far fewer SD card writes when saving your place: EPUB progress now alternates between two small slot files that are overwritten in place, so a save costs about 2 sector writes instead of roughly a dozen, and a save that would store the position already on the card (such as closing a book without turning a page) writes nothing. Your place is now saved every 30 page turns or 15 minutes of reading instead of every 10 pages or 5 minutes; leaving the book or putting the device to sleep still saves it immediately, so only a crash, reset or dead battery can lose more pages than before. A save interrupted by power loss falls back to the previous save. TXT and XTC progress and the Home reading percentage are also overwritten in place instead of being truncated and rewritten.
 - Firmware is about 32 KB smaller: wolfSSL no longer builds its debug trace messages in. Builds with `-DFREEINK_WOLFSSL_DEBUG` still include them.
 - The X4 Pro light-sleep firmware now uses the scalable TTF versions of Bitter and Lexend Deca, like the standard X4 Pro build, making it about 360 KB smaller.
+- Text drawing resolves clipping and screen rotation once per glyph, reducing work when painting menus and book pages.
+- Home reads saved EPUB progress and chapter metadata without opening or indexing the book, and stops saved-item checks after the first file.
+- Optional EPUB background work yields immediately when rendering is busy, keeping input polling responsive.
+- SD-card fonts share identical character lookup tables across styles, reducing memory use and repeated card reads.
+- EPUB reader menus now share five tabs across devices. Button devices gain live font and margin previews, Reading Stats, and in-book transfer options.
+- The on-screen keyboard now uses wider outlined keys with clearer spacing on touch and button devices.
 
 ### Fixed
 
+- File Transfer choices no longer appear preselected when opened on a touch device.
 - On the X4 Pro and Sticky, the Home screen no longer stalls waiting for the SD card while the Library indexes in the background.
 - Small images that are scaled up, such as a short progressive JPEG, are now cached after the first draw instead of being decoded again on every screen refresh.
 - The serial log no longer reports errors for normal events: a missing image, section or dictionary cache file on first open, an outdated section cache being rebuilt, and a device without a clock chip or motion sensor. Log lines that were missing a line break now end cleanly, and SD, display, TLS and frontlight messages use the standard log format.
@@ -131,7 +142,7 @@
 - EPUB dictionary lookup can select an individual part of a hyphenated word.
 - Short Power-button frontlight and touchscreen shortcuts in EPUB books no longer run the configured long-press action.
 - Silent restarts now preserve the frontlight state instead of applying wake or schedule settings.
-- The Home button now returns from Customize Status Bar to the previous menu instead of leaving the reader.
+- The Home button now returns from Status Bars to the previous menu instead of leaving the reader.
 - OPDS book downloads can follow secure redirects without sharing catalog credentials with the download host.
 - Larger EPUB stylesheets work on PSRAM readers, including rules that hide duplicate images.
 - JPEG-heavy EPUBs can use PSRAM for decoding on supported readers, leaving internal memory available for reading.
