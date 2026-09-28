@@ -77,6 +77,11 @@ bool serviceBuild(void*) {
     fullSpeed.emplace();
     pausedMs += millis() - pausedAtMs;
   }
+  // Dual-core: give up the card for a tick between entries. The storage mutex
+  // does not hand off to a waiter, so without this the walk on core 0 can
+  // retake it before a Home task waiting on core 1 wakes, starving it for a
+  // whole directory. Single-core runs at idle priority and needs no yield.
+  if (portNUM_PROCESSORS > 1) vTaskDelay(1);
   return !cancelRequested.load(std::memory_order_acquire);
 }
 
