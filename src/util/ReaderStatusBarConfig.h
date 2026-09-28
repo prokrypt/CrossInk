@@ -54,6 +54,7 @@ struct ReaderStatusBarConfig {
   uint8_t progressBarThickness = 1;
 
   constexpr bool contains(ReaderStatusBarItem item) const {
+    // cppcheck-suppress useStlAlgorithm ; plain constexpr loop over three slots per side
     for (const auto slot : slots) {
       if (slot == item) return true;
     }
@@ -61,6 +62,7 @@ struct ReaderStatusBarConfig {
   }
 
   constexpr bool hasTextItems(bool clockAvailable) const {
+    // cppcheck-suppress useStlAlgorithm ; plain constexpr loop over three slots per side
     for (const auto slot : slots) {
       if (slot != ReaderStatusBarItem::Empty && (slot != ReaderStatusBarItem::Clock || clockAvailable)) return true;
     }
@@ -127,9 +129,11 @@ inline void fitReaderStatusBarSideWidths(std::array<int, ReaderStatusBarConfig::
                                          const int available, const int bookmarkReserve = 0, const int gap = 8) {
   int leftCount = 0;
   int rightCount = 0;
+  // cppcheck-suppress useStlAlgorithm ; counts an index range of the slot array
   for (unsigned i = ReaderStatusBarConfig::LEFT_FIRST; i <= ReaderStatusBarConfig::LEFT_THIRD; ++i) {
     if (widths[i] > 0) ++leftCount;
   }
+  // cppcheck-suppress useStlAlgorithm ; counts an index range of the slot array
   for (unsigned i = ReaderStatusBarConfig::RIGHT_FIRST; i <= ReaderStatusBarConfig::RIGHT_THIRD; ++i) {
     if (widths[i] > 0) ++rightCount;
   }
