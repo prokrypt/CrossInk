@@ -23,8 +23,8 @@
 
 #include "activities/home/BookActions.h"
 #include "activities/home/FileBrowserActionActivity.h"
-#include "activities/library/LibraryPrewarm.h"
 #include "activities/home/RecentBookProgress.h"
+#include "activities/library/LibraryPrewarm.h"
 #include "activities/library/LibrarySettingsActivity.h"
 #include "activities/reader/BookReadingStats.h"
 #include "activities/reader/EpubReaderActivity.h"
