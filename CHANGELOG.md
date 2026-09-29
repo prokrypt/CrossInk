@@ -5,6 +5,7 @@
 - The web status API (`/api/status`) reports a `temperatures` block: the chip temperature on ESP32-S3 devices, the battery fuel gauge's temperature on boards that have one (such as the X3), and on the X4 Pro the e-ink panel controller's own sensor, sampled after a screen refresh at most once a minute. Sensors a board lacks are left out.
 - Turn reading stats tracking on or off for the whole device or individual EPUB and XTC books, while keeping saved history and Time Left estimates.
 - Assign separate short-press and long-press actions to the Left/Up and Right/Down side buttons; existing side-button layouts migrate to matching individual actions.
+- Assign a side-button shortcut to flip the reading screen 180°, alongside clockwise and counterclockwise turns.
 - Assign Library to power, long-press, button-chord, Home-button, or Quick Actions shortcuts to open the book list directly.
 - Customize the top and bottom reader status bars separately, including item positions and progress bars, in EPUB, TXT, and XTC books. Each bar can be previewed where it appears while reading.
 - View a selected book's reading stats from its Library or File Browser action menu.
@@ -117,6 +118,7 @@
 - Korean text keeps natural syllable spacing when justified and wraps by word.
 - Footnote choices can be selected directly on the reading page, with a list fallback for links without a visible target.
 - Changing global font or page layout settings from the pull-down panel on touch devices now updates the open book when it inherits those settings.
+- KOReader authentication now rejects unexpectedly large server responses to avoid crashes.
 
 ## [v1.6.0] - 2026-09-21
 
