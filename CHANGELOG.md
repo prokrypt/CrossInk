@@ -3,6 +3,8 @@
 ### Added
 
 - The web status API (`/api/status`) reports a `temperatures` block: the chip temperature on ESP32-S3 devices, the battery fuel gauge's temperature on boards that have one (such as the X3), and on the X4 Pro the e-ink panel controller's own sensor, sampled after a screen refresh at most once a minute. Sensors a board lacks are left out.
+- Turn reading stats tracking on or off for the whole device or individual EPUB and XTC books, while keeping saved history and Time Left estimates.
+- Assign separate short-press and long-press actions to the Left/Up and Right/Down side buttons; existing side-button layouts migrate to matching individual actions.
 - Assign Library to power, long-press, button-chord, Home-button, or Quick Actions shortcuts to open the book list directly.
 - Customize the top and bottom reader status bars separately, including item positions and progress bars, in EPUB, TXT, and XTC books. Each bar can be previewed where it appears while reading.
 - View a selected book's reading stats from its Library or File Browser action menu.
@@ -21,10 +23,12 @@
 - The Settings > System footer shows the firmware's branch (the batch number, such as `b11`, for combined test builds) and commit, with `*` when built from uncommitted changes, under the version. The System list stops above the footer instead of running under it. The web status API reports the full branch, build number (the commit count unless the build sets `CROSSINK_BUILD_NUMBER`; left out for shallow checkouts) and UTC build time.
 - In-reader menu for X3/X4/X4 Classic have been updated to a modified version of the in-reader menu for touch devices
 - Chapter pages and book progress information is displayed in the frontlight drawer when in the reader for X4 Pro
+- Add a Cover Grid Home theme on devices with PSRAM, showing the current book and six library covers.
 
 ### Changed
 
 - USB Drive mounts faster: the next part of the SD card is read in the background while the current data is sent over USB, cutting about 5 seconds from mounting a FAT32 card on the X4 Pro.
+- Set Power short-press and long-press to Sleep, Wake, or Sleep/Wake separately; holding Power can always wake the device. Chord shortcuts and the home button can also now sleep the device.
 - Brightness and warmth gestures now respond while you drag, with longer swipes making larger adjustments.
 - Edge-slide and two-finger brightness and warmth gestures now adjust in 1% steps instead of 5% and are half as sensitive: a full-length slide changes the level by about 50%.
 - Reversing a brightness or warmth drag partway now moves the level past where it started instead of stopping there.
@@ -46,6 +50,8 @@
 - SD-card fonts share identical character lookup tables across styles, reducing memory use and repeated card reads.
 - EPUB reader menus now share five tabs across devices. Button devices gain live font and margin previews, Reading Stats, and in-book transfer options.
 - The on-screen keyboard now uses wider outlined keys with clearer spacing on touch and button devices.
+- Long status titles shorten faster when they do not fit the screen.
+- Leaving an EPUB or TXT reader releases rebuildable font buffers for other screens.
 
 ### Fixed
 
@@ -100,6 +106,16 @@
 - A button press made while the end-of-book "Continue with" menu is still appearing is no longer lost: it moves the selection, opens the book, or goes back once the menu is ready.
 - The image viewer redraws the image after you close the pull-down top panel, the image action menu, or a prompt, instead of leaving the panel or menu on screen.
 - 8-bit and other paletted BMPs saved with a newer (V4/V5) header, as GIMP and ImageMagick write them, now show their real gray levels. White backgrounds no longer turn into dither dots and black no longer shows as dark gray, in the image viewer and on sleep and boot screens.
+- Release builds use the pinned PlatformIO core during nested ESP-IDF configuration.
+- Adding the sleep moon to the last screen no longer flashes white in night mode.
+- Waking the reader skips the intermediate loading icon refresh.
+- Screenshot folder names keep complete non-English characters when shortened.
+- Longer power-on instructions wrap on the finished update screen.
+- Sticky now records periodic heap and PSRAM statistics over its ROM logging path.
+- RTL EPUBs use reading-order swipe and tap directions.
+- Korean text keeps natural syllable spacing when justified and wraps by word.
+- Footnote choices can be selected directly on the reading page, with a list fallback for links without a visible target.
+- Changing global font or page layout settings from the pull-down panel on touch devices now updates the open book when it inherits those settings.
 
 ## [v1.6.0] - 2026-09-21
 
