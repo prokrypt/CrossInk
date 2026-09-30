@@ -120,6 +120,10 @@
 - Changing global font or page layout settings from the pull-down panel on touch devices now updates the open book when it inherits those settings.
 - KOReader authentication now rejects unexpectedly large server responses to avoid crashes.
 
+### Security
+
+- Download logs show a URL without its query string, so signed download tokens (such as `?token=` on a redirected OPDS book download) no longer end up in serial or saved logs.
+
 ## [v1.6.0] - 2026-09-21
 
 ### Added
