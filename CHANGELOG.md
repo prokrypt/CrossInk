@@ -57,6 +57,7 @@
 
 ### Fixed
 
+- A chapter left half-indexed by an older firmware is re-indexed instead of resuming with outdated page positions.
 - File Transfer choices no longer appear preselected when opened on a touch device.
 - On the X4 Pro and Sticky, the Home screen no longer stalls waiting for the SD card while the Library indexes in the background.
 - Small images that are scaled up, such as a short progressive JPEG, are now cached after the first draw instead of being decoded again on every screen refresh.
