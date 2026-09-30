@@ -130,18 +130,31 @@ bool HalDisplay::isRefreshBusy() { return einkDisplay.refreshBusy(); }
 
 bool HalDisplay::supportsAsyncRefresh() const { return einkDisplay.supportsAsyncRefresh(); }
 
-// DC-balance policy (SDK 838622e): only the OEM 4-gray banks are balanced, and
-// only SSD1677 (lut_factory_quality) and the X4 UC8279 (kQualityBank) reach them
-// through Absolute without a one-way step around them. Overlay is one-way on
-// every driver; UC8179 Absolute uses the one-way AA LUTs and its Direct is
-// followed by a one-way complemented-OLD paint; X3 (UC8253 / UC8279d) Absolute
-// or the GC-from-white after it is one-way.
+// DC-balance policy. The SDK marks each controller whose gray waveforms are
+// balanced (FREEINK_BALANCED_GRAY_*); unmarked ones get no grayscale beyond the
+// OEM 4-gray banks known to net zero: SSD1677 lut_factory_quality and the X4
+// UC8279 kQualityBank (Absolute only). X3 (UC8253 / UC8279d) drives custom
+// one-way LUTs around every gray pass, so it gets none.
+#ifndef FREEINK_BALANCED_GRAY_SSD1677
+#define FREEINK_BALANCED_GRAY_SSD1677 0
+#endif
+#ifndef FREEINK_BALANCED_GRAY_UC8179
+#define FREEINK_BALANCED_GRAY_UC8179 0
+#endif
+
 static bool grayscaleModeBalanced(const HalDisplay::GrayscaleMode mode) {
-  if (mode == HalDisplay::GrayscaleMode::Overlay) return CROSSINK_APP_OVERLAY_GRAYSCALE;
-  if (mode != HalDisplay::GrayscaleMode::Absolute) return false;
-  const auto controller = BoardConfig::ACTIVE.displayController;
-  return controller == BoardConfig::DisplayController::SSD1677 ||
-         (controller == BoardConfig::DisplayController::UC8279 && !gpio.deviceIsX3());
+  using Controller = BoardConfig::DisplayController;
+  using Mode = HalDisplay::GrayscaleMode;
+  switch (BoardConfig::ACTIVE.displayController) {
+    case Controller::SSD1677:
+      return mode == Mode::Absolute || (mode == Mode::Overlay && FREEINK_BALANCED_GRAY_SSD1677);
+    case Controller::UC8179:
+      return FREEINK_BALANCED_GRAY_UC8179;
+    case Controller::UC8279:
+      return mode == Mode::Absolute && !gpio.deviceIsX3();
+    default:
+      return false;
+  }
 }
 
 HalDisplay::GrayscaleCapabilities HalDisplay::grayscaleCapabilities(GrayscaleMode mode) const {
@@ -200,28 +213,22 @@ void HalDisplay::displayGrayscaleBase(RefreshMode fallback, bool turnOffScreen) 
     einkDisplay.requestResync(1);
   }
 
-#if CROSSINK_APP_OVERLAY_GRAYSCALE
-  einkDisplay.displayGrayscaleBase(convertRefreshMode(fallback), turnOffScreen);
-#else
+  if (grayscaleModeBalanced(GrayscaleMode::Overlay)) {
+    einkDisplay.displayGrayscaleBase(convertRefreshMode(fallback), turnOffScreen);
+    return;
+  }
   // The overlay base runs one-way conditioning waveforms (X3 preBwMid, UC8179 /
   // UC8279 XTF_PRE_BW_MID); a plain OTP refresh shows the same B/W frame.
   HalSpiBus::Lock spiLock;
   einkDisplay.displayBuffer(convertRefreshMode(fallback), turnOffScreen);
-#endif
 }
 
 void HalDisplay::preconditionGrayscale() {
-#if CROSSINK_APP_OVERLAY_GRAYSCALE
-  einkDisplay.preconditionGrayscale();
-#endif
+  if (grayscaleModeBalanced(GrayscaleMode::Overlay)) einkDisplay.preconditionGrayscale();
 }
 
 void HalDisplay::preconditionGrayscale(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
-#if CROSSINK_APP_OVERLAY_GRAYSCALE
-  einkDisplay.preconditionGrayscale(x, y, w, h);
-#else
-  (void)x, (void)y, (void)w, (void)h;
-#endif
+  if (grayscaleModeBalanced(GrayscaleMode::Overlay)) einkDisplay.preconditionGrayscale(x, y, w, h);
 }
 
 void HalDisplay::copyGrayscaleLsbBuffers(const uint8_t* lsbBuffer) { einkDisplay.copyGrayscaleLsbBuffers(lsbBuffer); }
@@ -234,8 +241,9 @@ void HalDisplay::cleanupGrayscaleBuffers(const uint8_t* bwBuffer) {
 }
 
 void HalDisplay::displayGrayBuffer(bool turnOffScreen) {
-  // Backstop: only a balanced Absolute base arms the gray waveform.
-  const bool armed = balancedGrayArmed || CROSSINK_APP_OVERLAY_GRAYSCALE;
+  // Backstop: overlay gray runs only where it is balanced; Absolute/Direct only
+  // after a balanced base.
+  const bool armed = balancedGrayArmed || grayscaleModeBalanced(GrayscaleMode::Overlay);
   balancedGrayArmed = false;
   if (!armed) {
     LOG_ERR("DISP", "Skipping gray waveform without a balanced base");
@@ -264,17 +272,16 @@ bool HalDisplay::shouldSkipImageBlanking() const {
 }
 
 bool HalDisplay::displayGrayscaleBaseAsync(HalDisplay::RefreshMode fallback) {
-#if CROSSINK_APP_OVERLAY_GRAYSCALE
+  if (!grayscaleModeBalanced(GrayscaleMode::Overlay)) {
+    displayGrayscaleBase(fallback);
+    return false;
+  }
   HalSpiBus::Lock spiLock;
   return einkDisplay.displayGrayscaleBaseAsync(convertRefreshMode(fallback));
-#else
-  displayGrayscaleBase(fallback);
-  return false;
-#endif
 }
 
 bool HalDisplay::supportsDeferredGrayscaleBase() const {
-  return CROSSINK_APP_OVERLAY_GRAYSCALE && einkDisplay.supportsDeferredGrayscaleBase();
+  return grayscaleModeBalanced(GrayscaleMode::Overlay) && einkDisplay.supportsDeferredGrayscaleBase();
 }
 
 bool HalDisplay::supportsStripGrayscale() const { return grayscaleCapabilities().stripUploads; }

@@ -343,6 +343,8 @@ class GfxRenderer {
   // The GrayscaleMode enum stays out of this header: the simulator's HalDisplay
   // does not define it.
   bool supportsDirectGrayscale() const;
+  // Overlay (anti-aliasing) gray: false on panels whose overlay waveform is one-way.
+  bool supportsOverlayGrayscale() const;
   bool displayDirectGrayscaleBase(HalDisplay::RefreshMode fallback = HalDisplay::HALF_REFRESH) const;
   RenderMode getRenderMode() const { return renderMode; }
   // Grayscale preconditioning settle pass (no-op on X4). The rect overload

@@ -3294,6 +3294,14 @@ bool GfxRenderer::supportsDirectGrayscale() const {
 #endif
 }
 
+bool GfxRenderer::supportsOverlayGrayscale() const {
+#ifdef SIMULATOR
+  return true;
+#else
+  return display.grayscaleCapabilities(HalDisplay::GrayscaleMode::Overlay).supported();
+#endif
+}
+
 bool GfxRenderer::displayAbsoluteGrayscaleBase(HalDisplay::RefreshMode fallback) const {
   absoluteGrayPlanes = false;
 #ifdef SIMULATOR

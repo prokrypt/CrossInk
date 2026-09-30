@@ -27,7 +27,6 @@
 #include <type_traits>
 
 #include "../settings/DictionarySelectActivity.h"
-#include "AppCapabilities.h"
 #include "../settings/KOReaderSettingsActivity.h"
 #include "BookStatsActivity.h"
 #include "BookStatsTracking.h"
@@ -7521,9 +7520,10 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
 
   const bool pageHasImages = page->hasImages();
   const bool foregroundBlack = ReaderUtils::readerForegroundBlack();
-  // Overlay gray waveforms are one-way (see AppCapabilities.h): B/W only.
-  bool needsImageGrayscale = CROSSINK_APP_OVERLAY_GRAYSCALE && pageHasImages;
-  bool needsTextGrayscale = CROSSINK_APP_OVERLAY_GRAYSCALE && SETTINGS.textAntiAliasing && foregroundBlack &&
+  // Panels whose overlay gray waveform is one-way stay B/W.
+  const bool overlayGrayscale = renderer.supportsOverlayGrayscale();
+  bool needsImageGrayscale = overlayGrayscale && pageHasImages;
+  bool needsTextGrayscale = overlayGrayscale && SETTINGS.textAntiAliasing && foregroundBlack &&
                             !sdFontSystem.fontUsesMonochromeRaster(renderer, fontId, SETTINGS.sdFontFamilyName);
   const int contentBottom = renderer.getScreenHeight() - orientedMarginBottom;
 
