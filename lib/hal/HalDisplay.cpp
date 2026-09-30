@@ -135,6 +135,11 @@ bool HalDisplay::supportsAsyncRefresh() const { return einkDisplay.supportsAsync
 // an unmarked controller keeps only the OEM 4-gray banks known to net zero
 // (SSD1677 lut_factory_quality, X4 UC8279 kQualityBank: Absolute only), and X3
 // gets no gray at all.
+// Overlay AA stays off everywhere for now (user, 2026-09-30), even where the
+// SDK marks it balanced. Absolute/Direct images still follow the macros.
+#ifndef CROSSINK_OVERLAY_AA
+#define CROSSINK_OVERLAY_AA 0
+#endif
 #ifndef FREEINK_BALANCED_GRAY_SSD1677
 #define FREEINK_BALANCED_GRAY_SSD1677 0
 #endif
@@ -151,6 +156,7 @@ bool HalDisplay::supportsAsyncRefresh() const { return einkDisplay.supportsAsync
 static bool grayscaleModeBalanced(const HalDisplay::GrayscaleMode mode) {
   using Controller = BoardConfig::DisplayController;
   using Mode = HalDisplay::GrayscaleMode;
+  if (mode == Mode::Overlay && !CROSSINK_OVERLAY_AA) return false;
   if (gpio.deviceIsX3()) return FREEINK_BALANCED_GRAY_X3;
   switch (BoardConfig::ACTIVE.displayController) {
     case Controller::SSD1677:

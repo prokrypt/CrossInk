@@ -57,7 +57,7 @@
 
 ### Fixed
 
-- Screen safety: grayscale (text anti-aliasing, reader images, XTCH 2-bit pages, sleep covers, the image viewer) only runs on panels whose gray waveforms are DC-balanced, since one-way drive can damage e-ink panels over time. Other panels show those pages in black and white.
+- Screen safety: text anti-aliasing and the reader's other gray overlays (reader images, XTCH 2-bit pages, the sleep overlay page) are off for now, because their waveforms drove pixels one way, which can damage e-ink panels over time. Sleep covers and the image viewer keep 4-level gray only on panels whose full grayscale waveform is DC-balanced; others show them dithered in black and white.
 - File Transfer choices no longer appear preselected when opened on a touch device.
 - On the X4 Pro and Sticky, the Home screen no longer stalls waiting for the SD card while the Library indexes in the background.
 - Small images that are scaled up, such as a short progressive JPEG, are now cached after the first draw instead of being decoded again on every screen refresh.
