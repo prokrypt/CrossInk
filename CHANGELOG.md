@@ -57,6 +57,7 @@
 
 ### Fixed
 
+- On the X4 Pro, the e-ink panel is powered off before every restart (after an OTA or SD card update, or a silent restart when leaving Wi-Fi) instead of staying powered until the reset.
 - File Transfer choices no longer appear preselected when opened on a touch device.
 - On the X4 Pro and Sticky, the Home screen no longer stalls waiting for the SD card while the Library indexes in the background.
 - Small images that are scaled up, such as a short progressive JPEG, are now cached after the first draw instead of being decoded again on every screen refresh.
