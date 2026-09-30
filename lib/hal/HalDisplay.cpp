@@ -130,28 +130,35 @@ bool HalDisplay::isRefreshBusy() { return einkDisplay.refreshBusy(); }
 
 bool HalDisplay::supportsAsyncRefresh() const { return einkDisplay.supportsAsyncRefresh(); }
 
-// DC-balance policy. The SDK marks each controller whose gray waveforms are
-// balanced (FREEINK_BALANCED_GRAY_*); unmarked ones get no grayscale beyond the
-// OEM 4-gray banks known to net zero: SSD1677 lut_factory_quality and the X4
-// UC8279 kQualityBank (Absolute only). X3 (UC8253 / UC8279d) drives custom
-// one-way LUTs around every gray pass, so it gets none.
+// DC-balance policy. The SDK marks each controller whose gray waveforms pass its
+// compile-time balance gate (FREEINK_BALANCED_GRAY_*, GrayscaleCapabilities.h);
+// an unmarked controller keeps only the OEM 4-gray banks known to net zero
+// (SSD1677 lut_factory_quality, X4 UC8279 kQualityBank: Absolute only), and X3
+// gets no gray at all.
 #ifndef FREEINK_BALANCED_GRAY_SSD1677
 #define FREEINK_BALANCED_GRAY_SSD1677 0
 #endif
 #ifndef FREEINK_BALANCED_GRAY_UC8179
 #define FREEINK_BALANCED_GRAY_UC8179 0
 #endif
+#ifndef FREEINK_BALANCED_GRAY_UC8279
+#define FREEINK_BALANCED_GRAY_UC8279 0
+#endif
+#ifndef FREEINK_BALANCED_GRAY_X3
+#define FREEINK_BALANCED_GRAY_X3 0
+#endif
 
 static bool grayscaleModeBalanced(const HalDisplay::GrayscaleMode mode) {
   using Controller = BoardConfig::DisplayController;
   using Mode = HalDisplay::GrayscaleMode;
+  if (gpio.deviceIsX3()) return FREEINK_BALANCED_GRAY_X3;
   switch (BoardConfig::ACTIVE.displayController) {
     case Controller::SSD1677:
       return mode == Mode::Absolute || (mode == Mode::Overlay && FREEINK_BALANCED_GRAY_SSD1677);
     case Controller::UC8179:
       return FREEINK_BALANCED_GRAY_UC8179;
     case Controller::UC8279:
-      return mode == Mode::Absolute && !gpio.deviceIsX3();
+      return mode == Mode::Absolute || FREEINK_BALANCED_GRAY_UC8279;
     default:
       return false;
   }
@@ -251,10 +258,13 @@ void HalDisplay::displayGrayBuffer(bool turnOffScreen) {
   }
   HalSpiBus::Lock spiLock;
   einkDisplay.displayGrayBuffer(turnOffScreen);
-  // UC8279 would route the next Fast through the one-way XTF_PRE_BW_MID
-  // transition; a resync makes it an OTP GC instead. SSD1677 already promotes
-  // the next paint to HALF after an absolute gray.
-  if (BoardConfig::ACTIVE.displayController == BoardConfig::DisplayController::UC8279) einkDisplay.requestResync();
+  // An unbalanced UC8279 SDK routes the next Fast through the one-way
+  // XTF_PRE_BW_MID transition; a resync makes it an OTP GC instead. SSD1677
+  // already promotes the next paint to HALF after an absolute gray.
+  if (!FREEINK_BALANCED_GRAY_UC8279 &&
+      BoardConfig::ACTIVE.displayController == BoardConfig::DisplayController::UC8279) {
+    einkDisplay.requestResync();
+  }
 }
 
 void HalDisplay::writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* rows, uint16_t yStart, uint16_t numRows) {
