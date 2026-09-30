@@ -57,6 +57,7 @@
 
 ### Fixed
 
+- OPDS, KOReader sync and other secure web requests keep their 2 KB read buffer on the heap instead of the calling task's stack, leaving more stack headroom while a catalog page is parsed.
 - File Transfer choices no longer appear preselected when opened on a touch device.
 - On the X4 Pro and Sticky, the Home screen no longer stalls waiting for the SD card while the Library indexes in the background.
 - Small images that are scaled up, such as a short progressive JPEG, are now cached after the first draw instead of being decoded again on every screen refresh.
