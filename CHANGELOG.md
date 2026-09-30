@@ -57,6 +57,7 @@
 
 ### Fixed
 
+- X3 and X4 Pro: a battery, clock or touch read on the shared I2C bus could be overwritten mid-copy by a read from another task (phantom taps, odd battery or clock values). Each I2C transaction now holds the bus until its data is copied out, and the clock's cached time can no longer be read half-updated.
 - File Transfer choices no longer appear preselected when opened on a touch device.
 - On the X4 Pro and Sticky, the Home screen no longer stalls waiting for the SD card while the Library indexes in the background.
 - Small images that are scaled up, such as a short progressive JPEG, are now cached after the first draw instead of being decoded again on every screen refresh.
