@@ -129,6 +129,7 @@ class HalDisplay {
 
  private:
   EInkDisplay einkDisplay;
+  bool balancedGrayArmed = false;
 };
 
 extern HalDisplay display;

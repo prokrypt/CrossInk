@@ -15,6 +15,7 @@
 
 #include <algorithm>
 
+#include "AppCapabilities.h"
 #include "BookStatsActivity.h"
 #include "BookStatsTracking.h"
 #include "CrossPointSettings.h"
@@ -1334,6 +1335,8 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
       renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
       pagesUntilFullRefresh--;
     }
+    // The B/W base is the page: the overlay gray waveform is one-way.
+    if constexpr (!CROSSINK_APP_OVERLAY_GRAYSCALE) return;
 
     renderer.clearScreen(0x00);
     if (!streamXtchRenderPass(*xtc, pageToRender, pageWidth, pageHeight, renderer, XtchRenderPass::Lsb)) {

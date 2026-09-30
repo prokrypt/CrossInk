@@ -57,6 +57,7 @@
 
 ### Fixed
 
+- Screen safety: grayscale anti-aliasing (reader text and images, XTCH 2-bit pages, the sleep overlay page) is off, because every display controller's anti-aliasing waveform drives pixels in one direction only, which can damage the e-ink panel over time. Pages show in black and white. Sleep covers and the image viewer keep 4-level gray only on panels whose full grayscale waveform is balanced (SSD1677 X4 / X4 Pro and the X4 Pro UC8279); others show dithered black and white.
 - File Transfer choices no longer appear preselected when opened on a touch device.
 - On the X4 Pro and Sticky, the Home screen no longer stalls waiting for the SD card while the Library indexes in the background.
 - Small images that are scaled up, such as a short progressive JPEG, are now cached after the first draw instead of being decoded again on every screen refresh.

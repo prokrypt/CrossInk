@@ -872,7 +872,8 @@ bool SleepActivity::renderBitmapSleepScreen(Bitmap& bitmap) const {
     }
   }
 
-  if (!hasGreyscale) {
+  // Without a balanced Absolute waveform the overlay fallback is one-way: B/W only.
+  if (!hasGreyscale || (!absolute && !CROSSINK_APP_OVERLAY_GRAYSCALE)) {
     renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
     return true;
   }
@@ -1101,7 +1102,8 @@ void SleepActivity::renderOverlaySleepScreen() const {
     return false;
   };
   const bool backgroundSupportsGrayscale =
-      FsHelpers::checkFileExtension(path, ".txt") || FsHelpers::checkFileExtension(path, ".epub");
+      CROSSINK_APP_OVERLAY_GRAYSCALE &&
+      (FsHelpers::checkFileExtension(path, ".txt") || FsHelpers::checkFileExtension(path, ".epub"));
   bool backgroundWasRebuilt = false;
   bool backgroundAvailable = false;
 

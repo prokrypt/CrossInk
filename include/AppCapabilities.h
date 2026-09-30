@@ -41,3 +41,10 @@
 
 // Every button-only reader uses the full-screen menu and its bounded sample preview.
 #define CROSSINK_APP_READER_SAMPLE_PREVIEW (!CROSSINK_APP_CAP_TOUCH)
+
+// Overlay grayscale (text AA, reader image gray, XTCH 2-bit, sleep-overlay gray)
+// stays off: at freeink-sdk 838622e every linked driver's overlay path is
+// DC-unbalanced (SSD1677 lut_grayscale, UC8179 kGrayLuts + kGrayPreBwMid,
+// UC8279 XTF_AA + XTF_PRE_BW_MID, UC8253 _gc + preBwMid). Re-enable only once
+// those waveforms pass the SDK DC-balance gate.
+#define CROSSINK_APP_OVERLAY_GRAYSCALE 0
