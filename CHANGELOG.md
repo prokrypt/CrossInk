@@ -57,6 +57,7 @@
 
 ### Fixed
 
+- Home no longer rebuilds the Library index over and over in the background when the result is degraded (for example more than 1024 books in one folder chain). That loop rewrote the index on the SD card on every pass and kept the device from auto-sleeping on Home. A degraded background index is now left for the Library to rebuild, and is retried only after the card changes. An index whose "Recent" (date added) order fell back is also left for the Library instead of being used as current.
 - File Transfer choices no longer appear preselected when opened on a touch device.
 - On the X4 Pro and Sticky, the Home screen no longer stalls waiting for the SD card while the Library indexes in the background.
 - Small images that are scaled up, such as a short progressive JPEG, are now cached after the first draw instead of being decoded again on every screen refresh.
