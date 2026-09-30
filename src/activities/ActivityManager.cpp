@@ -1351,6 +1351,10 @@ RenderLock::RenderLock(const Mode mode) {
 
 RenderLock::RenderLock([[maybe_unused]] Activity&, const Mode mode) : RenderLock(mode) {}
 
+RenderLock::RenderLock(const unsigned long timeoutMs) {
+  isLocked = xSemaphoreTake(activityManager.renderingMutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+}
+
 RenderLock::~RenderLock() {
   if (isLocked) {
     xSemaphoreGive(activityManager.renderingMutex);
@@ -1373,3 +1377,7 @@ void RenderLock::unlock() {
  * @note Must not be called from ISR context — xSemaphoreGetMutexHolder is not ISR-safe.
  */
 bool RenderLock::peek() { return xSemaphoreGetMutexHolder(activityManager.renderingMutex) != nullptr; }
+
+bool RenderLock::heldByCaller() {
+  return xSemaphoreGetMutexHolder(activityManager.renderingMutex) == xTaskGetCurrentTaskHandle();
+}

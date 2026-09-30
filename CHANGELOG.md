@@ -58,6 +58,7 @@
 ### Fixed
 
 - OPDS, KOReader sync and other secure web requests keep their 2 KB read buffer on the heap instead of the calling task's stack, leaving more stack headroom while a catalog page is parsed.
+- On the X4 Pro, the e-ink panel is powered off before every restart (after an OTA or SD card update, or a silent restart when leaving Wi-Fi) instead of staying powered until the reset.
 - File Transfer choices no longer appear preselected when opened on a touch device.
 - On the X4 Pro and Sticky, the Home screen no longer stalls waiting for the SD card while the Library indexes in the background.
 - Small images that are scaled up, such as a short progressive JPEG, are now cached after the first draw instead of being decoded again on every screen refresh.
@@ -120,6 +121,10 @@
 - Footnote choices can be selected directly on the reading page, with a list fallback for links without a visible target.
 - Changing global font or page layout settings from the pull-down panel on touch devices now updates the open book when it inherits those settings.
 - KOReader authentication now rejects unexpectedly large server responses to avoid crashes.
+
+### Security
+
+- Download logs show a URL without its query string, so signed download tokens (such as `?token=` on a redirected OPDS book download) no longer end up in serial or saved logs.
 
 ## [v1.6.0] - 2026-09-21
 
