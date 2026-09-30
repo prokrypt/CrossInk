@@ -34,6 +34,7 @@
 #include "util/BootReason.h"
 
 #ifndef SIMULATOR
+#include <esp_system.h>
 #include <nvs.h>
 #endif
 
@@ -49,6 +50,7 @@
 #include "SilentRestart.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/RenderLock.h"
 #include "activities/boot_sleep/ImageFolderIndex.h"
 #include "activities/home/BookActions.h"
 #include "activities/reader/KOReaderSyncActivity.h"
@@ -1101,6 +1103,28 @@ void enterDeepSleep(bool fromTimeout) {
   powerManager.startDeepSleep(gpio);
 }
 
+#if !defined(SIMULATOR) && FREEINK_DEVICE_X4PRO
+// Every esp_restart() (silent restart, OTA, SD update) runs this: the panel
+// stays powered between refreshes, so power it off (POF + deep sleep) instead
+// of leaving the booster on until the reset. begin() re-inits the controller
+// and the first paint after boot is non-differential, so lost RAM is harmless.
+// X4 Pro only: SDMMC keeps the SD card off the display's SPI bus, so the bus
+// lock cannot block here behind an SD transfer.
+static void powerOffPanelOnRestart() {
+  // ponytail: 3 s covers the longest refresh and stays under the 5 s task
+  // watchdog; a longer hold leaves the panel on.
+  constexpr unsigned long RENDER_LOCK_WAIT_MS = 3000;
+  const bool ownLock = RenderLock::heldByCaller();
+  RenderLock lock(ownLock ? 0UL : RENDER_LOCK_WAIT_MS);
+  if (!ownLock && !lock.ownsLock()) {
+    LOG_ERR("MAIN", "Render busy at restart; panel left powered");
+    return;
+  }
+  display.deepSleep();
+  LOG_INF("MAIN", "Panel powered off before restart");
+}
+#endif
+
 void setupDisplayAndFonts(const bool seamless, const bool loadReaderResources, const bool useReaderRenderStack) {
 #if !defined(SIMULATOR) && !FREEINK_MCU_C3
   // C3 X3/X4 detection already runs in HalGPIO::begin() before SPI owns the
@@ -1120,6 +1144,9 @@ void setupDisplayAndFonts(const bool seamless, const bool loadReaderResources, c
   display.begin();
 #else
   display.begin(seamless);
+#if FREEINK_DEVICE_X4PRO
+  esp_register_shutdown_handler(powerOffPanelOnRestart);
+#endif
 #endif
   renderer.begin();
   display.setInverted(SETTINGS.screenInverted != 0);
