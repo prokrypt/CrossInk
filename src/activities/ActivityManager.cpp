@@ -395,9 +395,12 @@ bool applyEdgeSlideAction(Activity& activity, MappedInputManager& mappedInput, A
   if (state.active) {
     // Track the finger in both directions: reversing through the touch-down
     // point keeps moving the value instead of holding at the starting value.
-    const int amount =
-        SwipeAdjustment::liveAmount(state.movementSign * progress.deltaY, mappedInput.getRenderer().getScreenHeight());
-    updateLiveLightSwipe(activity, activityManager, state, amount);
+    // Drifting inward ends the slide at its last applied value.
+    if (!progress.leftEdgeBand) {
+      const int amount = SwipeAdjustment::liveAmount(state.movementSign * progress.deltaY,
+                                                     mappedInput.getRenderer().getScreenHeight());
+      updateLiveLightSwipe(activity, activityManager, state, amount);
+    }
     if (progress.finished) {
       mappedInput.suppressCurrentTouchContact();
       finishLiveLightSwipe(state, activityManager);
@@ -1075,15 +1078,18 @@ void ActivityManager::goToSleep(bool fromTimeout) {
   const GfxRenderer::Orientation sleepPopupOrientation = renderer.getOrientation();
   std::string currentBookPath = getCurrentBookPath();
   const bool renderBeforeExit = currentActivity && SleepActivity::rendersBeforeExit(currentBookPath, fromTimeout);
-  auto sleepActivity = std::make_unique<SleepActivity>(renderer, mappedInput, canSnapshotOverlay,
-                                                       std::move(currentBookPath), fromTimeout, sleepPopupOrientation);
-  if (renderBeforeExit) {
+  auto sleepActivity = makeUniqueNoThrow<SleepActivity>(renderer, mappedInput, canSnapshotOverlay,
+                                                        std::move(currentBookPath), fromTimeout, sleepPopupOrientation);
+  if (!sleepActivity) {
+    LOG_ERR("ACT", "Could not allocate sleep activity; saving outgoing activities before sleep");
+  }
+  if (renderBeforeExit || !sleepActivity) {
     // Draw the sleep screen first, then let the outgoing activities save their
     // progress and stats. Holding the render lock throughout keeps the render
     // task from repainting the outgoing activity over the sleep screen.
     RenderLock lock;
     TouchRegistry::getInstance().clear();
-    sleepActivity->onEnter();
+    if (sleepActivity) sleepActivity->onEnter();
     exitActivity(lock);
     while (!stackActivities.empty()) {
       stackActivities.back()->onExit();
@@ -1250,6 +1256,8 @@ void ActivityManager::endGlobalSettingsEdit() {
 }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }
+
+uint8_t ActivityManager::inputPollDelayMs() const { return currentActivity ? currentActivity->inputPollDelayMs() : 10; }
 
 std::string ActivityManager::getCurrentBookPath() const {
   if (currentActivity) {

@@ -1,4 +1,4 @@
-## [Unreleased]
+## [v1.6.1] - 2026-09-30
 
 ### Added
 
@@ -26,6 +26,7 @@
 - In-reader menu for X3/X4/X4 Classic have been updated to a modified version of the in-reader menu for touch devices
 - Chapter pages and book progress information is displayed in the frontlight drawer when in the reader for X4 Pro
 - Add a Cover Grid Home theme on devices with PSRAM, showing the current book and six library covers.
+- Show small EPUB images within the surrounding text line instead of separating them from the paragraph.
 
 ### Changed
 
@@ -54,6 +55,8 @@
 - The on-screen keyboard now uses wider outlined keys with clearer spacing on touch and button devices.
 - Long status titles shorten faster when they do not fit the screen.
 - Leaving an EPUB or TXT reader releases rebuildable font buffers for other screens.
+- Menu buttons now follow the device layout: Left/Right switch tabs and Up/Down select rows in reader menus and global settings.
+- The KOReader Sync progress choice now shows remote and local progress as clear cards with large percentages, progress bars, and an "Ahead" marker on the further position.
 
 ### Fixed
 
@@ -85,6 +88,7 @@
 - Dragging or scrolling on a list or menu no longer highlights or selects the row under your finger, and a short drag no longer opens it. Rows highlight once your finger rests on them briefly, so long-press still works.
 - Turning from an EPUB image page whose grayscale pass finished to another image page now runs a cleanup refresh, so the previous image no longer ghosts on the X4 Pro. Image pages skipped before their grayscale pass finishes no longer force a flash on the next page.
 - Keyboard rows are shorter on button-only devices so side-button hints no longer cover the keys.
+- EPUB paragraphs now inherit first-line indentation from HTML and body styles while retaining paragraph-level overrides.
 - Saved clipping lists now show a scrollbar when more clippings are available below the visible rows.
 - EPUB Safe Mode no longer pins inherited fonts and page layout as personal book settings.
 - The X4 Pro Home button now steps back through dictionary lookup, chapter selection, and nested settings instead of jumping to Home.
@@ -121,6 +125,14 @@
 - Footnote choices can be selected directly on the reading page, with a list fallback for links without a visible target.
 - Changing global font or page layout settings from the pull-down panel on touch devices now updates the open book when it inherits those settings.
 - KOReader authentication now rejects unexpectedly large server responses to avoid crashes.
+- EPUBs rewritten with alternate XML namespace prefixes now open normally instead of jumping straight to End of Book.
+- Carousel Home screen reuses cached cover artwork after reading and prepares other positions only when viewed, while keeping progress, reading time, and menu choices current.
+- Sleep entry skips unnecessary pauses and repeated session-state writes. PSRAM devices show independent sleep screens before saving reader progress, and Direct grayscale images skip an unused decode.
+- Renaming books in the web portal preserves reading progress, stats, bookmarks, clippings, reader settings, and cached content.
+- Side-button Orientation Aware, optional keyboard layouts, and the XTC reader's touchscreen and reading stats settings now show toggle switches instead of Yes/No or On/Off labels.
+- In-book setting choices now open with the current value highlighted and visible, including fonts and font sizes.
+- Changing the Home theme or UI scale through the frontlight drawer no longer leaves overlapping covers or stale controls.
+- Fix filename-based KOReader sync failing at split-chapter boundaries in optimized EPUBs that already contain sync mapping data.
 
 ### Security
 

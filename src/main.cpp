@@ -15,6 +15,8 @@
 #include <HalSystem.h>
 #include <HalTiltSensor.h>
 #include <I18n.h>
+#include <LibraryBuilder.h>
+#include <LibraryScanSleepToken.h>
 #include <Logging.h>
 #include <Memory.h>
 #include <SPI.h>
@@ -259,6 +261,10 @@ void logMemoryStats(const char* phase, const bool onlyIfChanged = false) {
           ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
 #endif
 }
+
+// Retain only a successfully reconciled Library across real deep-sleep wakes.
+// Consume the pair on every boot, including resets that preserve RTC memory.
+RTC_NOINIT_ATTR library::ScanSleepToken libraryScanSleepToken;
 
 // Definitions for SilentRestart.h. RTC_NOINIT survives ESP.restart() but not power loss.
 RTC_NOINIT_ATTR uint32_t silentRebootMagic;
@@ -1090,6 +1096,7 @@ void enterDeepSleep(bool fromTimeout) {
     BatteryDiagnosticLog::record(BatteryDiagnosticLog::Event::Sleep, BoardConfig::ACTIVE.name);
     // All sleep-time file writes are complete. Stop SDMMC before the power path
     // cuts peripheral rails and isolates the bus pads; SPI boards are a no-op.
+    libraryScanSleepToken.save(!library::libraryIndexNeedsRefresh());
     Storage.shutdown();
 
     putTiltSensorToSleepForDeepSleep();
@@ -1192,6 +1199,7 @@ void setup() {
 
   const esp_reset_reason_t rawResetReason = esp_reset_reason();
   const esp_sleep_wakeup_cause_t rawWakeupCause = esp_sleep_get_wakeup_cause();
+  if (libraryScanSleepToken.consume(rawResetReason == ESP_RST_DEEPSLEEP)) library::restoreLibraryIndexAfterSleep();
 
 #ifdef ENABLE_SERIAL_LOG
 #ifdef CROSSPOINT_WAIT_FOR_USB_SERIAL
@@ -1391,6 +1399,7 @@ void setup() {
     }
   }
   Frontlight.releaseAfterWake();
+  LOG_DBG("LIGHT", "Frontlight boot state: %s (silent=%d)", restoreLightOn ? "on" : "off", isSilentReboot ? 1 : 0);
   Frontlight.begin(SETTINGS.frontlightBrightness, SETTINGS.frontlightWarmth, restoreLightOn);
 
   if (recoveryFirmwareMode) {
@@ -1982,13 +1991,15 @@ void loop() {
   // Add delay at the end of the loop to prevent tight spinning
   // When an activity requests skip loop delay (e.g., webserver running), use yield() for faster response
   // Otherwise, use longer delay to save power
+  const uint8_t inputPollDelayMs = activityManager.inputPollDelayMs();
   bool skipLoopDelay = false;
   {
     // Reader scheduling inspects state also owned by the render task. Never wait
     // here: the input loop must stay available while a page is being rendered.
     RenderLock lock(RenderLock::Mode::Try);
     if (!lock.ownsLock()) {
-      delay(10);
+      // Continue polling at the activity's rate while its screen is drawn.
+      delay(inputPollDelayMs);
       return;
     }
     skipLoopDelay = activityManager.skipLoopDelay();
@@ -2008,7 +2019,7 @@ void loop() {
       InputWake::wait(idleWaitMs(millis() - lastActivityTime));
     } else {
       // Short delay to prevent tight loop while still being responsive
-      InputWake::wait(10);
+      InputWake::wait(inputPollDelayMs);
     }
   }
 }

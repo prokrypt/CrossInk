@@ -23,6 +23,7 @@ class MappedInputManager {
     // whenever a position is known, even inside the recognition dead zone.
     int deltaY = 0;
     bool finished = false;
+    bool leftEdgeBand = false;
   };
 
   struct CompletedSwipe {
@@ -251,6 +252,8 @@ class MappedInputManager {
   constexpr bool wasReaderMenuHold() const { return false; }
   // cppcheck-suppress-end functionStatic
 #endif
+  // Directions for tabbed menus, derived from the physical button layout.
+  Button menuButton(Button direction) const;
   bool wasAnyPressed() const;
   bool wasAnyReleased() const;
   unsigned long getHeldTime() const;
