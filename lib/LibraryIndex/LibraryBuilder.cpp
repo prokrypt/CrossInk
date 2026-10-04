@@ -1683,6 +1683,8 @@ void invalidateLibraryIndex() { indexDirty.store(true, std::memory_order_relaxed
 
 bool libraryIndexNeedsRefresh() { return indexDirty.load(std::memory_order_relaxed); }
 
+void restoreLibraryIndexAfterSleep() { indexDirty.store(false, std::memory_order_relaxed); }
+
 bool buildLibraryIndex(const char* rootPath, BuildStats& stats, const bool readMetadata, const BuildControl* control,
                        const bool retryFailedMetadata) {
   // Clear before scanning, not after: a file mutation during the scan must

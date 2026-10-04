@@ -62,12 +62,10 @@ bool CrossPointState::saveToFile() const {
   String json;
   serializeJson(doc, json);
 
-  // Many callers save unconditionally; skip rewriting what is already on disk.
-  // Every external edit of the card (web, WebDAV, USB Drive) ends in a reboot,
-  // which resets this, so it cannot mask a deleted file.
+  // Many callers save unconditionally; skip rewriting what is already on disk,
+  // unless the file has since been deleted.
   const uint32_t crc = uzlib_crc32(json.c_str(), json.length(), 0);
-  const bool unchanged = lastSavedCrcValid && crc == lastSavedCrc;
-  if (unchanged) return true;
+  if (lastSavedCrcValid && crc == lastSavedCrc && Storage.exists(STATE_FILE_JSON)) return true;
 
   Storage.mkdir("/.crosspoint");
   if (!Storage.writeFile(STATE_FILE_JSON, json)) {
@@ -81,13 +79,16 @@ bool CrossPointState::saveToFile() const {
 }
 
 bool CrossPointState::loadFromFile() {
-  // Try JSON first
-  if (Storage.exists(STATE_FILE_JSON)) {
+  {
     std::lock_guard<std::mutex> storeLock(storeMutex);
-    JsonDocument doc;
-    if (PersistableStoreBase::readDocFromFile(STATE_FILE_JSON, doc)) {
-      std::lock_guard<std::mutex> stateLock(_mutex);
-      return fromJson(doc.as<JsonVariantConst>());
+    lastSavedCrcValid = false;
+    // Try JSON first. A reload invalidates the remembered on-disk snapshot.
+    if (Storage.exists(STATE_FILE_JSON)) {
+      JsonDocument doc;
+      if (PersistableStoreBase::readDocFromFile(STATE_FILE_JSON, doc)) {
+        std::lock_guard<std::mutex> stateLock(_mutex);
+        return fromJson(doc.as<JsonVariantConst>());
+      }
     }
   }
 
