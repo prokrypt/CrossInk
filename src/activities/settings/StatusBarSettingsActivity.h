@@ -16,11 +16,15 @@
 
 // Reader status bar configuration activity
 class StatusBarSettingsActivity final : public Activity {
+#ifdef SIMULATOR
+  friend struct StatusBarFeatureSmokeTest;
+#endif
  public:
   explicit StatusBarSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool readerContext = false,
-                                     bool stablePageNumbersAvailable = false)
+                                     bool stablePageNumbersAvailable = false, bool displayContext = false)
       : Activity("StatusBarSettings", renderer, mappedInput),
         readerContext(readerContext),
+        displayContext(displayContext),
         uiTarget(makeUiTarget(renderer)),
         app(uiTarget, uiTarget.deviceContext()) {
     (void)stablePageNumbersAvailable;
@@ -40,6 +44,7 @@ class StatusBarSettingsActivity final : public Activity {
   int selectedIndex = 0;
   int visibleItemCount = 0;
   bool readerContext = false;
+  bool displayContext = false;
   View view = View::Root;
 
   using UiApp = freeink::ui::FreeInkApp<20, 4>;
@@ -50,6 +55,9 @@ class StatusBarSettingsActivity final : public Activity {
   freeink::ui::ListNav listNav;
   int visibleRows = 1;
   int topIndex = 0;
+#ifdef SIMULATOR
+  bool simulatorSelectedRowVisible = false;
+#endif
 
   void handleSelection();
   void openOptionPicker();

@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 #include <BoardConfig.h>
+#include <FontFileTypes.h>
 #ifdef SIMULATOR
 #include <ArduinoJsonStringCompat.h>
 #endif
@@ -39,6 +40,7 @@
 #include "WebDAVHandler.h"
 #include "WifiCredentialStore.h"
 #include "activities/boot_sleep/ImageFolderIndex.h"
+#include "components/HeaderDate.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
@@ -46,11 +48,14 @@
 #include "html/SettingsPageHtml.generated.h"
 #include "html/StyleCss.generated.h"
 #include "html/js/jszip_minJs.generated.h"
+#include "sync/BookSyncFile.h"
+#include "sync/SyncPending.h"
 #include "util/BookCacheUtils.h"
 #include "util/BookMoveUtils.h"
 #include "util/BootReason.h"
 #include "util/BuildInfo.h"
 #include "util/FontFamilyLabel.h"
+#include "util/OpdsDownloadFolder.h"
 #include "util/ReaderStatusBarJson.h"
 #include "util/StringUtils.h"
 
@@ -89,6 +94,7 @@ bool isWebEnumOptionAvailable(const SettingInfo& setting, size_t optionIndex) {
   if (optionIndex >= setting.enumValues.size()) return true;
 
   const StrId option = setting.enumValues[optionIndex];
+  if (option == StrId::STR_THEME_COVER_GRID && !UITheme::supportsCoverGrid()) return false;
   if (!SETTINGS.shouldTrackReadingStats()) {
     if (option == StrId::STR_READING_STATS) return false;
     if (setting.valuePtr == &CrossPointSettings::sleepScreen && optionIndex < setting.enumRawValues.size()) {
@@ -127,10 +133,15 @@ uint8_t enumDisplayIndexForWeb(const SettingInfo& setting, uint8_t rawValue) {
 }
 
 bool isWebSettingAvailable(const SettingInfo& setting) {
-  if (setting.category == StrId::STR_STATUS_BARS || setting.nameId == StrId::STR_HIDE_CLOCK) {
+  if (setting.category == StrId::STR_STATUS_BARS || setting.nameId == StrId::STR_HIDE_CLOCK ||
+      settingKeyIs(setting, "displayStatusBarTextSize")) {
     return false;
   }
   if (setting.nameId == StrId::STR_SIDE_BUTTON_CHORD && !deviceSupportsSideButtonChord(gpio)) {
+    return false;
+  }
+
+  if (setting.nameId == StrId::STR_MENU_NAVIGATION && !deviceHasFrontButtons()) {
     return false;
   }
 
@@ -171,7 +182,6 @@ bool isWebSettingAvailable(const SettingInfo& setting) {
   if (!halClock.isAvailable()) {
     switch (setting.nameId) {
       case StrId::STR_HIDE_CLOCK:
-      case StrId::STR_CLOCK_OUTSIDE_READER:
       case StrId::STR_AUTO_BACKUP_STATS:
       case StrId::STR_CLOCK_UTC_OFFSET:
       case StrId::STR_CLOCK_DST:
@@ -188,12 +198,12 @@ bool isWebSettingAvailable(const SettingInfo& setting) {
   return true;
 }
 
-// Streams a font-catalog JSON response in bounded pieces. This avoids holding
+// Streams catalog JSON responses in bounded pieces. This avoids holding
 // both an ArduinoJson document and its serialized String in the fragmented
 // network heap, and gives WiFi a chance to drain each piece before the next.
-class FontListJsonWriter {
+class WebJsonWriter {
  public:
-  explicit FontListJsonWriter(WebServer& server) : server_(server) {}
+  explicit WebJsonWriter(WebServer& server) : server_(server) {}
 
   void append(const char* text) { append(text, strlen(text)); }
 
@@ -540,6 +550,37 @@ void CrossPointWebServer::begin() {
   // Show the correct IP based on network mode
   const String ipAddr = apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
   LOG_DBG("WEB", "[MEM] Free heap after server.begin(): %d bytes", ESP.getFreeHeap());
+}
+
+bool CrossPointWebServer::dropUploadIfCancelled() const {
+  if (!uploadCancelCheck || !uploadCancelCheck(uploadCancelContext)) return false;
+  server->client().stop();
+  return true;
+}
+
+void CrossPointWebServer::abortUpload(UploadState& state, const char* error) const {
+  state.success = false;
+  state.powerSaveGuard.reset();
+  state.bufferPos = 0;
+  if (state.file) {
+    state.file.close();
+    String filePath = state.path;
+    if (!filePath.endsWith("/")) filePath += "/";
+    filePath += state.fileName;
+    if (!Storage.remove(filePath.c_str())) {
+      LOG_ERR("WEB", "Could not remove incomplete upload: %s", filePath.c_str());
+    }
+  }
+  state.error = error;
+  LOG_DBG("WEB", "%s", error);
+}
+
+void CrossPointWebServer::abortFontUpload() {
+  fontUpload.bufferPos = 0;
+  if (fontUpload.file) fontUpload.file.close();
+  if (!fontUpload.filePath.empty()) Storage.remove(fontUpload.filePath.c_str());
+  fontUpload.valid = false;
+  LOG_DBG("WEB", "Font upload aborted");
 }
 
 void CrossPointWebServer::abortWsUpload(const char* tag) {
@@ -1235,6 +1276,10 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     state.powerSaveGuard = makeUniqueNoThrow<WifiPowerSaveGuard>();
 
   } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (dropUploadIfCancelled()) {
+      abortUpload(state);
+      return;
+    }
     if (state.file && state.error.isEmpty()) {
       // Buffer incoming data and flush when buffer is full
       // This reduces SD card write operations and improves throughput
@@ -1253,8 +1298,8 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         // Flush buffer when full
         if (state.bufferPos >= UploadState::UPLOAD_BUFFER_SIZE) {
           if (!flushUploadBuffer(state)) {
-            state.error = "Failed to write to SD card - disk may be full";
-            state.file.close();
+            LOG_ERR("WEB", "Failed to flush upload buffer");
+            abortUpload(state, "Failed to write to SD card - disk may be full");
             return;
           }
         }
@@ -1264,12 +1309,29 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     }
   } else if (upload.status == UPLOAD_FILE_END) {
     state.powerSaveGuard.reset();
+    // The final body chunk can produce END even after cancellation.
+    if (dropUploadIfCancelled()) {
+      abortUpload(state);
+      return;
+    }
     if (state.file) {
       // Flush any remaining buffered data
-      if (!flushUploadBuffer(state)) {
-        state.error = "Failed to write final data to SD card";
+      if (!flushUploadBuffer(state) || !state.file.sync()) {
+        LOG_ERR("WEB", "Failed to finish upload");
+        abortUpload(state, "Failed to write final data to SD card");
+        return;
       }
-      state.file.close();
+      if (!state.file.close()) {
+        state.error = "Failed to close file on SD card";
+        String filePath = state.path;
+        if (!filePath.endsWith("/")) filePath += "/";
+        filePath += state.fileName;
+        if (!Storage.remove(filePath.c_str())) {
+          LOG_ERR("WEB", "Could not remove incomplete upload: %s", filePath.c_str());
+        }
+        LOG_ERR("WEB", "%s", state.error.c_str());
+        return;
+      }
 
       if (state.error.isEmpty()) {
         state.success = true;
@@ -1282,24 +1344,18 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         String filePath = state.path;
         if (!filePath.endsWith("/")) filePath += "/";
         filePath += state.fileName;
-        clearBookCachePreservingUserState(filePath.c_str());
+        if (!clearBookCachePreservingUserState(filePath.c_str(), true)) {
+          state.success = false;
+          state.error = "File saved, but could not refresh cached reading/sync data";
+          LOG_ERR("WEB", "%s: %s", state.error.c_str(), filePath.c_str());
+          return;
+        }
         ImageFolderIndex::invalidateForPath(filePath.c_str());
         sdFontSystem.markRegistryDirtyForPath(filePath.c_str());
       }
     }
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
-    state.powerSaveGuard.reset();
-    state.bufferPos = 0;  // Discard buffered data
-    if (state.file) {
-      state.file.close();
-      // Try to delete the incomplete file
-      String filePath = state.path;
-      if (!filePath.endsWith("/")) filePath += "/";
-      filePath += state.fileName;
-      Storage.remove(filePath.c_str());
-    }
-    state.error = "Upload aborted";
-    LOG_DBG("WEB", "Upload aborted");
+    abortUpload(state);
   }
 }
 
@@ -1588,6 +1644,11 @@ void CrossPointWebServer::handleMove() const {
 
   if (success) {
     LOG_DBG("WEB", "Moved file: %s -> %s", itemPath.c_str(), newPath.c_str());
+    if (!clearBookCachePreservingUserState(newPath.c_str(), true)) {
+      LOG_ERR("WEB", "File moved but cache refresh failed: %s", newPath.c_str());
+      server->send(500, "text/plain", "File moved, but could not refresh cached reading/sync data");
+      return;
+    }
     ImageFolderIndex::invalidateForPath(itemPath.c_str());
     sdFontSystem.markRegistryDirtyForPath(itemPath.c_str());
     ImageFolderIndex::invalidateForPath(newPath.c_str());
@@ -1669,6 +1730,10 @@ void CrossPointWebServer::handleDelete() const {
       if (f) f.close();
       success = Storage.remove(itemPath.c_str());
       clearBookCache(itemPath.c_str());
+      if (success) {
+        SyncPending::removePath(std::string(itemPath.c_str()));
+        BookSyncFile::onDeleted(std::string(itemPath.c_str()));
+      }
     }
 
     if (!success) {
@@ -1697,17 +1762,25 @@ void CrossPointWebServer::handleGetStatusBars() const {
   writeReaderStatusBarJson(doc["top"].to<JsonObject>(), SETTINGS.readerStatusBar(ReaderStatusBarPosition::Top));
   writeReaderStatusBarJson(doc["bottom"].to<JsonObject>(), SETTINGS.readerStatusBar(ReaderStatusBarPosition::Bottom));
   doc["xtcMode"] = SETTINGS.xtcStatusBarMode;
+  doc["displayTextSize"] = SETTINGS.displayStatusBarTextSize;
   doc["clockAvailable"] = halClock.isAvailable();
+  JsonArray displaySlots = doc["display"].to<JsonArray>();
+  for (const auto item : SETTINGS.displayStatusBar.slots) displaySlots.add(static_cast<uint8_t>(item));
+  doc["displayBatteryStyle"] = static_cast<uint8_t>(SETTINGS.displayStatusBar.batteryStyle);
 
   JsonObject labels = doc["labels"].to<JsonObject>();
+  labels["display"] = tr(STR_STATUS_BAR);
   labels["top"] = tr(STR_TOP_STATUS_BAR);
   labels["bottom"] = tr(STR_BOTTOM_STATUS_BAR);
-  labels["left"] = tr(STR_STATUS_BAR_LEFT);
+  labels["left"] = tr(STR_DIR_LEFT);
   labels["center"] = tr(STR_CENTER);
-  labels["right"] = tr(STR_STATUS_BAR_RIGHT);
+  labels["right"] = tr(STR_DIR_RIGHT);
+  labels["battery"] = tr(STR_BATTERY);
   labels["percentageFormat"] = tr(STR_PERCENTAGE_FORMAT);
   labels["progressBar"] = tr(STR_PROGRESS_BAR);
   labels["thickness"] = tr(STR_PROGRESS_BAR_THICKNESS);
+  labels["hidden"] = tr(STR_HIDE);
+  labels["textSize"] = tr(STR_STATUS_BAR_TEXT_SIZE);
   labels["xtcMode"] = tr(STR_XTC_STATUS_BAR);
   labels["preview"] = tr(STR_PREVIEW);
 
@@ -1718,6 +1791,9 @@ void CrossPointWebServer::handleGetStatusBars() const {
     option["label"] = label;
   };
   addOption(ReaderStatusBarItem::Clock, tr(STR_STATUS_BAR_CLOCK));
+  addOption(ReaderStatusBarItem::Date, tr(STR_DATE));
+  char dateText[32];
+  doc["datePreview"] = formatHeaderDateText(dateText, sizeof(dateText)) ? dateText : "";
   addOption(ReaderStatusBarItem::Battery, tr(STR_BATTERY));
   const auto combined = [](const char* first, const char* second) { return std::string(first) + " (" + second + ")"; };
   addOption(ReaderStatusBarItem::TimeLeftBook, combined(tr(STR_TIME_LEFT), tr(STR_BOOK)).c_str());
@@ -1733,11 +1809,15 @@ void CrossPointWebServer::handleGetStatusBars() const {
     JsonArray labels = doc[name].to<JsonArray>();
     for (const StrId id : ids) labels.add(I18N.get(id));
   };
+  addLabels("batteryStyles",
+            {StrId::STR_BATTERY_ICON_AND_PERCENT, StrId::STR_BATTERY_ICON_ONLY, StrId::STR_BATTERY_PERCENT_ONLY});
   addLabels("percentageFormats", {StrId::STR_PERCENTAGE_FORMAT_WHOLE, StrId::STR_PERCENTAGE_FORMAT_ONE_DECIMAL,
                                   StrId::STR_PERCENTAGE_FORMAT_TWO_DECIMALS});
   addLabels("progressModes", {StrId::STR_BOOK, StrId::STR_CHAPTER, StrId::STR_HIDE});
   addLabels("thicknesses",
             {StrId::STR_PROGRESS_BAR_THIN, StrId::STR_PROGRESS_BAR_MEDIUM, StrId::STR_PROGRESS_BAR_THICK});
+  addLabels("hideOptions", {StrId::STR_OFF, StrId::STR_ON});
+  addLabels("textSizes", {StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE});
   addLabels("xtcModes", {StrId::STR_HIDE, StrId::STR_BOTTOM, StrId::STR_TOP, StrId::STR_STATUS_BAR_BOTH});
 
   String payload;
@@ -1755,8 +1835,20 @@ void CrossPointWebServer::handlePostStatusBars() {
     server->send(400, "text/plain", "Invalid JSON");
     return;
   }
+  const auto textSize = doc["displayTextSize"];
+  if (!textSize.isUnbound() && (!textSize.is<int>() || textSize.as<int>() < 0 || textSize.as<int>() > 2)) {
+    server->send(400, "text/plain", "Invalid status bar text size");
+    return;
+  }
   ReaderStatusBarsPayload bars;
-  if (!CrossPointSettings::parseReaderStatusBars(doc.as<JsonVariantConst>(), bars)) {
+  DisplayStatusBarConfig display;
+  {
+    std::lock_guard<std::mutex> lock(SETTINGS.getMutex());
+    display = SETTINGS.displayStatusBar;
+  }
+  if ((!doc["display"].isNull() && !readDisplayStatusBarJson(doc["display"], display, halClock.isAvailable())) ||
+      !readReaderStatusBarBatteryStyle(doc["displayBatteryStyle"], display.batteryStyle) ||
+      !CrossPointSettings::parseReaderStatusBars(doc.as<JsonVariantConst>(), bars)) {
     server->send(400, "text/plain", "Invalid status bar configuration");
     return;
   }
@@ -1766,12 +1858,20 @@ void CrossPointWebServer::handlePostStatusBars() {
     if (previousTop.slots != bars.top.slots || previousTop.percentageFormat != bars.top.percentageFormat ||
         previousTop.progressBar != bars.top.progressBar ||
         previousTop.progressBarThickness != bars.top.progressBarThickness ||
+        (!doc["top"]["battery"].isUnbound() && previousTop.batteryStyle != bars.top.batteryStyle) ||
         SETTINGS.xtcStatusBarMode != bars.xtcMode) {
       SETTINGS.legacyXtcTopUsesBottom = 0;
     }
+    // Older clients have no Hide field; editing slots must retain visibility.
+    if (doc["top"]["hidden"].isUnbound()) bars.top.hidden = previousTop.hidden;
+    if (doc["bottom"]["hidden"].isUnbound()) bars.bottom.hidden = SETTINGS.bottomReaderStatusBar.hidden;
+    if (doc["top"]["battery"].isUnbound()) bars.top.batteryStyle = previousTop.batteryStyle;
+    if (doc["bottom"]["battery"].isUnbound()) bars.bottom.batteryStyle = SETTINGS.bottomReaderStatusBar.batteryStyle;
     SETTINGS.topReaderStatusBar = bars.top;
     SETTINGS.bottomReaderStatusBar = bars.bottom;
     SETTINGS.xtcStatusBarMode = bars.xtcMode;
+    if (!doc["display"].isNull() || !doc["displayBatteryStyle"].isUnbound()) SETTINGS.displayStatusBar = display;
+    if (!textSize.isUnbound()) SETTINGS.displayStatusBarTextSize = textSize.as<uint8_t>();
   }
   if (!SETTINGS.saveToFile()) {
     LOG_ERR("WEB", "Failed to save status bar configuration");
@@ -1941,11 +2041,25 @@ void CrossPointWebServer::handlePostSettings() {
     return;
   }
 
+  const JsonVariantConst folderValue = doc["opdsDownloadFolder"];
+  if (!folderValue.isUnbound()) {
+    std::string folder;
+    const auto input = folderValue.as<JsonString>();
+    if (!folderValue.is<const char*>() ||
+        !OpdsDownloadFolder::normalize(std::string_view(input.c_str(), input.size()), folder)) {
+      server->send(400, "text/plain", "Invalid download folder (maximum 63 bytes)");
+      return;
+    }
+    doc["opdsDownloadFolder"] = folder == "/" ? "" : folder;
+  }
+  const std::string previousFolder = SETTINGS.opdsDownloadFolder;
+
   sdFontSystem.refreshIfDirty();
   const auto& settings = getSettingsList(&sdFontSystem.registry());
   int applied = 0;
   uint8_t CrossPointSettings::* twoFingerSwipeEdited = nullptr;
 
+  std::unique_lock<std::mutex> settingsLock(SETTINGS.getMutex());
   for (const auto& s : settings) {
     if (!s.key || !isWebSettingAvailable(s)) continue;
     if (!doc[s.key].is<JsonVariant>()) continue;
@@ -2016,7 +2130,14 @@ void CrossPointWebServer::handlePostSettings() {
   if (twoFingerSwipeEdited != nullptr) {
     CrossPointSettings::normalizeTwoFingerSwipeActions(SETTINGS, twoFingerSwipeEdited);
   }
-  SETTINGS.saveToFile();
+  settingsLock.unlock();  // saveToFile acquires the settings mutex itself.
+  if (!SETTINGS.saveToFile()) {
+    if (!folderValue.isUnbound()) strcpy(SETTINGS.opdsDownloadFolder, previousFolder.c_str());
+    LOG_ERR("WEB", "Failed to save settings");
+    server->send(500, "text/plain", "Failed to save settings");
+    sdFontSystem.releaseRegistry();
+    return;
+  }
 
   LOG_DBG("WEB", "Applied %d setting(s)", applied);
   server->send(200, "text/plain", String("Applied ") + String(applied) + " setting(s)");
@@ -2033,29 +2154,30 @@ void CrossPointWebServer::handleGetOpdsServers() const {
   server->send(200, "application/json", "");
   server->sendContent("[");
 
-  char output[512];
-  constexpr size_t outputSize = sizeof(output);
-  JsonDocument doc;
-
+  // Reuse the bounded writer: longer folder paths and escaped URLs must not
+  // truncate an object or produce a leading comma after a skipped server.
+  WebJsonWriter json(*server);
   for (size_t i = 0; i < servers.size(); i++) {
-    doc.clear();
-    doc["index"] = i;
-    doc["name"] = servers[i].name;
-    doc["url"] = servers[i].url;
-    doc["username"] = servers[i].username;
-    doc["filenameFormat"] = opdsFilenameFormatToJson(servers[i].filenameFormat);
-    // Never expose passwords over the API — only indicate whether one is set
-    doc["hasPassword"] = !servers[i].password.empty();
-
-    const size_t written = serializeJson(doc, output, outputSize);
-    if (written >= outputSize) continue;
-
-    if (i > 0) server->sendContent(",");
-    server->sendContent(output);
-    yield();  // Allow WiFi and other tasks to run during a slow send.
+    const auto& entry = servers[i];
+    if (i > 0) json.append(",");
+    json.append("{\"index\":");
+    json.appendUnsigned(i);
+    json.append(",\"name\":");
+    json.appendJsonString(entry.name.c_str());
+    json.append(",\"url\":");
+    json.appendJsonString(entry.url.c_str());
+    json.append(",\"username\":");
+    json.appendJsonString(entry.username.c_str());
+    json.append(",\"filenameFormat\":");
+    json.appendJsonString(opdsFilenameFormatToJson(entry.filenameFormat));
+    json.append(",\"downloadFolder\":");
+    json.appendJsonString(entry.downloadFolder.c_str());
+    json.append(entry.password.empty() ? ",\"hasPassword\":false}" : ",\"hasPassword\":true}");
+    json.flush();
+    yield();
   }
-
-  server->sendContent("]");
+  json.append("]");
+  json.flush();
   server->sendContent("");
 }
 
@@ -2079,6 +2201,12 @@ void CrossPointWebServer::handlePostOpdsServer() {
   opdsServer.username = doc["username"] | std::string("");
   opdsServer.filenameFormat = opdsFilenameFormatFromJson(doc["filenameFormat"] | "");
 
+  if (!applyOpdsDownloadFolder(doc.as<JsonVariantConst>(), opdsServer.downloadFolder)) {
+    server->send(400, "text/plain", "Invalid download folder (maximum 63 bytes)");
+    return;
+  }
+  const bool hasDownloadFolder = !doc.as<JsonVariantConst>()["downloadFolder"].isUnbound();
+
   // The password field is optional in the JSON payload. When absent (vs. present but empty),
   // we preserve the existing password — the web UI omits it when the user hasn't changed it.
   bool hasPasswordField = doc["password"].is<const char*>() || doc["password"].is<std::string>();
@@ -2100,8 +2228,12 @@ void CrossPointWebServer::handlePostOpdsServer() {
     if (existing && !hasFilenameFormatField) {
       opdsServer.filenameFormat = existing->filenameFormat;
     }
+    if (existing && !hasDownloadFolder) opdsServer.downloadFolder = existing->downloadFolder;
     opdsServer.password = password;
-    OPDS_STORE.updateServer(static_cast<size_t>(idx), opdsServer);
+    if (!OPDS_STORE.updateServer(static_cast<size_t>(idx), opdsServer)) {
+      server->send(500, "text/plain", "Could not save OPDS server");
+      return;
+    }
     LOG_DBG("WEB", "Updated OPDS server at index %d", idx);
   } else {
     opdsServer.password = password;
@@ -2389,7 +2521,12 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
             wsLastCompleteSize = 0;
             wsLastCompleteAt = millis();
             LOG_DBG("WS", "Zero-byte upload complete: %s", filePath.c_str());
-            clearBookCachePreservingUserState(filePath.c_str());
+            if (!clearBookCachePreservingUserState(filePath.c_str(), true)) {
+              wsLastCompleteName = "";
+              LOG_ERR("WS", "File saved but cache refresh failed: %s", filePath.c_str());
+              wsServer->sendTXT(num, "ERROR:File saved, but could not refresh cached reading/sync data");
+              return;
+            }
             ImageFolderIndex::invalidateForPath(filePath.c_str());
             sdFontSystem.markRegistryDirtyForPath(filePath.c_str());
             wsServer->sendTXT(num, "DONE");
@@ -2460,7 +2597,12 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         String filePath = wsUploadPath;
         if (!filePath.endsWith("/")) filePath += "/";
         filePath += wsUploadFileName;
-        clearBookCachePreservingUserState(filePath.c_str());
+        if (!clearBookCachePreservingUserState(filePath.c_str(), true)) {
+          wsLastCompleteName = "";
+          LOG_ERR("WS", "File saved but cache refresh failed: %s", filePath.c_str());
+          wsServer->sendTXT(num, "ERROR:File saved, but could not refresh cached reading/sync data");
+          return;
+        }
         ImageFolderIndex::invalidateForPath(filePath.c_str());
         sdFontSystem.markRegistryDirtyForPath(filePath.c_str());
 
@@ -2491,7 +2633,7 @@ void CrossPointWebServer::handleFontList() const {
   // can exhaust the fragmented network heap with larger font collections.
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
-  FontListJsonWriter json(*server);
+  WebJsonWriter json(*server);
   json.append("{\"families\":[");
 
   bool firstFamily = true;
@@ -2578,7 +2720,7 @@ void CrossPointWebServer::handleFontUploadData() {
       String filename = upload.filename;
       filename.replace(' ', '_');
       // Validate filename: rejects path traversal (../, /, \) and enforces
-      // a .cpfont basename of alphanumeric + hyphen + underscore. Without
+      // a supported font basename with safe path characters. Without
       // this an attacker could supply "../../.crosspoint/settings.json" as
       // a "filename" and have it written outside the fonts directory.
       if (!FontInstaller::isValidCpfontFilename(filename.c_str())) {
@@ -2611,16 +2753,20 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_WRITE: {
+      if (dropUploadIfCancelled()) {
+        abortFontUpload();
+        break;
+      }
       if (!fontUpload.valid) break;
 
       // Validate the complete file after closing it; multipart chunks may
       // split the signature at any byte boundary.
 #if CROSSINK_SCALABLE_FONTS
       const auto& path = fontUpload.filePath;
-      if (path.size() > 4 && strcasecmp(path.c_str() + path.size() - 4, ".ttf") == 0 &&
+      if (fontfiles::isScalable(path.c_str()) &&
           fontUpload.bytesWritten + fontUpload.bufferPos + upload.currentSize > 2 * 1024 * 1024) {
         fontUpload.valid = false;
-        LOG_ERR("WEB", "TTF exceeds 2 MiB limit");
+        LOG_ERR("WEB", "Scalable font exceeds 2 MiB limit");
         break;
       }
 #endif
@@ -2637,7 +2783,10 @@ void CrossPointWebServer::handleFontUploadData() {
         remaining -= chunk;
 
         if (fontUpload.bufferPos >= FontUploadState::BUFFER_SIZE) {
-          fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+          if (fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos) != fontUpload.bufferPos) {
+            abortFontUpload();
+            break;
+          }
           fontUpload.bytesWritten += fontUpload.bufferPos;
           fontUpload.bufferPos = 0;
         }
@@ -2646,34 +2795,31 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_END: {
+      if (dropUploadIfCancelled()) {
+        abortFontUpload();
+        break;
+      }
       // Flush remaining buffer
       if (fontUpload.valid && fontUpload.bufferPos > 0) {
-        fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+        fontUpload.valid =
+            fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos) == fontUpload.bufferPos;
         fontUpload.bytesWritten += fontUpload.bufferPos;
         fontUpload.bufferPos = 0;
       }
       if (fontUpload.file.isOpen()) {
-        fontUpload.file.close();
+        fontUpload.valid = fontUpload.file.sync() && fontUpload.valid;
+        fontUpload.valid = fontUpload.file.close() && fontUpload.valid;
       }
 
-      if (fontUpload.valid) fontUpload.valid = FontInstaller::validateCpfontFile(fontUpload.filePath.c_str());
-      if (!fontUpload.valid && !fontUpload.filePath.empty()) {
-        Storage.remove(fontUpload.filePath.c_str());
-      }
+      if (!fontUpload.filePath.empty())
+        fontUpload.valid = FontInstaller::finishUpload(fontUpload.filePath.c_str(), fontUpload.valid);
 
       LOG_DBG("WEB", "Font upload end: valid=%d, %zu bytes", fontUpload.valid, fontUpload.bytesWritten);
       break;
     }
 
     case UPLOAD_FILE_ABORTED: {
-      if (fontUpload.file) {
-        fontUpload.file.close();
-      }
-      if (!fontUpload.filePath.empty()) {
-        Storage.remove(fontUpload.filePath.c_str());
-      }
-      fontUpload.valid = false;
-      LOG_DBG("WEB", "Font upload aborted");
+      abortFontUpload();
       break;
     }
   }

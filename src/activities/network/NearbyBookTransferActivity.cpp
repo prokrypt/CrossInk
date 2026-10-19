@@ -22,7 +22,9 @@
 #include "components/TouchActionButtons.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
+#include "components/UiAppHelpers.h"
 #include "fontIds.h"
+#include "util/BookCacheUtils.h"
 
 #if defined(ARDUINO_ARCH_ESP32) && !defined(SIMULATOR)
 #include <esp_system.h>
@@ -37,7 +39,6 @@ constexpr uint8_t BROADCAST_MAC[nearby::MAC_BYTES] = {0xff, 0xff, 0xff, 0xff, 0x
 constexpr uint8_t RESULT_OK = 0;
 constexpr uint8_t RESULT_FAILED = 1;
 constexpr uint8_t REJECT_USER = 1;
-constexpr uint8_t REJECT_STORAGE = 2;
 TouchActionButtons::Layout touchActionLayout(const Rect& screen, const uint8_t count) {
   constexpr int sideMargin = 24;
   constexpr int bottomMargin = 12;
@@ -405,18 +406,8 @@ bool NearbyBookTransferActivity::acceptOffer(const bool keepBoth) {
       return false;
     }
   }
-  uint64_t total = 0;
-  uint64_t used = 0;
-#ifndef SIMULATOR
-  total = Storage.totalBytes();
-  used = Storage.usedBytes();
-#endif
-  if (total > 0 && used <= total && offeredFileSize_ > total - used) {
-    const uint8_t reason = REJECT_STORAGE;
-    sendPacket(nearby::PacketType::Reject, peerMac_.data(), 0, &reason, 1);
-    setError(tr(STR_NEARBY_TRANSFER_NO_SPACE));
-    return false;
-  }
+  // Do not scan the entire FAT to estimate free space here. Each received
+  // chunk must be written in full before it is acknowledged or committed.
   const std::string finalName = fileNameFromPath(finalPath_);
   tempPath_ = joinPath(destinationFolder_, "." + finalName + ".crossink-part");
   backupPath_ = joinPath(destinationFolder_, "." + finalName + ".crossink-backup");
@@ -517,6 +508,11 @@ bool NearbyBookTransferActivity::finishReceivedFile(const uint64_t expectedBytes
     return false;
   }
   if (replacing) Storage.remove(backupPath_.c_str());
+  if (!clearBookCachePreservingUserState(finalPath_, true)) {
+    LOG_ERR(LOG_TAG, "File received but cache refresh failed: %s", finalPath_.c_str());
+    setError(tr(STR_NEARBY_TRANSFER_WRITE_FAILED));
+    return false;
+  }
   ImageFolderIndex::invalidateForPath(finalPath_.c_str());
   sdFontSystem.markRegistryDirtyForPath(finalPath_.c_str());
   return true;
@@ -704,10 +700,11 @@ void NearbyBookTransferActivity::onRowEvent(const fui::ActionEvent& event, void*
 
 void NearbyBookTransferActivity::buildMenuScreen(UiApp::ScreenType& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  screen.setContentMargin(
-      fui::Insets{static_cast<int16_t>(metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) +
-                                       metrics.verticalSpacing),
-                  0, static_cast<int16_t>(metrics.buttonHintsHeight + metrics.verticalSpacing), 0});
+  setUiContentMargin(
+      screen, renderer,
+      fui::Insets{
+          static_cast<int16_t>(TouchHeaderBackButton::contentTop(renderer, mappedInput) + metrics.verticalSpacing), 0,
+          static_cast<int16_t>(UITheme::getButtonHintsReserve(renderer) + metrics.verticalSpacing), 0});
 
   std::array<fui::ListItem, MAX_PEERS> items{};
   const int count = menuItemCount();
@@ -820,7 +817,7 @@ void NearbyBookTransferActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int width = renderer.getScreenWidth();
   const int height = renderer.getScreenHeight();
-  const Rect header{0, metrics.topPadding, width, TouchHeaderBackButton::height(metrics, mappedInput)};
+  const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
   if (mappedInput.hasTouchHardware()) {
     TouchHeaderBackButton::draw(renderer, uiTarget_, header, tr(STR_NEARBY_BOOK_TRANSFER), false);
   } else {
@@ -838,7 +835,7 @@ void NearbyBookTransferActivity::render(RenderLock&&) {
   };
   uiReady_ = false;
   if (isMenuState()) {
-    app_.render();
+    renderUiApp(app_, uiTarget_);
     uiReady_ = true;
   } else if (state_ == State::Listening) {
     centered(tr(STR_NEARBY_TRANSFER_LISTENING));

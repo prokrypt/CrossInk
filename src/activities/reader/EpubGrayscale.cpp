@@ -32,8 +32,9 @@ bool runTiledGrayscalePass(GfxRenderer& renderer, const Page& page, const int fo
     renderer.beginStripTarget(buffer, 0, displayHeight);
     renderer.clearScreen(0x00);
     if (needsTextGrayscale) {
-      page.render(renderer, fontId, marginLeft, marginTop, foregroundBlack);
-    } else {
+      page.renderText(renderer, fontId, marginLeft, marginTop, foregroundBlack);
+    }
+    if (needsImageGrayscale) {
       page.renderImages(renderer, fontId, marginLeft, marginTop);
     }
     renderer.endStripTarget();
@@ -125,8 +126,9 @@ bool runTiledGrayscalePass(GfxRenderer& renderer, const Page& page, const int fo
       renderer.beginStripTarget(scratch, y, rows);
       renderer.clearScreen(0x00);
       if (needsTextGrayscale) {
-        page.render(renderer, fontId, marginLeft, marginTop, foregroundBlack);
-      } else {
+        page.renderText(renderer, fontId, marginLeft, marginTop, foregroundBlack);
+      }
+      if (needsImageGrayscale) {
         page.renderImages(renderer, fontId, marginLeft, marginTop);
       }
       renderer.endStripTarget();

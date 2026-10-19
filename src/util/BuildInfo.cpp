@@ -39,10 +39,19 @@ const char* buildNumber() { return CROSSINK_BUILD_NUMBER; }
 const char* buildTime() { return CROSSINK_BUILD_TIME; }
 }  // namespace BuildInfo
 
+#ifndef CROSSINK_SUPPORT_VERSION
+#define CROSSINK_SUPPORT_VERSION "unknown"
+#endif
+#ifndef CROSSINK_SDK_SHA
+#define CROSSINK_SDK_SHA "unknown"
+#endif
+
 namespace AppVersion {
 const char* version() { return CROSSINK_VERSION; }
 const char* versionLabel() { return "CrossInk " CROSSINK_VERSION; }
 const char* userAgent() { return "CrossInk-ESP32-" CROSSINK_VERSION; }
+const char* supportVersion() { return CROSSINK_SUPPORT_VERSION; }
+const char* sdkSha() { return CROSSINK_SDK_SHA; }
 const char* gitSha() { return CROSSINK_GIT_SHA; }
 bool gitDirty() { return std::strcmp(CROSSINK_GIT_DIRTY, "1") == 0; }
 const char* gitDirtyFlag() { return CROSSINK_GIT_DIRTY; }

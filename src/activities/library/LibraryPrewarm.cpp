@@ -65,7 +65,7 @@ bool gaveUp = false;
 // the main loop's idle branch otherwise leaves it at the lowest CPU clock.
 std::optional<HalPowerManager::Lock> fullSpeed;
 
-bool serviceBuild(void*) {
+bool serviceBuild(void*) {  // BuildCallbacks::cancelRequested: true stops the build
   // Blocks instead of polling so a paused build costs no wakeups and the chip
   // can stay in light sleep. resume/cancel send a notification.
   if (paused.load(std::memory_order_acquire) && !cancelRequested.load(std::memory_order_acquire)) {
@@ -77,23 +77,23 @@ bool serviceBuild(void*) {
     fullSpeed.emplace();
     pausedMs += millis() - pausedAtMs;
   }
-  // Dual-core: give up the card for a tick between entries. The storage mutex
+  // Dual-core: give up the card for a tick between build steps. The storage mutex
   // does not hand off to a waiter, so without this the walk on core 0 can
   // retake it before a Home task waiting on core 1 wakes, starving it for a
   // whole directory. Single-core runs at idle priority and needs no yield.
   if (portNUM_PROCESSORS > 1) vTaskDelay(1);
-  return !cancelRequested.load(std::memory_order_acquire);
+  return cancelRequested.load(std::memory_order_acquire);
 }
 
 void buildTask(void*) {
   library::BuildStats stats;
-  library::BuildControl control;
-  control.service = &serviceBuild;
+  library::BuildCallbacks callbacks;
+  callbacks.cancelRequested = &serviceBuild;
   fullSpeed.emplace();
-  buildOk = library::buildLibraryIndex("/", stats, useMetadata, &control);
+  buildOk = library::buildLibraryIndex("/", stats, useMetadata, &callbacks);
   // Released before doneSem: the owner deletes this task once it takes it.
   fullSpeed.reset();
-  buildCancelled = stats.cancelled;
+  buildCancelled = stats.failure == library::BuildFailure::Cancelled;
   lastStats = stats;
   xSemaphoreGive(doneSem);
   // The owner deletes this task after collecting the result. Parking here
@@ -113,7 +113,7 @@ void finalize() {
     // counter ahead, so the Library rescans. A degraded index (sort or dedup
     // allocation failed under Home's heap) is left for the Library's own
     // build, which runs with Home's buffers freed and can repair it.
-    if (!lastStats.ranksDegraded && !lastStats.dedupDegraded) {
+    if (!lastStats.ranksDegraded && !lastStats.dedupAllocFailed) {
       Storage.noteLibraryScanned(startGeneration);
     } else {
       LOG_INF("LIBPW", "Background index is degraded; the Library will rebuild it");

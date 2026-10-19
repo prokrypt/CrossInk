@@ -1,4 +1,5 @@
 #pragma once
+
 #include <Epub.h>
 #include <Epub/FootnoteEntry.h>
 #include <Epub/Page.h>
@@ -13,9 +14,12 @@
 #include <optional>
 #include <string>
 
+#include "BookLoadingFeedback.h"
 #include "BookReadingStats.h"
 #include "BookmarkStore.h"
+#include "DailyReadingStats.h"
 #include "EndOfBookOptions.h"
+#include "EpubLinkReturnState.h"
 #include "EpubReaderMenuModel.h"
 #include "FootnoteLinkTargets.h"
 #include "GlobalReadingStats.h"
@@ -25,6 +29,8 @@
 #include "activities/Activity.h"
 #include "activities/reader/TouchReaderPreviewModel.h"
 #include "components/OptionPopup.h"
+#include "sync/KeptPosition.h"
+#include "sync/SyncPending.h"
 #if CROSSINK_APP_CAP_TOUCH
 #include "activities/reader/ReaderPinchGesture.h"
 #endif
@@ -37,6 +43,11 @@ struct ToastRect {
 };
 
 class EpubReaderActivity final : public Activity {
+#ifdef SIMULATOR
+  friend struct EpubReaderCompletionSmokeTest;
+  friend struct ScreenCalibrationSmokeTest;
+  friend struct ClippingSelectionSmokeTest;
+#endif
  public:
   bool usesFullScreenReaderVerticalSwipes() const override { return true; }
 
@@ -45,15 +56,18 @@ class EpubReaderActivity final : public Activity {
     uint8_t readerFontPointSize = 14;
     uint8_t lineHeightPercent = 100;
     uint8_t wordSpacing = 0;
+    uint8_t characterSpacing = 5;
     uint8_t orientation = 0;
     uint8_t screenMarginVertical = 5;
     uint8_t screenMarginHorizontal = 5;
     uint8_t publisherPageNumbers = 0;
     uint8_t paragraphAlignment = 0;
     uint8_t embeddedStyle = 1;
+    uint8_t publisherFonts = 0;
     uint8_t hyphenationEnabled = 0;
     uint8_t textAntiAliasing = 1;
     uint8_t imageRendering = 0;
+    uint8_t imageGrayscale = 1;
     uint8_t extraParagraphSpacing = 1;
     uint8_t forceParagraphIndents = 0;
     uint8_t focusReadingEnabled = 0;
@@ -113,7 +127,6 @@ class EpubReaderActivity final : public Activity {
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
   int activeSectionFontId = 0;
-  uint32_t activeSectionLayoutSignature = 0;
   std::optional<uint16_t> pendingPageJump;
   // Set when navigating to a footnote href with a fragment (e.g. #note1).
   // Cleared on the next render after the new section loads and resolves it to a page.
@@ -130,6 +143,10 @@ class EpubReaderActivity final : public Activity {
   int cachedChapterPageNumber = 0;
   int cachedChapterTotalPageCount = 0;
   std::optional<uint32_t> cachedVisibleTextOffset;
+  // Consecutive status-bar edits retain one content anchor until navigation.
+  std::optional<uint32_t> statusBarRelayoutOffset;
+  int statusBarRelayoutSpine = -1;
+  int statusBarRelayoutPage = -1;
   struct ChapterGroupEstimateCache {
     int currentSpineIndex = -1;
     int firstSpineIndex = -1;
@@ -158,6 +175,14 @@ class EpubReaderActivity final : public Activity {
   unsigned long pageTurnDuration = 0UL;
   ManualPageTurnQueue pendingManualPageTurns;
   QueuedTurnRenderingState queuedTurnRendering;
+  bool hyphenationPackChecked = false;
+  bool checkHyphenationPack();
+  // A position another reader left for this book (sync_parked.bin), offered
+  // once the first page is on screen. Allocated only when one is found.
+  std::unique_ptr<KeptPosition::Offer> keptOffer;
+  bool keptOfferShown = false;
+  bool offerKeptPosition();
+  void applyKeptPosition(const KeptPosition::Offer& offer);
   unsigned long pageShownAtMs = 0UL;
   unsigned long lastRenderCompleteMs = 0UL;
   int idlePrewarmSpine = -1;
@@ -180,6 +205,8 @@ class EpubReaderActivity final : public Activity {
   uint32_t sessionPaceSampleSeconds = 0;
   uint16_t sessionPaceSampleCount = 0;
   uint32_t sessionReadingSeconds = 0;
+  DailyReadingStats::Session dailyReadingSession;
+  void startDailyReadingInterval();
   uint16_t lastAutoPageTurnIntervalSeconds = 0;
   bool bookHasCustomReaderSettings = false;
   bool bookHasAutoPageTurnInterval = false;
@@ -197,6 +224,12 @@ class EpubReaderActivity final : public Activity {
   ReadingStatsDateTime sessionStartLocalDateTime;
   bool hasSessionStartLocalDateTime = false;
   void syncStatsTrackingState();
+  void commitReadingStatsSession();
+  void finalizeReadingStatsOnExit();
+  uint32_t globalStatsResetRevisionAtPanelOpen = 0;
+  uint32_t ttfRenderGenerationAtPanelOpen = 0;
+  bool pendingTtfRenderRelayout = false;
+  void relayoutAfterTtfRenderChange();
   // Signals that the next render should reposition within the newly loaded section
   // based on a cross-book percentage jump.
   bool pendingPercentJump = false;
@@ -277,11 +310,8 @@ class EpubReaderActivity final : public Activity {
   ReaderPinchGesture pinchFontGesture;
   FootnoteLinkTargets currentPageFootnoteTouchTargets{};
 #endif
-  struct SavedPosition {
-    int spineIndex;
-    int pageNumber;
-  };
-  static constexpr int MAX_FOOTNOTE_DEPTH = 3;
+  using SavedPosition = EpubLinkReturnState::Position;
+  static constexpr int MAX_FOOTNOTE_DEPTH = EpubLinkReturnState::MAX_DEPTH;
   SavedPosition savedPositions[MAX_FOOTNOTE_DEPTH] = {};
   int footnoteDepth = 0;
 
@@ -304,6 +334,13 @@ class EpubReaderActivity final : public Activity {
   // Input should win the next RenderLock race. Keep the incremental parser alive,
   // but do not start another background chunk until the requested render begins.
   std::atomic<bool> backgroundBuildYieldForInput{false};
+  // A loan destroys page pixels. The loop normally recomposes under RenderLock;
+  // failed storage recovery leaves this set until render() supplies a safe base.
+  std::atomic<bool> pageBufferStale{false};
+  void invalidatePageBufferAfterBuild(uint32_t loansBefore);
+  bool backgroundBuildCanUsePageBuffer() const;
+  bool renderQuickActionsPopup();
+  void restoreStalePageBufferForInputLock();
   // Full-section next-chapter prefetch is speculative. A forward page turn may
   // stop it, but the visible build at the chapter boundary remains full-section.
   std::atomic<bool> silentPrefetchBuildActive{false};
@@ -317,6 +354,12 @@ class EpubReaderActivity final : public Activity {
   int lastSavedPage = -1;
   int lastSavedPageCount = -1;
   ReaderProgressSaveDebouncer progressSaveDebouncer;
+  // Records this book on the sync pending-push list once per reading session.
+  // saveProgress() can run on the render task (low-heap restart), so it only
+  // flags the mark; the main loop and onExit() write it.
+  SyncPending::SessionMarker pendingSync;
+  std::atomic<bool> pendingSyncDue{false};
+  void flushPendingSyncMark();
   bool progressSaveRequiredAfterRelayout = false;
   // Adapted from Sichroteph/YACP commit 3f3c5fc42e794c021edb9832856ef98c2d2065b9
   // (MIT): retain one render-only strip instead of reallocating it on every
@@ -384,12 +427,13 @@ class EpubReaderActivity final : public Activity {
   // suppression exists to protect.
   bool saveProgress(int spineIndex, int currentPage, int pageCount, bool allowDuringFootnotePreview = false);
   bool queueProgressSave(int spineIndex, int currentPage, int pageCount, bool forceSave = false);
-  bool flushQueuedProgress();
-  bool saveFootnoteOriginProgress();
   // Saves the position now, the way onExit() does (the link origin while in a
   // footnote). Used before handing off to anything that can silently restart
   // the device, which reboots without running onExit().
   void saveProgressBeforeRestart();
+  bool saveReadingProgress();
+  bool saveLinkStack() const;
+  void loadLinkStack();
   void cacheCurrentSectionPosition();
   void pauseReadingPaceTimer(const char* reason = "unknown");
   void resumeReadingPaceTimer(const char* reason = "unknown");
@@ -433,7 +477,7 @@ class EpubReaderActivity final : public Activity {
   void jumpToPercent(float percent);
   void jumpToStablePage(uint32_t page);
   void reindexCurrentSection();
-  void prepareCurrentSectionForRelayout();
+  void prepareCurrentSectionForRelayout(bool preserveStatusBarAnchor = false);
   void executeReaderQuickAction(CrossPointSettings::LONG_PRESS_MENU_ACTION action,
                                 bool dictionaryLookupFramebufferContainsPage = true,
                                 QuickLockTrigger quickLockTrigger = QuickLockTrigger::LongMenu);
@@ -462,6 +506,7 @@ class EpubReaderActivity final : public Activity {
   // Opens the reader menu for the current position (short-press Confirm)
   void openReaderMenu();
   void applyOrientation(uint8_t orientation);
+  bool handleEndOfBookPageTurn(bool isForwardTurn);
   void requestManualPageTurn(bool isForwardTurn, const char* source);
   bool drainPendingManualPageTurn();
   void clearPendingManualPageTurns(bool requestRecoveryRedraw = true);
@@ -470,6 +515,8 @@ class EpubReaderActivity final : public Activity {
   bool isAtBookStart() const;
   void pageTurn(bool isForwardTurn, const char* source = "unknown");
   float getCurrentBookProgressPercent() const;
+  // Caller holds RenderLock. Matches the status bar's chapter-group title.
+  std::string currentChapterTitle() const;
   void initializeCompletionPromptTrigger();
   bool isAtOrPastCompletionTrigger() const;
   bool shouldQueueCompletionPromptOnChapterExit() const;
@@ -490,16 +537,25 @@ class EpubReaderActivity final : public Activity {
   void navigateToHref(const std::string& href, bool savePosition = false, bool preferFootnotePreview = false);
   void restoreSavedPosition();
 
+  BookLoadingFeedback openingFeedback;
+  bool showOpeningFeedback() {
+    if (!openingFeedback.showIfPending(renderer)) return false;
+    pagesUntilFullRefresh = 0;
+    return true;
+  }
+
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub,
                               const BookReaderSettingsData& readerSettings, int initialRefreshCountdown,
-                              bool cleanImageBaseOnEntry = false, bool skipRecentBookUpdateOnEntry = false)
+                              bool cleanImageBaseOnEntry = false, bool skipRecentBookUpdateOnEntry = false,
+                              BookLoadingFeedback openingFeedback = {})
       : Activity("EpubReader", renderer, mappedInput),
         epub(std::move(epub)),
         initialBookReaderSettings(readerSettings),
         pagesUntilFullRefresh(initialRefreshCountdown),
         cleanImageBasePending(cleanImageBaseOnEntry),
-        skipRecentBookUpdateOnEntry(skipRecentBookUpdateOnEntry) {}
+        skipRecentBookUpdateOnEntry(skipRecentBookUpdateOnEntry),
+        openingFeedback(openingFeedback) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;
@@ -534,10 +590,11 @@ class EpubReaderActivity final : public Activity {
   std::unique_ptr<Page> takePrerenderedPage(uint32_t layoutKey);
   void prewarmNextPageFonts(const char* when);
   bool skipLoopDelay() override {
-    return sectionBuildWantsTick() && !backgroundBuildPausedForLowMemory &&
+    return backgroundBuildCanUsePageBuffer() && sectionBuildWantsTick() && !backgroundBuildPausedForLowMemory &&
            !backgroundBuildYieldForInput.load(std::memory_order_relaxed);
   }
   bool isReaderActivity() const override { return true; }
+  bool isBookReaderActivity() const override { return true; }
   bool isEpubReaderActivity() const override { return true; }
   void onInputLockChanged(bool locked) override;
   void onUserInput() override;
@@ -579,7 +636,12 @@ class EpubReaderActivity final : public Activity {
   // override, else the global setting. Picks the section cache that position
   // sync reads outside the reader.
   static bool bookUsesLandscapeLayout(const Epub& epub);
+  enum class BookSettingsReadStatus : uint8_t { Missing, Loaded, Invalid };
+  // Read only this cache's settings record; no EPUB parsing, migration or history scan.
+  static BookReaderSettingsData readBookReaderSettingsForSupport(const std::string& cachePath,
+                                                                 BookSettingsReadStatus& status);
   static uint8_t loadBookRenderMode(const std::string& filePath);
+  static uint8_t loadBookRenderMode(const Epub& epub);
   static bool saveBookRenderMode(const std::string& filePath, uint8_t renderMode);
   static bool resetBookReaderSettings(const std::string& filePath);
   ScreenshotInfo getScreenshotInfo() const override;

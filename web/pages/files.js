@@ -117,10 +117,16 @@ async function hydrate() {
   // Fetch CrossInk version
   fetchVersion();
 
-  // Close modals when clicking overlay - call proper cleanup functions
+  // Dismiss only clicks that also began on the backdrop (CrossPoint #3931).
   document.querySelectorAll(".modal-overlay").forEach(function (overlay) {
+    let clickTarget = null;
+    overlay.addEventListener("mousedown", function (e) {
+      clickTarget = e.target;
+    });
     overlay.addEventListener("click", function (e) {
-      if (e.target === overlay) {
+      const clickedBackdrop = clickTarget === overlay && e.target === overlay;
+      clickTarget = null;
+      if (clickedBackdrop) {
         const closeFn = MODAL_OUTSIDE_CLICK_FNS[overlay.id];
         if (closeFn) return closeFn();
         overlay.classList.remove("open");
@@ -130,27 +136,28 @@ async function hydrate() {
 
   // Escape cancels whichever modal is currently open
   document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape" || e.repeat || e.isComposing) return;
     const openOverlay = document.querySelector(".modal-overlay.open");
     if (!openOverlay) return;
-    if (openOverlay.id === "imagePreviewModal" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
-      // A held key would queue a device download per auto-repeat
-      if (!e.repeat) stepImagePreview(e.key === "ArrowLeft" ? -1 : 1);
-      return;
-    }
-    if (e.key !== "Escape") return;
     const closeFn = MODAL_CANCEL_FNS[openOverlay.id];
-    if (closeFn) closeFn();
+    if (closeFn) {
+      e.preventDefault();
+      closeFn();
+    }
   });
 
-  // Enter confirms the rename/move text inputs. Ignore the Enter that commits
-  // an IME composition and key auto-repeat, which would send a half-typed or
-  // duplicate request.
-  const isConfirmEnter = (e) => e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && !e.repeat;
+  // Enter confirms the rename/move text inputs
   document.getElementById("renameNewName").addEventListener("keydown", (e) => {
-    if (isConfirmEnter(e)) confirmRename();
+    if (e.key === "Enter" && !e.repeat && !e.isComposing) {
+      e.preventDefault();
+      confirmRename();
+    }
   });
   document.getElementById("moveDestPath").addEventListener("keydown", (e) => {
-    if (isConfirmEnter(e)) confirmMove();
+    if (e.key === "Enter" && !e.repeat && !e.isComposing) {
+      e.preventDefault();
+      confirmMove();
+    }
   });
 
   const breadcrumbs = document.getElementById("directory-breadcrumbs");
@@ -209,11 +216,12 @@ async function hydrate() {
 let listedFiles = [];
 let fileSort = { key: null, dir: 1 };
 try {
-  fileSort = JSON.parse(sessionStorage.getItem("fileSort")) || fileSort;
+  const saved = JSON.parse(sessionStorage.getItem("fileSort"));
+  if (saved && ["name", "size", "mtime"].includes(saved.key) && [1, -1].includes(saved.dir)) fileSort = saved;
 } catch (e) {}
 
 function compareFiles(a, b) {
-  // Folders always first; they have no size or date, so they sort by name
+  // Folders always first; size and date sorting keep their names alphabetical
   if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
   const key = fileSort.key;
   if (a.isDirectory && key !== "name") return a.name.localeCompare(b.name);
@@ -225,17 +233,28 @@ function compareFiles(a, b) {
   return (diff || a.name.localeCompare(b.name)) * fileSort.dir;
 }
 
-function sortHeader(key, label, cls) {
+function sortHeader(key, label, cls = "") {
   const arrow = fileSort.key === key ? (fileSort.dir > 0 ? " ▲" : " ▼") : "";
-  return `<th class="sortable ${cls}" data-sort="${key}">${label}${arrow}</th>`;
+  const order = fileSort.key === key ? (fileSort.dir > 0 ? "ascending" : "descending") : "none";
+  return `<th class="${cls}" aria-sort="${order}"><button class="sort-button" data-sort="${key}">${label}${arrow}</button></th>`;
 }
 
 function setFileSort(key) {
+  if (!["name", "size", "mtime"].includes(key)) return;
+  const selected = new Set([...document.querySelectorAll(".select-item:checked")].map((cb) => cb.dataset.path));
   fileSort = { key, dir: fileSort.key === key ? -fileSort.dir : 1 };
   try {
     sessionStorage.setItem("fileSort", JSON.stringify(fileSort));
   } catch (e) {}
   renderFileTable();
+  const checkboxes = [...document.querySelectorAll(".select-item")];
+  checkboxes.forEach((cb) => (cb.checked = selected.has(cb.dataset.path)));
+  const master = document.getElementById("selectAllCheckbox");
+  if (master) {
+    master.checked = checkboxes.length > 0 && checkboxes.every((cb) => cb.checked);
+    master.indeterminate = !master.checked && checkboxes.some((cb) => cb.checked);
+  }
+  document.querySelector(`[data-sort="${key}"]`)?.focus();
 }
 
 function renderFileTable() {
@@ -248,9 +267,9 @@ function renderFileTable() {
 
     // Add select-all checkbox column
     fileTableContent +=
-      `<tr><th style="width:40px"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)"></th>${sortHeader("name", "Name", "")}<th>Type</th>${sortHeader("size", "Size", "")}${sortHeader("mtime", "Modified", "modified-col")}<th class="actions-col">Actions</th></tr>`;
+      `<tr><th style="width:40px"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)"></th>${sortHeader("name", "Name")}<th>Type</th>${sortHeader("size", "Size")}${sortHeader("mtime", "Modified", "modified-col")}<th class="actions-col">Actions</th></tr>`;
 
-    const sortedFiles = files.sort(compareFiles);
+    const sortedFiles = files.slice().sort(compareFiles);
 
     sortedFiles.forEach((file) => {
       if (file.isDirectory) {
@@ -299,8 +318,8 @@ function renderFileTable() {
 
     fileTableContent += "</table>";
     fileTable.innerHTML = fileTableContent;
-    fileTable.querySelectorAll("th[data-sort]").forEach((th) => {
-      th.addEventListener("click", () => setFileSort(th.dataset.sort));
+    fileTable.querySelectorAll("[data-sort]").forEach((button) => {
+      button.addEventListener("click", () => setFileSort(button.dataset.sort));
     });
     fileTable.querySelectorAll(".file-action-btn").forEach((button) => {
       button.addEventListener("click", handleFileActionClick);
@@ -344,6 +363,14 @@ function openImagePreview(link) {
   document.getElementById("imagePreviewModal").classList.add("open");
 }
 
+// Image navigation is independent of the file-dialog shortcuts.
+document.addEventListener("keydown", (e) => {
+  if (e.repeat || e.isComposing || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+  if (!document.getElementById("imagePreviewModal").classList.contains("open")) return;
+  e.preventDefault();
+  stepImagePreview(e.key === "ArrowLeft" ? -1 : 1);
+});
+
 // Only image rows get .image-preview-link (isImageFile); wraps at the ends.
 function previewLinks() {
   return [...document.querySelectorAll("#file-table .image-preview-link")];
@@ -358,7 +385,9 @@ function stepImagePreview(dir) {
 
 function closeImagePreview() {
   document.getElementById("imagePreviewModal").classList.remove("open");
-  document.getElementById("imagePreviewImg").src = "";
+  const img = document.getElementById("imagePreviewImg");
+  img.onload = img.onerror = null;
+  img.removeAttribute("src");
 }
 
 function handleFileActionClick(event) {
@@ -1573,6 +1602,7 @@ const DEFAULT_UPLOAD_SETTINGS = Object.freeze({
   renameFromMetadata: false,
   splitLongSections: true,
   preserveCoverColor: true,
+  removeEmbeddedFonts: true,
   quality: DEFAULT_JPEG_QUALITY,
   referenceCharacters: X_DEFAULT_REFERENCE_CHARACTERS_PER_PAGE,
   deviceTarget: "auto",
@@ -1588,6 +1618,7 @@ function getCurrentUploadSettings() {
     renameFromMetadata: !!document.getElementById("renameFromMetadataToggle")?.checked,
     splitLongSections: !!document.getElementById("splitLongSectionsToggle")?.checked,
     preserveCoverColor: !!document.getElementById("preserveCoverColorToggle")?.checked,
+    removeEmbeddedFonts: !!document.getElementById("removeEmbeddedFontsToggle")?.checked,
     quality: parseInt(document.getElementById("qualitySlider")?.value || JPEG_QUALITY, 10),
     referenceCharacters: parseInt(
       document.getElementById("referenceCharactersInput")?.value || X_DEFAULT_REFERENCE_CHARACTERS_PER_PAGE,
@@ -1608,6 +1639,7 @@ function applyUploadSettings(settings = {}) {
     document.getElementById("renameFromMetadataToggle").checked = !!merged.renameFromMetadata;
     document.getElementById("splitLongSectionsToggle").checked = !!merged.splitLongSections;
     document.getElementById("preserveCoverColorToggle").checked = !!merged.preserveCoverColor;
+    document.getElementById("removeEmbeddedFontsToggle").checked = !!merged.removeEmbeddedFonts;
     document.getElementById("export-log-checkbox").checked = !!merged.exportLog;
     document.getElementById("rememberUploadSettings").checked = !!settings.rememberSettings;
     document.getElementById("referenceCharactersInput").value = normalizedReferenceCharactersPerPage(
@@ -2358,7 +2390,13 @@ async function maybeRenameEbookFile(file) {
 }
 
 function reserveAvailableUploadFilename(fileName, usedFileNames) {
-  const normalize = (name) => name.toLowerCase();
+  // Use NFC filenames for cross-platform SD card compatibility (CrossPoint #3961).
+  const normalizedName = fileName.normalize("NFC");
+  if (normalizedName !== fileName) {
+    console.log(`[Upload] Normalized filename to NFC: ${fileName} -> ${normalizedName}`);
+    fileName = normalizedName;
+  }
+  const normalize = (name) => name.normalize("NFC").toLowerCase();
   if (!usedFileNames.has(normalize(fileName))) {
     usedFileNames.add(normalize(fileName));
     return fileName;
@@ -2376,6 +2414,7 @@ function reserveAvailableUploadFilename(fileName, usedFileNames) {
   } while (usedFileNames.has(normalize(candidateName)));
 
   usedFileNames.add(normalize(candidateName));
+  console.log(`[Upload] Renamed to avoid collision: ${fileName} -> ${candidateName}`);
   return candidateName;
 }
 
@@ -2383,7 +2422,7 @@ async function fetchExistingUploadNames() {
   const response = await fetch(`/api/files?path=${encodeURIComponent(currentPath)}&_=${Date.now()}`);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   const entries = await response.json();
-  return new Set(entries.map((entry) => entry.name.toLowerCase()));
+  return new Set(entries.map((entry) => entry.name.normalize("NFC").toLowerCase()));
 }
 
 /**
@@ -4553,6 +4592,105 @@ async function buildCrossInkPxcSidecars(out, zip, xhtmlFiles) {
   return entries;
 }
 
+// Strip complete @font-face blocks while respecting comments, quotes, and braces.
+function stripEmbeddedFontRules(css) {
+  const tokens = /\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|@font-face\b|[{}]/gi;
+  let start = -1;
+  let depth = 0;
+  let cursor = 0;
+  let result = "";
+  for (const match of css.matchAll(tokens)) {
+    const token = match[0];
+    if (start < 0 && token.toLowerCase() === "@font-face") {
+      start = match.index;
+    } else if (start >= 0 && token === "{") {
+      depth++;
+    } else if (start >= 0 && token === "}" && --depth === 0) {
+      result += css.slice(cursor, start);
+      cursor = match.index + 1;
+      start = -1;
+    }
+  }
+  return result + css.slice(cursor);
+}
+
+async function removeEmbeddedFontsFromZip(zip) {
+  const fonts = new Set();
+  const fontExtension = /\.(?:ttf|otf|ttc|otc|woff2?|eot|cpfont)$/i;
+  const fontMediaType = /^(?:font\/|application\/(?:x-font|font|vnd\.ms-opentype|vnd\.ms-fontobject))|opentype|truetype/i;
+  const fontAlgorithms = new Set([
+    "http://www.idpf.org/2008/embedding",
+    "http://ns.adobe.com/pdf/enc#RC",
+  ]);
+  const resolveFontPath = (base, href) => {
+    let decoded = href.split(/[?#]/)[0];
+    try { decoded = decodeURIComponent(decoded); } catch (_) { /* Keep literal paths. */ }
+    const parts = (decoded.startsWith("/") ? decoded : base.slice(0, base.lastIndexOf("/") + 1) + decoded).split("/");
+    const normalized = [];
+    for (const part of parts) {
+      if (part === "..") normalized.pop();
+      else if (part && part !== ".") normalized.push(part);
+    }
+    return normalized.join("/");
+  };
+  for (const [path, entry] of Object.entries(zip.files)) {
+    if (!entry.dir && fontExtension.test(path)) fonts.add(path);
+  }
+  const packages = [];
+  for (const [path, entry] of Object.entries(zip.files)) {
+    if (entry.dir || !path.toLowerCase().endsWith(".opf")) continue;
+    const original = await safeReadText(entry);
+    const doc = new DOMParser().parseFromString(original, "application/xml");
+    if (doc.querySelector("parsererror")) throw new Error("Could not read EPUB font manifest");
+    packages.push({ path, original, doc });
+    for (const item of doc.getElementsByTagNameNS("*", "item")) {
+      const href = item.getAttribute("href") || "";
+      if (fontExtension.test(href) || fontMediaType.test(item.getAttribute("media-type") || "")) {
+        fonts.add(resolveFontPath(path, href));
+      }
+    }
+  }
+  const encryption = zip.file("META-INF/encryption.xml");
+  if (encryption) {
+    const original = await safeReadText(encryption);
+    const doc = new DOMParser().parseFromString(original, "application/xml");
+    if (doc.querySelector("parsererror")) throw new Error("Could not read EPUB font obfuscation metadata");
+    let changed = false;
+    for (const encrypted of [...doc.getElementsByTagNameNS("*", "EncryptedData")]) {
+      const algorithm = encrypted.getElementsByTagNameNS("*", "EncryptionMethod")[0]?.getAttribute("Algorithm");
+      const uri = encrypted.getElementsByTagNameNS("*", "CipherReference")[0]?.getAttribute("URI");
+      if (!uri) continue;
+      const path = resolveFontPath("", uri);
+      if (fontAlgorithms.has(algorithm)) fonts.add(path);
+      if (fonts.has(path)) { encrypted.remove(); changed = true; }
+    }
+    if (changed) {
+      if (doc.getElementsByTagNameNS("*", "EncryptedData").length) {
+        zip.file("META-INF/encryption.xml", safeSerialize(doc, original));
+      } else zip.remove("META-INF/encryption.xml");
+    }
+  }
+  for (const { path, original, doc } of packages) {
+    let changed = false;
+    for (const item of [...doc.getElementsByTagNameNS("*", "item")]) {
+      if (fonts.has(resolveFontPath(path, item.getAttribute("href") || ""))) {
+        item.remove(); changed = true;
+      }
+    }
+    if (changed) zip.file(path, safeSerialize(doc, original));
+  }
+  for (const path of fonts) zip.remove(path);
+  for (const [path, entry] of Object.entries(zip.files)) {
+    if (entry.dir || !/\.(?:css|xhtml|html|htm)$/i.test(path)) continue;
+    const original = await safeReadText(entry);
+    const cleaned = /\.css$/i.test(path)
+      ? stripEmbeddedFontRules(original)
+      : original.replace(/(<(?:[\w-]+:)?style\b[^>]*>)([\s\S]*?)(<\/(?:[\w-]+:)?style\s*>)/gi,
+          (_, open, css, close) => open + stripEmbeddedFontRules(css) + close);
+    if (cleaned !== original) zip.file(path, cleaned);
+  }
+}
+
 // Convert EPUB file - returns converted blob
 async function convertEpubFile(file, progressCallback) {
   const startTime = Date.now();
@@ -4570,6 +4708,8 @@ async function convertEpubFile(file, progressCallback) {
 
   const zip = await JSZip.loadAsync(file);
   await assertEpubHasNoContentEncryption(zip);
+  const removeEmbeddedFonts = document.getElementById("removeEmbeddedFontsToggle")?.checked ?? true;
+  if (removeEmbeddedFonts) await removeEmbeddedFontsFromZip(zip);
   const renamed = {};
   zip.forEach((p) => {
     const l = p.toLowerCase();
@@ -4957,7 +5097,7 @@ async function convertEpubFile(file, progressCallback) {
       version: 1,
       target: { device: ACTIVE_DEVICE.toLowerCase(), width: MAX_HEIGHT, height: MAX_WIDTH, grayscaleLevels: 4 },
       generator: "crossink-web-uploader",
-      features: { htmlNormalized: true, cssFlattened: false, xLocations: true, prebuiltPxc: imageCacheEntries.length > 0 },
+      features: { htmlNormalized: true, fontsRemoved: removeEmbeddedFonts, cssFlattened: false, xLocations: true, prebuiltPxc: imageCacheEntries.length > 0 },
       images: imageCacheEntries,
     }));
     out.file(CROSSINK_OPTIMIZER_MANIFEST_PATH, manifest, { compression: "STORE", createFolders: false });
@@ -5330,7 +5470,6 @@ async function uploadFile() {
 
     const availableName = reserveAvailableUploadFilename(file.name, usedFileNames);
     if (availableName !== file.name) {
-      console.log(`[Upload] Renamed to avoid collision: ${file.name} -> ${availableName}`);
       file = new File([file], availableName, {
         type: file.type,
         lastModified: file.lastModified,

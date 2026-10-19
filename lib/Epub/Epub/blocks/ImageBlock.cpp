@@ -5,6 +5,7 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <MemoryBudget.h>
+#include <PrintSerialization.h>
 #include <Serialization.h>
 
 #include <algorithm>
@@ -262,14 +263,14 @@ RetainedPxcEntry* prepareRetainedPxcEntry(const size_t pixelBytes) {
 }
 
 bool renderCachedPixels(GfxRenderer& renderer, const uint8_t* pixels, const uint16_t cachedWidth,
-                        const uint16_t cachedHeight, const int x, const int y) {
+                        const uint16_t cachedHeight, const int x, const int y, const bool imageGrayscale) {
   if (!pixels) return false;
   const auto clip = cachedImageClip(renderer, x, y, cachedWidth, cachedHeight);
   if (clip.empty()) return true;
 
   const int bytesPerRow = (cachedWidth + 3) / 4;
   DirectPixelWriter pw;
-  pw.init(renderer);
+  pw.init(renderer, imageGrayscale);
   for (int row = clip.y0; row < clip.y1; ++row) {
     const uint8_t* rowBuffer = pixels + static_cast<size_t>(row) * bytesPerRow;
     pw.beginRow(y + row);
@@ -283,12 +284,13 @@ bool renderCachedPixels(GfxRenderer& renderer, const uint8_t* pixels, const uint
 }
 
 bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x, int y, int expectedWidth,
-                     int expectedHeight) {
+                     int expectedHeight, const bool imageGrayscale = true) {
   // Cache generation invalidates retained entries before overwriting a PXC
   // path, so repeated grayscale strips can avoid storage I/O entirely.
   if (auto* retained = findRetainedPxcEntry(cachePath, expectedWidth, expectedHeight)) {
     touchRetainedPxcEntry(*retained);
-    return renderCachedPixels(renderer, retained->pixels.get(), retained->width, retained->height, x, y);
+    return renderCachedPixels(renderer, retained->pixels.get(), retained->width, retained->height, x, y,
+                              imageGrayscale);
   }
 
   // Quiet open: a missing cache is the normal first-render case.
@@ -328,7 +330,7 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
       LOG_INF("EPS", "Retained PXC in PSRAM: bytes=%u total=%u entries=2 dimensions=%ux%u",
               static_cast<unsigned>(pixelBytes), static_cast<unsigned>(retainedPxcCapacity), cachedWidth, cachedHeight);
       MemoryBudget::logEpubHeapPools("pxc retained");
-      return renderCachedPixels(renderer, retained->pixels.get(), cachedWidth, cachedHeight, x, y);
+      return renderCachedPixels(renderer, retained->pixels.get(), cachedWidth, cachedHeight, x, y, imageGrayscale);
     }
     // A short read must never leave an entry that could be mistaken for a
     // complete cache payload. Keep its allocation for a later retry.
@@ -362,7 +364,7 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   }
 
   DirectPixelWriter pw;
-  pw.init(renderer);
+  pw.init(renderer, imageGrayscale);
 
   const size_t dataOffset = 4U + static_cast<size_t>(clip.y0) * static_cast<size_t>(bytesPerRowInt);
   if (!cacheFile.seek(dataOffset)) {
@@ -471,7 +473,8 @@ void ImageBlock::renderPlaceholder(GfxRenderer& renderer, const int x, const int
   }
 }
 
-void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const bool foregroundBlack) {
+void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const bool foregroundBlack,
+                        const bool imageGrayscale) {
   // The font-prewarm scan pass only accumulates glyphs; an image contributes
   // none, and its DirectPixelWriter output bypasses the renderer's scan-mode
   // suppression, so it would otherwise do a full (discarded) cache render every
@@ -514,7 +517,7 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
 
   // Try to render from cache first
   std::string cachePath = getCachePath(imagePath);
-  if (renderFromCache(renderer, cachePath, x, y, width, height)) {
+  if (renderFromCache(renderer, cachePath, x, y, width, height, imageGrayscale)) {
     renderer.preserveImagePolarity(x, y, width, height);
     return;  // Successfully rendered from cache
   }
@@ -543,7 +546,7 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
   config.y = y;
   config.maxWidth = width;
   config.maxHeight = height;
-  config.useGrayscale = true;
+  config.useGrayscale = imageGrayscale;
   config.useDithering = true;
   config.performanceMode = false;
   config.useExactDimensions = true;  // Use pre-calculated dimensions to avoid rounding mismatches
@@ -573,7 +576,7 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
   renderer.preserveImagePolarity(x, y, width, height);
 }
 
-bool ImageBlock::serialize(FsFile& file) {
+bool ImageBlock::serialize(Print& file) {
   return serialization::tryWriteString(file, imagePath) && serialization::tryWriteString(file, sourcePath) &&
          serialization::tryWritePod(file, width) && serialization::tryWritePod(file, height);
 }

@@ -29,7 +29,7 @@ namespace library {
 
 inline constexpr char CLIX_MAGIC[4] = {'C', 'L', 'X', '1'};
 // Older layouts are accepted only for reconciliation during a rebuild.
-inline constexpr uint8_t CLIX_FORMAT_VERSION = 6;
+inline constexpr uint8_t CLIX_FORMAT_VERSION = 7;  // Refresh EPUB3 series extraction; layout unchanged.
 inline constexpr uint32_t CLIX_UNKNOWN_SERIES_POSITION = 0xFFFFFFFFu;
 
 // Bump when the fold or a permutation's sort key changes.
@@ -42,8 +42,9 @@ inline constexpr size_t CLIX_FOLD_BYTES = 96;
 inline constexpr size_t CLIX_AUTHOR_KEY_BYTES = 12;
 
 // A 2000-book card already produces a 429 KiB index. This hard bound keeps every
-// record count and permutation ordinal representable by uint16_t.
-inline constexpr uint16_t CLIX_MAX_RECORDS = 4096;
+// record count and permutation ordinal representable by uint16_t, below both the
+// 0xFFFF "no such row" sentinel and the builder's FIRST_SEEN_UNRESOLVED marker.
+inline constexpr uint16_t CLIX_MAX_RECORDS = 32767;
 
 // Complete-path fingerprint stored in front of every record's name blob.
 // Shared by the builder's reconciliation and the browser's recent-book lookup,
@@ -178,8 +179,9 @@ inline ClixValidity validateHeaderStructure(const ClixHeader& h, const uint64_t 
   for (size_t i = 0; i < sizeof(CLIX_MAGIC); i++) {
     if (h.magic[i] != CLIX_MAGIC[i]) return ClixValidity::BadMagic;
   }
-  if (h.formatVersion != CLIX_FORMAT_VERSION && !(acceptPrevious && (h.formatVersion == 2 || h.formatVersion == 3 ||
-                                                                     h.formatVersion == 4 || h.formatVersion == 5)))
+  if (h.formatVersion != CLIX_FORMAT_VERSION &&
+      !(acceptPrevious && (h.formatVersion == 2 || h.formatVersion == 3 || h.formatVersion == 4 ||
+                           h.formatVersion == 5 || h.formatVersion == 6)))
     return ClixValidity::UnknownFormatVersion;
   if (h.bookCount > CLIX_MAX_RECORDS) return ClixValidity::CountOutOfRange;
   if (h.metadataEnabled > 1) return ClixValidity::SectionsInconsistent;

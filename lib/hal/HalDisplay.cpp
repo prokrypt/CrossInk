@@ -5,6 +5,19 @@
 
 #include "HalSpiBus.h"
 
+namespace {
+// Some SDK revisions omit the optional Quick Resume baseline restore API.
+// Keep this check dependent on the display type so those revisions still build.
+template <typename Display>
+bool restoreVisibleFrameIfSupported(Display& display) {
+  if constexpr (requires { display.restoreVisibleFrame(); }) {
+    return display.restoreVisibleFrame();
+  }
+  // Older SDK revisions rely on the normal wake refresh instead.
+  return false;
+}
+}  // namespace
+
 // Global HalDisplay instance
 HalDisplay display;
 
@@ -106,6 +119,15 @@ void HalDisplay::displayBuffer(HalDisplay::RefreshMode mode, bool turnOffScreen)
 void HalDisplay::setInverted(bool inverted) {
   HalSpiBus::Lock spiLock;
   einkDisplay.setInverted(inverted);
+}
+
+bool HalDisplay::restoreVisibleFrame() {
+#ifdef SIMULATOR
+  return false;
+#else
+  HalSpiBus::Lock spiLock;
+  return restoreVisibleFrameIfSupported(einkDisplay);
+#endif
 }
 
 void HalDisplay::displayBufferAsync(HalDisplay::RefreshMode mode) {

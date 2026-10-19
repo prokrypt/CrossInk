@@ -162,7 +162,7 @@ void BmpViewerActivity::drawImage() {
 
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
-  Rect popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  Rect popupRect = GUI.drawPopup(renderer, tr(STR_LOADING));
   GUI.fillPopupProgress(renderer, popupRect, 20);  // Initial 20% progress
 
   if (FsHelpers::hasPngExtension(filePath)) {
@@ -266,7 +266,7 @@ void BmpViewerActivity::onExit() {
 void BmpViewerActivity::doSetSleepCover() {
   // The popups draw from this task; wait for any image redraw on the render task.
   RenderLock lock(*this);
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  GUI.drawPopup(renderer, tr(STR_LOADING));
 
   APP_STATE.favoriteSleepImagePath = filePath;
   if (APP_STATE.saveToFile()) {
@@ -419,6 +419,8 @@ void BmpViewerActivity::showContextMenu() {
                              case FileBrowserAction::DeleteCache:
                              case FileBrowserAction::ReadingStats:
                              case FileBrowserAction::ToggleBookStatsTracking:
+                             case FileBrowserAction::SyncProgress:
+                             case FileBrowserAction::UploadFolderProgress:
                              case FileBrowserAction::SetSleepFolder:
                              case FileBrowserAction::ClearSleepFolder:
                              case FileBrowserAction::ToggleCompleted:

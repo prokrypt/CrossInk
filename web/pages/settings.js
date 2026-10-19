@@ -44,8 +44,12 @@ let allSettings = [];
     }
 
     if (setting.type === 'value') {
-      return '<input type="number" id="' + id + '" value="' + setting.value + '"' +
-        ' min="' + setting.min + '" max="' + setting.max + '" step="' + setting.step + '"' +
+      const wordSpacing = setting.key === 'wordSpacing';
+      const value = wordSpacing && setting.value > 4 ? 4 - setting.value : setting.value;
+      const minimum = wordSpacing ? -4 : setting.min;
+      const maximum = wordSpacing ? 4 : setting.max;
+      return '<input type="number" id="' + id + '" value="' + value + '"' +
+        ' min="' + minimum + '" max="' + maximum + '" step="' + setting.step + '"' +
         ' onchange="handleSettingChanged(\'' + setting.key + '\')">';
     }
 
@@ -70,7 +74,13 @@ let allSettings = [];
       return parseInt(el.value, 10);
     }
     if (setting.type === 'value') {
-      return parseInt(el.value, 10);
+      const value = parseInt(el.value, 10);
+      if (setting.key === 'wordSpacing' && Number.isFinite(value)) {
+        const level = Math.max(-4, Math.min(4, value));
+        el.value = String(level);
+        return level < 0 ? 4 - level : level;
+      }
+      return value;
     }
     if (setting.type === 'string') {
       return el.value;
@@ -219,6 +229,7 @@ let allSettings = [];
       for (const category in groups) {
         html += '<div class="card"><h2>' + escapeHtml(category) + '</h2>';
         groups[category].forEach(function(s) {
+          if (s.key === 'opdsDownloadFolder') return;
           html += '<div class="setting-row" id="row-setting-' + s.key + '">' +
             '<span class="setting-name">' + escapeHtml(s.name) + '</span>' +
             '<span class="setting-control">' + renderControl(s) + '</span>' +
@@ -229,6 +240,11 @@ let allSettings = [];
 
       container.innerHTML = html;
       updateSettingsVisibility();
+      const folderControl = document.getElementById('setting-opdsDownloadFolder');
+      if (folderControl) {
+        folderControl.value = originalValues.opdsDownloadFolder || '';
+        updateOpdsDestinations();
+      }
       document.getElementById('save-container').style.display = '';
       document.getElementById('saveBtn').disabled = true;
       preserveQuickResumeTimeoutOn = getControlValue('quickResumeSleepScreen') === 1;
@@ -257,6 +273,13 @@ let allSettings = [];
       }
     });
 
+    if (Object.prototype.hasOwnProperty.call(changes, 'koMatchMethod') &&
+        !confirm('Change Document Matching? Books get new ids, so the next sync checks every book again. ' +
+                 'Progress already uploaded stays under the old ids until you merge books in the web app.')) {
+      delete changes.koMatchMethod;
+      setControlValue('koMatchMethod', originalValues.koMatchMethod);
+    }
+
     if (Object.keys(changes).length === 0) {
       showMessage('No changes to save.', false);
       btn.textContent = 'Save Settings';
@@ -282,6 +305,7 @@ let allSettings = [];
       if (Object.prototype.hasOwnProperty.call(changes, 'trackReadingStats')) {
         await loadSettings();
       }
+      updateOpdsDestinations();
 
       showMessage('Settings saved successfully!', false);
     } catch (e) {
@@ -313,7 +337,7 @@ let allSettings = [];
     const labels = statusBars.labels;
     const itemOptions = statusBars.options.map(function(option) {
       return { value: option.value, label: option.label,
-        disabled: option.value === 1 && !statusBars.clockAvailable };
+        disabled: (option.value === 1 || option.value === 10) && !statusBars.clockAvailable };
     });
     const slotNames = [labels.left + ' 1', labels.left + ' 2', labels.left + ' 3', labels.center,
       labels.right + ' 1', labels.right + ' 2', labels.right + ' 3'];
@@ -323,16 +347,37 @@ let allSettings = [];
         itemOptions, bar.slots[i], 'statusBarChanged()'));
     }
     for (const field of [
+      ['battery', labels.battery, statusBars.batteryStyles],
       ['percentageFormat', labels.percentageFormat, statusBars.percentageFormats],
       ['progressBar', labels.progressBar, statusBars.progressModes],
-      ['thickness', labels.thickness, statusBars.thicknesses]
+      ['thickness', labels.thickness, statusBars.thicknesses],
+      ['hidden', labels.hidden, statusBars.hideOptions]
     ]) {
       html += statusBarRow(field[1], statusBarSelect('bar-' + position + '-' + field[0],
         field[2].map(function(label, index) { return { value: index, label: label }; }),
-        bar[field[0]], 'statusBarChanged()'));
+        Number(bar[field[0]]), 'statusBarChanged()'));
     }
     html += '<div class="status-bar-preview" id="bar-' + position + '-preview"></div></div>';
     return html;
+  }
+
+  function renderDisplayStatusBar() {
+    const choices = statusBars.options.filter(function(option) {
+      return [0, 1, 2, 10].includes(option.value);
+    }).map(function(option) {
+      return { value: option.value, label: option.label,
+        disabled: (option.value === 1 || option.value === 10) && !statusBars.clockAvailable };
+    });
+    return '<h3>' + escapeHtml(statusBars.labels.display) + '</h3>' +
+      [statusBars.labels.left, statusBars.labels.center, statusBars.labels.right].map(function(label, index) {
+        return statusBarRow(label, statusBarSelect('display-slot-' + index, choices,
+          statusBars.display[index], 'statusBarChanged()'));
+      }).join('') + statusBarRow(statusBars.labels.battery, statusBarSelect('display-battery',
+        statusBars.batteryStyles.map(function(label, index) { return { value: index, label: label }; }),
+        statusBars.displayBatteryStyle, 'statusBarChanged()')) +
+      statusBarRow(statusBars.labels.textSize, statusBarSelect('display-text-size',
+        statusBars.textSizes.map(function(label, index) { return { value: index, label: label }; }),
+        statusBars.displayTextSize, 'statusBarChanged()'));
   }
 
   function readStatusBarForm(position) {
@@ -341,16 +386,23 @@ let allSettings = [];
       slots: bar.slots.map(function(_, index) {
         return Number(document.getElementById('bar-' + position + '-slot-' + index).value);
       }),
+      battery: Number(document.getElementById('bar-' + position + '-battery').value),
       percentageFormat: Number(document.getElementById('bar-' + position + '-percentageFormat').value),
       progressBar: Number(document.getElementById('bar-' + position + '-progressBar').value),
-      thickness: Number(document.getElementById('bar-' + position + '-thickness').value)
+      thickness: Number(document.getElementById('bar-' + position + '-thickness').value),
+      hidden: document.getElementById('bar-' + position + '-hidden').value === '1'
     };
   }
 
   function updateStatusBarPreview(position) {
     const bar = readStatusBarForm(position);
-    const examples = ['', '10:30', '85%', '2h 15m', '12m', '4/12', '27',
-      (64.12).toFixed(bar.percentageFormat) + '%', 'Book title', 'Chapter title'];
+    if (bar.hidden) {
+      document.getElementById('bar-' + position + '-preview').innerHTML = '';
+      return;
+    }
+    const battery = ['\u25AD 85%', '\u25AD', '85%'][bar.battery] || '85%';
+    const examples = ['', '10:30', battery, '2h 15m', '12m', '4/12', '27',
+      (64.12).toFixed(bar.percentageFormat) + '%', 'Book title', 'Chapter title', statusBars.datePreview];
     const slot = function(index) { return escapeHtml(examples[bar.slots[index]] || ''); };
     const right = [4, 5, 6].map(slot).filter(Boolean).join(' &nbsp; ');
     const progressValue = bar.progressBar === 0 ? 64 : 35;
@@ -376,7 +428,7 @@ let allSettings = [];
       statusBars = await response.json();
       container.innerHTML = '<div class="card"><h2>' + escapeHtml(statusBars.labels.top) + ' / ' +
         escapeHtml(statusBars.labels.bottom) + '</h2>' + renderStatusBar('top') +
-        renderStatusBar('bottom') +
+        renderStatusBar('bottom') + renderDisplayStatusBar() +
         statusBarRow(statusBars.labels.xtcMode, statusBarSelect('bar-xtc-mode',
           statusBars.xtcModes.map(function(label, index) { return { value: index, label: label }; }),
           statusBars.xtcMode, 'statusBarChanged()')) +
@@ -398,6 +450,11 @@ let allSettings = [];
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ top: readStatusBarForm('top'), bottom: readStatusBarForm('bottom'),
+          display: statusBars.display.map(function(_, index) {
+            return Number(document.getElementById('display-slot-' + index).value);
+          }),
+          displayBatteryStyle: Number(document.getElementById('display-battery').value),
+          displayTextSize: Number(document.getElementById('display-text-size').value),
           xtcMode: Number(document.getElementById('bar-xtc-mode').value) })
       });
       if (!response.ok) throw new Error(await response.text());
@@ -528,10 +585,51 @@ let allSettings = [];
   // the "(unchanged)" placeholder indicates an existing password is preserved on save.
   let opdsServers = [];
 
+  function opdsFolderMode(folder) {
+    return !folder ? 'default' : folder === '/' ? 'root' : 'custom';
+  }
+
+  function updateOpdsDestinations() {
+    document.querySelectorAll('[data-opds-folder]').forEach(function(server) {
+      const id = server.dataset.opdsFolder;
+      const mode = document.getElementById('opds-folder-mode-' + id).value;
+      const input = document.getElementById('opds-folder-' + id);
+      document.getElementById('opds-folder-path-' + id).hidden = mode !== 'custom';
+      const path = mode === 'default' ? originalValues.opdsDownloadFolder || '/' :
+        mode === 'root' ? '/' : input.value.trim();
+      document.getElementById('opds-destination-' + id).textContent =
+        'Downloads to: ' + (path || 'Enter folder path') + (mode === 'default' ? ' (default)' : '');
+    });
+  }
+
+  async function saveOpdsDefaultFolder() {
+    const input = document.getElementById('setting-opdsDownloadFolder');
+    try {
+      const resp = await fetch('/api/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opdsDownloadFolder: input.value })
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      // Read the normalized saved path without replacing unsaved server forms.
+      const settings = await fetch('/api/settings');
+      if (!settings.ok) throw new Error('Folder saved, but settings could not be refreshed');
+      const saved = (await settings.json()).find(function(s) { return s.key === 'opdsDownloadFolder'; });
+      if (saved) {
+        input.value = saved.value;
+        originalValues.opdsDownloadFolder = saved.value;
+        const setting = allSettings.find(function(s) { return s.key === 'opdsDownloadFolder'; });
+        if (setting) setting.value = saved.value;
+      }
+      updateOpdsDestinations();
+      markChanged();
+      showMessage('Default download folder saved!', false);
+    } catch (error) { showMessage('Error: ' + error.message, true); }
+  }
+
   function renderOpdsServer(srv, idx) {
     const isNew = idx === -1;
     const id = isNew ? 'new' : idx;
-    return '<div class="opds-server" id="opds-' + id + '">' +
+    return '<div class="opds-server" id="opds-' + id + '" data-opds-folder="' + id + '">' +
       '<div class="setting-row">' +
         '<span class="setting-name">Server Name</span>' +
         '<span class="setting-control"><input type="text" id="opds-name-' + id + '" value="' + escapeHtml(srv.name || '') + '"></span>' +
@@ -552,9 +650,23 @@ let allSettings = [];
         '<span class="setting-name">Filename</span>' +
         '<span class="setting-control"><select id="opds-filename-' + id + '">' +
           '<option value="author_title"' + ((srv.filenameFormat || 'author_title') === 'author_title' ? ' selected' : '') + '>Author - Title</option>' +
+          '<option value="server_filename"' + (srv.filenameFormat === 'server_filename' ? ' selected' : '') + '>Server filename</option>' +
           '<option value="title_author"' + (srv.filenameFormat === 'title_author' ? ' selected' : '') + '>Title - Author</option>' +
         '</select></span>' +
       '</div>' +
+      '<div class="setting-row">' +
+        '<label class="setting-name" for="opds-folder-mode-' + id + '">Download Folder</label>' +
+        '<span class="setting-control"><select id="opds-folder-mode-' + id + '" onchange="updateOpdsDestinations()">' +
+          '<option value="default"' + (opdsFolderMode(srv.downloadFolder) === 'default' ? ' selected' : '') + '>Use default</option>' +
+          '<option value="root"' + (opdsFolderMode(srv.downloadFolder) === 'root' ? ' selected' : '') + '>SD root</option>' +
+          '<option value="custom"' + (opdsFolderMode(srv.downloadFolder) === 'custom' ? ' selected' : '') + '>Custom folder</option>' +
+        '</select></span>' +
+      '</div>' +
+      '<div class="setting-row" id="opds-folder-path-' + id + '"' + (opdsFolderMode(srv.downloadFolder) !== 'custom' ? ' hidden' : '') + '>' +
+        '<label class="setting-name" for="opds-folder-' + id + '">Folder path</label>' +
+        '<span class="setting-control"><input type="text" id="opds-folder-' + id + '" maxlength="63" placeholder="/Books/Calibre" value="' + escapeHtml(srv.downloadFolder && srv.downloadFolder !== '/' ? srv.downloadFolder : '') + '" oninput="updateOpdsDestinations()"></span>' +
+      '</div>' +
+      '<p class="opds-destination" id="opds-destination-' + id + '" aria-live="polite"></p>' +
       '<div class="opds-actions">' +
         '<button class="btn-small btn-save-server" onclick="saveOpdsServer(' + idx + ')">Save</button>' +
         (isNew ? '' : '<button class="btn-small btn-delete" onclick="deleteOpdsServer(' + idx + ')">Delete</button>') +
@@ -564,7 +676,11 @@ let allSettings = [];
 
   function renderOpdsSection() {
     const container = document.getElementById('opds-container');
-    let html = '<div class="card"><h2>OPDS Servers</h2>';
+    let html = '<div class="card"><h2>OPDS Servers</h2>' +
+      '<div class="setting-row"><label class="setting-name" for="setting-opdsDownloadFolder">Default download folder</label>' +
+      '<span class="setting-control"><input type="text" id="setting-opdsDownloadFolder" maxlength="63" value="' + escapeHtml(originalValues.opdsDownloadFolder || '') + '"></span></div>' +
+      '<div class="opds-actions"><button class="btn-small" onclick="saveOpdsDefaultFolder()">Save default</button></div>' +
+      '<p class="opds-folder-hint">Used by servers set to Use default. Blank means SD root.</p>';
 
     if (opdsServers.length === 0) {
       html += '<p style="color:var(--label-color);text-align:center;">No OPDS servers configured</p>';
@@ -578,6 +694,7 @@ let allSettings = [];
       '<button class="btn-small btn-add" onclick="addOpdsServer()">+ Add Server</button>' +
     '</div></div>';
     container.innerHTML = html;
+    updateOpdsDestinations();
   }
 
   async function loadOpdsServers() {
@@ -598,6 +715,7 @@ let allSettings = [];
     // Prevent multiple unsaved new-server forms at once (idx -1 → id "new")
     if (document.getElementById('opds-new')) return;
     addBtn.insertAdjacentHTML('beforebegin', renderOpdsServer({name:'',url:'',username:'',hasPassword:false,filenameFormat:'author_title'}, -1));
+    updateOpdsDestinations();
   }
 
   async function saveOpdsServer(idx) {
@@ -608,6 +726,13 @@ let allSettings = [];
       username: document.getElementById('opds-user-' + id).value,
       filenameFormat: document.getElementById('opds-filename-' + id).value,
     };
+    const mode = document.getElementById('opds-folder-mode-' + id).value;
+    const folder = document.getElementById('opds-folder-' + id).value.trim();
+    if (mode === 'custom' && !folder) {
+      showMessage('Enter a folder path, or choose Use default.', true);
+      return;
+    }
+    data.downloadFolder = mode === 'default' ? '' : mode === 'root' ? '/' : folder;
     // Only include password in payload when the user actually typed something;
     // omitting it tells the server to keep the existing password.
     const pass = document.getElementById('opds-pass-' + id).value;

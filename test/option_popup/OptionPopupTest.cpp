@@ -76,6 +76,34 @@ TEST(OptionPopup, MenuAndSortDecorationsDoNotLeakToNextPopup) {
   EXPECT_EQ(renderer.triangleCount(), 1);
 }
 
+TEST(OptionPopup, NotesFollowHighlightAndResetOnReuse) {
+  GfxRenderer renderer;
+  HalGPIO gpio;
+  MappedInputManager input(gpio, renderer);
+  OptionPopup popup;
+  const char* options[] = {"Directional", "Legacy"};
+  popup.show("Navigation", options, 2, 0, [](const int) {});
+  popup.setOptionNotes({{"Front:", "Up/Down", "Side:", "Left/Right"}, {"Front:", "Up/Down", "Side:", "Up/Down"}});
+  popup.render(renderer);
+  EXPECT_EQ(GUI.lastNoteLabel, "Front:");
+  EXPECT_EQ(GUI.lastNoteBody, "Up/Down");
+  EXPECT_EQ(GUI.lastSecondNoteLabel, "Side:");
+  EXPECT_EQ(GUI.lastSecondNoteBody, "Left/Right");
+
+  ButtonNavigator::injectNextRelease();
+  popup.handleInput(input, [] {});
+  popup.render(renderer);
+  EXPECT_EQ(GUI.getLastSelectedIndex(), 1);
+  EXPECT_EQ(GUI.lastSecondNoteBody, "Up/Down");
+
+  popup.show("Other", options, 2, 0, [](const int) {}, {"Note:", "Existing note"});
+  popup.render(renderer);
+  EXPECT_EQ(GUI.lastNoteLabel, "Note:");
+  EXPECT_EQ(GUI.lastNoteBody, "Existing note");
+  EXPECT_TRUE(GUI.lastSecondNoteLabel.empty());
+  EXPECT_TRUE(GUI.lastSecondNoteBody.empty());
+}
+
 TEST(OptionPopup, PowerConfirmSelectionSuppressesItsPowerRelease) {
   GfxRenderer renderer;
   HalGPIO gpio;
@@ -123,6 +151,55 @@ TEST(OptionPopup, DisabledTouchOptionDoesNotSelect) {
   touch.touchPopup(popup, 250, [] {});
   EXPECT_EQ(selections, 0);
   EXPECT_TRUE(popup.isActive());
+}
+
+TEST(OptionPopup, InertRowIgnoresTouchAndConfirmAndResetsOnReuse) {
+  GfxRenderer renderer;
+  HalGPIO gpio;
+  MappedInputManager input(gpio, renderer);
+  OptionPopup popup;
+  PopupTouchHarness touch(input);
+  int selections = 0;
+  const char* options[] = {"English: Built in"};
+  popup.show("Packs", options, 1, 0, [&](int) { ++selections; });
+  popup.setInertOptionIndex(0);
+  touch.touchPopup(popup, 250, [] {});
+  EXPECT_TRUE(popup.isActive());
+  EXPECT_EQ(selections, 0);
+  input.injectPowerConfirmPress();
+  popup.handleInput(input, [] {});
+  EXPECT_TRUE(popup.isActive());
+  EXPECT_EQ(selections, 0);
+  input.injectPowerConfirmRelease();
+  input.advanceInputFrame();
+  popup.show("Other", options, 1, 0, [&](int) { ++selections; });
+  touch.touchPopup(popup, 250, [] {});
+  EXPECT_EQ(selections, 1);
+  EXPECT_FALSE(popup.isActive());
+}
+
+TEST(OptionPopup, InertTouchPreservesAnotherRowsHighlightAndConfirmAction) {
+  GfxRenderer renderer;
+  HalGPIO gpio;
+  MappedInputManager input(gpio, renderer);
+  OptionPopup popup;
+  int selected = -1;
+  const char* options[] = {"English: Built in", "German: Install"};
+  popup.show("Packs", options, 2, 1, [&](int value) { selected = value; });
+  popup.setInertOptionIndex(0);
+  popup.render(renderer);
+  EXPECT_FALSE(popup.simulatorOptionDisabled(0));
+  const auto row = popup.simulatorOptionRect(0);
+  input.injectTouchDown(row.x + row.width / 2, row.y + row.height / 2);
+  popup.handleInput(input, [] {});
+  input.injectTouchRelease(row.x + row.width / 2, row.y + row.height / 2);
+  popup.handleInput(input, [] {});
+  popup.render(renderer);
+  EXPECT_EQ(GUI.getLastSelectedIndex(), 1);
+  EXPECT_EQ(selected, -1);
+  input.injectPowerConfirmPress();
+  popup.handleInput(input, [] {});
+  EXPECT_EQ(selected, 1);
 }
 
 TEST(OptionPopup, OutsideTouchDismissesWhenEnabled) {
@@ -241,3 +318,31 @@ TEST(OptionPopup, SwipeKeepsDisabledDestinationUnselectableWithoutWrapping) {
 }
 
 }  // namespace
+
+TEST(OptionPopup, BorrowedDisabledOptionsAndOwnedReuse) {
+  GfxRenderer renderer;
+  HalGPIO gpio;
+  MappedInputManager input(gpio, renderer);
+  OptionPopup popup;
+  std::vector<std::string> names{"English", "Duplicate", "Community"};
+  std::vector<bool> disabled{false, true, false};
+  int selected = -1;
+  popup.showBorrowed(STR_SAVE, OptionLabels(names, disabled), 0, [&](int index) { selected = index; });
+  ButtonNavigator::injectNextRelease();
+  EXPECT_TRUE(popup.handleInput(input, [] {}));
+  popup.render(renderer);
+  EXPECT_EQ(GUI.getLastSelectedIndex(), 2);
+  input.injectPowerConfirmPress();
+  EXPECT_TRUE(popup.handleInput(input, [] {}));
+  EXPECT_EQ(selected, 2);
+  popup.clear();
+  names.clear();
+  disabled.clear();
+  const char* owned[] = {"Owned"};
+  popup.show("Reuse", owned, 1, 0, [&](int index) { selected = index + 10; });
+  popup.render(renderer);
+  EXPECT_EQ(GUI.getLastSelectedIndex(), 0);
+  input.injectPowerConfirmPress();
+  EXPECT_TRUE(popup.handleInput(input, [] {}));
+  EXPECT_EQ(selected, 10);
+}

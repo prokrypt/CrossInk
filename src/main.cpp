@@ -11,6 +11,7 @@
 #include <HalDisplay.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
+#include <HalScreenCalibration.h>
 #include <HalStorage.h>
 #include <HalSystem.h>
 #include <HalTiltSensor.h>
@@ -44,6 +45,7 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "GlobalActions.h"
+#include "HyphenationPackStore.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
@@ -60,6 +62,7 @@
 #include "activities/reader/ReaderUtils.h"
 #include "activities/reader/ReadingStatsUtils.h"
 #include "activities/reader/StatsBackup.h"
+#include "activities/settings/AssetDownloadActivity.h"
 #include "activities/settings/FontDownloadActivity.h"
 #include "activities/settings/KOReaderAuthActivity.h"
 #include "activities/settings/KOReaderSettingsActivity.h"
@@ -343,7 +346,7 @@ static void silentRestartToHome(const uint32_t payload, const char* const descri
   // Without an overlay, users don't see the reboot and fire input through to
   // Home. Select on the default selectorIndex=0 then opens the most-recent
   // book, looking like a trampoline back to the reader they just exited.
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  GUI.drawPopup(renderer, tr(STR_LOADING));
   delay(50);
   restartWithSilentToken();
 }
@@ -388,7 +391,7 @@ static void silentRestartToReaderImpl(const bool cleanImageBaseOnEntry) {
   silentRebootPayload = cleanImageBaseOnEntry ? SILENT_REBOOT_READER_CLEAN_IMAGE_BASE : 0;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=reader cleanImageBase=%d)", cleanImageBaseOnEntry ? 1 : 0);
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  GUI.drawPopup(renderer, tr(STR_LOADING));
   delay(50);
   restartWithSilentToken();
 }
@@ -397,13 +400,24 @@ void silentRestartToReader(const bool cleanImageBaseOnEntry) { silentRestartToRe
 
 void silentRestartToNetwork(const NetworkBootTarget target, const uint32_t payload) {
   if (deepSleepInProgress) return;
+#ifdef SIMULATOR
+  if (simulatorInterceptNetworkRestart(static_cast<uint32_t>(target), payload)) return;
+#endif
   clearSilentRestartReaderPageBuild();
   silentRebootTarget = static_cast<uint32_t>(target);
   silentRebootPayload = payload;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=network/%lu payload=%lu)", static_cast<unsigned long>(silentRebootTarget),
           static_cast<unsigned long>(payload));
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  if (target == NetworkBootTarget::KOREADER_SYNC) {
+    RenderLock lock;
+    // A drawer close can queue a backdrop repaint. Serialize the handoff and
+    // replace that frame so only one loading notice remains visible.
+    renderer.clearScreen();
+    GUI.drawPopup(renderer, tr(STR_LOADING));
+  } else {
+    GUI.drawPopup(renderer, tr(STR_LOADING));
+  }
   delay(50);
   restartWithSilentToken();
 }
@@ -707,6 +721,12 @@ CrossPointSettings::SHORT_PWRBTN chordPowerAction(const ButtonShortcutController
       return Power::NEARBY_POSITION_SYNC;
     case Chord::Library:
       return Power::LIBRARY;
+    case Chord::HomeReader:
+      return Power::HOME_READER;
+    case Chord::BackHome:
+      return Power::BACK_HOME;
+    case Chord::SelectChapter:
+      return Power::SELECT_CHAPTER;
     case Chord::FileTransfer:
       return Power::FILE_TRANSFER;
     case Chord::CalibreWireless:
@@ -1156,6 +1176,7 @@ void setupDisplayAndFonts(const bool seamless, const bool loadReaderResources, c
 #endif
 #endif
   renderer.begin();
+  renderer.setViewableInsets(HalScreenCalibration::load());
   display.setInverted(SETTINGS.screenInverted != 0);
   // FreeInkUI headers need more than 4 KB once the render loop and nested
   // screen builders share the task stack. Some S3 network flows can render a
@@ -1172,14 +1193,14 @@ void setupDisplayAndFonts(const bool seamless, const bool loadReaderResources, c
   renderer.setFontCacheManager(&fontCacheManager);
 
 #if !CROSSINK_SCALABLE_FONTS
-  renderer.insertFont(LEXENDDECA_10_FONT_ID, lexenddeca10FontFamily);
-  renderer.insertFont(LEXENDDECA_12_FONT_ID, lexenddeca12FontFamily);
-  renderer.insertFont(LEXENDDECA_14_FONT_ID, lexenddeca14FontFamily);
-  renderer.insertFont(LEXENDDECA_16_FONT_ID, lexenddeca16FontFamily);
-  renderer.insertFont(BITTER_10_FONT_ID, bitter10FontFamily);
-  renderer.insertFont(BITTER_12_FONT_ID, bitter12FontFamily);
-  renderer.insertFont(BITTER_14_FONT_ID, bitter14FontFamily);
-  renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily);
+  renderer.insertFont(LEXENDDECA_10_FONT_ID, lexenddeca10FontFamily.withSize(LEXENDDECA_10_FONT_ID, 10));
+  renderer.insertFont(LEXENDDECA_12_FONT_ID, lexenddeca12FontFamily.withSize(LEXENDDECA_10_FONT_ID, 12));
+  renderer.insertFont(LEXENDDECA_14_FONT_ID, lexenddeca14FontFamily.withSize(LEXENDDECA_10_FONT_ID, 14));
+  renderer.insertFont(LEXENDDECA_16_FONT_ID, lexenddeca16FontFamily.withSize(LEXENDDECA_10_FONT_ID, 16));
+  renderer.insertFont(BITTER_10_FONT_ID, bitter10FontFamily.withSize(BITTER_10_FONT_ID, 10));
+  renderer.insertFont(BITTER_12_FONT_ID, bitter12FontFamily.withSize(BITTER_10_FONT_ID, 12));
+  renderer.insertFont(BITTER_14_FONT_ID, bitter14FontFamily.withSize(BITTER_10_FONT_ID, 14));
+  renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily.withSize(BITTER_10_FONT_ID, 16));
 #endif
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
@@ -1321,6 +1342,10 @@ void setup() {
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton:
       wakePowerReleasePending = true;
+      // Readers also handle held Power shortcuts. Hide the wake hold from
+      // mapped input until its release, while allowing the activity to load.
+      mappedInputManager.suppressNextPowerRelease();
+      mappedInputManager.suppressNextPowerConfirmRelease();
       break;
     case HalGPIO::WakeupReason::AfterUSBPower:
       // TEMP: continue booting while diagnosing post-flash/reset behavior.
@@ -1355,12 +1380,16 @@ void setup() {
   SETTINGS.loadFromFile();
   Storage.installDateTimeCallback(LocalClock::offsetQAtUtc);
   APP_STATE.loadFromFile();
+#ifdef SIMULATOR
+  prepareSimulatorSmokeState();
+#endif
   mirrorWakeShortPressToNvs();
   // Needs SETTINGS for the clock's UTC offset, so it cannot run any earlier.
   BatteryDiagnosticLog::record(BatteryDiagnosticLog::Event::Wake, BoardConfig::ACTIVE.name,
                                wakeupRouteName(wakeupReason));
   const bool isSleepWake = wakeupReason == HalGPIO::WakeupReason::PowerButton;
-  I18N.setLanguage(static_cast<Language>(SETTINGS.language));
+  I18N.begin(SETTINGS.languageCode, SETTINGS.languageCacheGeneration);
+  HyphenationPackStore::begin();
   // Normal boot store deferral adapted from Sichroteph/YACP commit
   // 20af8aee8d3e1d560456753b08d1f52e5488621f (MIT). Accessors load these
   // stores when Home, reader bookkeeping, or sync actually need them.
@@ -1446,7 +1475,7 @@ void setup() {
   const bool shouldRestoreSleepFrame =
       resume == BootResume::SplashlessWake && (isUc8279X3 ? hasValidSleepFrame : Storage.exists(SLEEP_FRAME_FILE));
   bool allowFastInitialReaderRefresh = false;
-  bool x4WakeFrameAlreadyCleaned = false;
+  bool x4WakeCanFastPaint = false;
 
   setupDisplayAndFonts(SleepWakePolicy::shouldInitializeSeamlessly(resume, isUc8279X3, hasValidSleepFrame),
                        resume != BootResume::Network, useReaderRenderStack);
@@ -1469,6 +1498,15 @@ void setup() {
           renderer.cleanupGrayscaleWithFrameBuffer();
           allowFastInitialReaderRefresh = true;
         }
+#ifndef SIMULATOR
+        else if (display.restoreVisibleFrame()) {
+          // Quick Resume left this exact frame on the glass. Rebuild the panel's
+          // old-image plane so the first Home/reader paint only drives changed
+          // pixels, including removal of the sleep moon.
+          allowFastInitialReaderRefresh = true;
+          x4WakeCanFastPaint = true;
+        }
+#endif
       } else if (isUc8279X3 && hasValidSleepFrame) {
         // The frame passed the size preflight but could not be read after display
         // setup. Do one clean, device-specific recovery rather than painting
@@ -1485,7 +1523,7 @@ void setup() {
         // baseline, so the reader's first page can use its fast initial cycle
         // instead of repeating the cleanup waveform.
         allowFastInitialReaderRefresh = true;
-        x4WakeFrameAlreadyCleaned = true;
+        x4WakeCanFastPaint = true;
       }
       break;
     case BootResume::Splash:
@@ -1536,6 +1574,17 @@ void setup() {
       case NetworkBootTarget::FILE_TRANSFER:
         launched = activityManager.resumeFileTransferFromNetworkBoot(snapshotPayload);
         break;
+      case NetworkBootTarget::DOWNLOAD_ASSETS: {
+        if (!AssetDownloadActivity::validBootPayload(snapshotPayload)) break;
+        auto assets = makeUniqueNoThrow<AssetDownloadActivity>(renderer, mappedInputManager, snapshotPayload);
+        if (assets) {
+          activityManager.replaceActivity(std::move(assets));
+          launched = true;
+        } else {
+          LOG_ERR("MAIN", "OOM: asset downloads after minimal boot");
+        }
+        break;
+      }
       case NetworkBootTarget::MANAGE_FONTS: {
         auto fontsActivity = makeUniqueNoThrow<FontDownloadActivity>(renderer, mappedInputManager);
         if (fontsActivity) {
@@ -1551,6 +1600,13 @@ void setup() {
     if (!launched) {
       LOG_ERR("MAIN", "Minimal network boot target failed; returning home");
       silentRestart();
+    }
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_HOME &&
+             APP_STATE.pendingOverlayResume.returnsToBookList()) {
+    if (APP_STATE.pendingOverlayResume.origin == PendingOverlayOrigin::Library) {
+      activityManager.goToLibrary();
+    } else {
+      activityManager.goToFileBrowser(APP_STATE.pendingOverlayResume.fileBrowserPath);
     }
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_READER &&
              !APP_STATE.openEpubPath.empty()) {
@@ -1592,7 +1648,7 @@ void setup() {
     // crashed (indicated by readerActivityLoadCount > 0)
     // On X4, use the first Home paint to clean the retained sleep image.
     const auto homeRefreshMode =
-        resume == BootResume::SplashlessWake && shouldClearX4WakeGhosting() && !x4WakeFrameAlreadyCleaned
+        resume == BootResume::SplashlessWake && shouldClearX4WakeGhosting() && !x4WakeCanFastPaint
             ? HalDisplay::HALF_REFRESH
             : HalDisplay::FAST_REFRESH;
     activityManager.goHome(HomeMenuItem::NONE, homeRefreshMode);
@@ -1761,6 +1817,7 @@ void loop() {
 
   if (!buttonShortcutController.isQuickLocked() && UsbSerialFileTransfer::process(activityManager.isHomeActivity()) ==
                                                        UsbSerialFileTransfer::ProcessResult::ScreenshotRequested) {
+    RenderLock lock;
     const uint32_t bufferSize = display.getBufferSize();
     logSerial.printf("SCREENSHOT_START:%d\n", bufferSize);
     uint8_t* buf = display.getFrameBuffer();

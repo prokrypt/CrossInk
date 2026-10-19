@@ -10,6 +10,9 @@
 #include <FsHelpers.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
+#if defined(CROSSINK_LANGUAGE_BENCHMARK)
+#include <LanguageBenchmark.h>
+#endif
 #include <Logging.h>
 #include <Memory.h>
 #include <Xtc.h>
@@ -18,8 +21,10 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "FilenameFontSystem.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "ReleaseNotes.h"
 #include "SilentRestart.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
@@ -41,6 +46,7 @@
 #include "reader/GlobalReadingStats.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
+#include "settings/ReleaseNotesActivity.h"
 #include "settings/SettingsActivity.h"
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
@@ -112,6 +118,12 @@ FrontlightPanelContext buildFrontlightPanelContext(Activity& activity, GfxRender
 
   const FrontlightBookSource source = chooseFrontlightBookSource(false, false, lastValid && !context.activeReaderBook);
 
+  // Transfer actions use the last EPUB even when reading stats are disabled.
+  if (source == FrontlightBookSource::LastBook) {
+    context.bookPath = APP_STATE.openEpubPath;
+    context.bookTitle = fileNameFromPath(context.bookPath);
+  }
+
   if (!SETTINGS.shouldTrackReadingStats()) return context;
   const GlobalReadingStats global = GlobalReadingStats::load();
   std::string cachePath;
@@ -119,8 +131,6 @@ FrontlightPanelContext buildFrontlightPanelContext(Activity& activity, GfxRender
   BookReadingStats bookStats;
   float progress = -1.0f;
   if (source == FrontlightBookSource::LastBook) {
-    context.bookPath = APP_STATE.openEpubPath;
-    context.bookTitle = fileNameFromPath(context.bookPath);
     statsTitle = context.bookTitle;
     cachePath = Epub::cachePathForFilePath(context.bookPath, "/.crosspoint");
     if (BookStatsTracking::isBookEnabled(cachePath))
@@ -135,14 +145,14 @@ FrontlightPanelContext buildFrontlightPanelContext(Activity& activity, GfxRender
     statsTitle = tr(STR_READING_STATS);
     if (!context.activeReaderBook) context.bookTitle = statsTitle;
   }
-  if (GlobalReadingStats::hasSyncedStats()) {
-    context.readingStatsActivity =
-        makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, statsTitle, cachePath, bookStats, progress, false,
-                                             0, global, GlobalReadingStats::loadAggregated(global));
-  } else {
-    context.readingStatsActivity = makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, statsTitle, cachePath,
-                                                                        bookStats, progress, false, 0, global);
-  }
+  auto stats =
+      GlobalReadingStats::hasSyncedStats()
+          ? makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, statsTitle, cachePath, bookStats, progress,
+                                                 false, 0, global, GlobalReadingStats::loadAggregated(global))
+          : makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, statsTitle, cachePath, bookStats, progress,
+                                                 false, 0, global);
+  if (stats && !cachePath.empty()) stats->setSyncBookPath(context.bookPath);
+  context.readingStatsActivity = std::move(stats);
   return context;
 }
 
@@ -197,6 +207,11 @@ bool applyConfiguredSwipeAction(Activity& activity, ActivityManager& activityMan
         activityManager.persistGlobalSettings();
       return true;
     }
+    case CrossPointSettings::TWO_FINGER_SWIPE_BACK_HOME:
+      return activityManager.handleShortcutAction(CrossPointSettings::BACK_HOME);
+    case CrossPointSettings::TWO_FINGER_SWIPE_HOME_READER:
+      return activityManager.handleShortcutAction(CrossPointSettings::HOME_READER);
+    case CrossPointSettings::TWO_FINGER_SWIPE_SELECT_CHAPTER:
     case CrossPointSettings::TWO_FINGER_SWIPE_NEXT_CHAPTER:
     case CrossPointSettings::TWO_FINGER_SWIPE_PREVIOUS_CHAPTER:
     case CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_FONT_SIZE:
@@ -480,6 +495,11 @@ void ActivityManager::renderTaskLoop() {
     // Acquire the lock before reading currentActivity to avoid a TOCTOU race
     // where the main task deletes the activity between the null-check and render().
     RenderLock lock;
+    if (enteringActivity && !entryRenderRequested) {
+      requestedUpdate = true;
+      continue;
+    }
+    entryRenderRequested = false;
     TouchRegistry::getInstance().setEnabled(mappedInput.hasTouch());
     TouchRegistry::getInstance().beginFrame();
     bool deferredRender = false;
@@ -497,7 +517,13 @@ void ActivityManager::renderTaskLoop() {
       // cppcheck-suppress knownConditionTrueFalse
       deferredRender = !waiterPending && allowsDeferredRefresh(*currentActivity);
       renderer.setDeferFastRefresh(deferredRender);
+#if defined(CROSSINK_LANGUAGE_BENCHMARK)
+      language_benchmark::beginFrame(currentActivity->name.c_str());
+#endif
       currentActivity->render(std::move(lock));
+#if defined(CROSSINK_LANGUAGE_BENCHMARK)
+      language_benchmark::endFrame();
+#endif
       renderer.setDeferFastRefresh(false);
       restoredActivityNeedsRender = false;
     }
@@ -640,7 +666,15 @@ void ActivityManager::loop() {
     mappedInput.setPowerAsConfirmInReaderMode(false);
   }
 
-  while (pendingAction != PendingAction::None) {
+  // A deferred full-stack replace waits until its requester has popped and every
+  // result handler has settled, then runs as an ordinary Replace.
+  while (pendingAction != PendingAction::None || (afterReturnActivity && afterReturnOwnerExited)) {
+    if (pendingAction == PendingAction::None) {
+      afterReturnOwnerExited = false;
+      TouchRegistry::getInstance().clear();
+      pendingActivity = std::move(afterReturnActivity);
+      pendingAction = PendingAction::Replace;
+    }
     if (pendingAction == PendingAction::Pop) {
       RenderLock lock;
 
@@ -653,6 +687,10 @@ void ActivityManager::loop() {
 
       const bool closedFrontlightPanel = currentActivity->name == "FrontlightPanel";
       ActivityResult pendingResult = std::move(currentActivity->result);
+      if (afterReturnActivity && currentActivity.get() == afterReturnOwner) {
+        afterReturnOwnerExited = true;
+        afterReturnOwner = nullptr;
+      }
 
       // Destroy the current activity
       exitActivity(lock);
@@ -668,6 +706,13 @@ void ActivityManager::loop() {
         stackActivities.pop_back();
         restoredActivityNeedsRender = true;
 
+        // Network children release streamed fonts. Restore browsing metadata
+        // before the first parent redraw, without reloading into network/readers.
+        if (currentActivity->isHomeActivity() || currentActivity->name == "FileBrowser" ||
+            currentActivity->name == "Library") {
+          filenameFontSystem.ensureLoaded(renderer);
+        }
+
         if (closedFrontlightPanel) currentActivity->onFrontlightPanelClosed();
 
         // Handle result if necessary
@@ -678,6 +723,10 @@ void ActivityManager::loop() {
           lock.unlock();  // Handler may acquire its own lock
           handler(pendingResult);
         }
+
+        // Continue an explicit Home/Reader unwind through each child using
+        // normal cancellation results. This lets every parent restore state.
+        if (pendingAction == PendingAction::None) continueHomeReaderUnwind();
 
         // Queue an update to ensure the popped activity gets re-rendered. A
         // partial-screen overlay first restores the full-screen activity below
@@ -709,6 +758,17 @@ void ActivityManager::loop() {
       RenderLock lock;
 
       if (pendingAction == PendingAction::Replace) {
+        pendingHomeReaderTarget = nullptr;
+        // A full-stack navigation while the requester is still open (Home
+        // gesture, sleep) cancels the deferred one. After the requester has
+        // exited (e.g. its pop fell back to Home) the deferred one still runs.
+        if (afterReturnActivity && !afterReturnOwnerExited) {
+          LOG_INF("ACT", "Dropping deferred %s for %s", afterReturnActivity->name.c_str(),
+                  pendingActivity->name.c_str());
+          afterReturnActivity.reset();
+          afterReturnOwner = nullptr;
+          afterReturnOwnerExited = false;
+        }
         // Destroy the current activity
         exitActivity(lock);
         // Clear the stack
@@ -722,9 +782,10 @@ void ActivityManager::loop() {
       }
       pendingAction = PendingAction::None;
       currentActivity = std::move(pendingActivity);
+      enteringActivity = true;
 
-      lock.unlock();  // onEnter may acquire its own lock
-      currentActivity->onEnter();
+      lock.unlock();  // onEnter may acquire its own lock or synchronously render a loading screen.
+      enterCurrentActivity();
 
       // cppcheck-suppress knownConditionTrueFalse ; onEnter() above may queue another navigation
       if (pendingAction == PendingAction::None && pendingReaderMenuAction >= 0 &&
@@ -766,6 +827,9 @@ void ActivityManager::loop() {
         }
       }
 
+      // Resume a targeted reader unwind only after onEnter has completed.
+      if (pendingAction == PendingAction::None) continueHomeReaderUnwind();
+
       // onEnter may request another pending action, we will handle it in the next loop iteration
       continue;
     }
@@ -774,6 +838,20 @@ void ActivityManager::loop() {
   if (APP_STATE.hasPendingAlert.load(std::memory_order_acquire) && pendingAction == PendingAction::None) {
     APP_STATE.hasPendingAlert.store(false, std::memory_order_relaxed);
     pushActivity(std::make_unique<AlertActivity>(renderer, mappedInput));
+  }
+
+  // One-time What's New, only over Home so a wake into a book or a silent reboot into a network screen
+  // never shows it. The flag is set when the screen actually enters, so a push that Home's own navigation
+  // replaces before it applies is retried on the next visit to Home.
+  if (!releaseNotesShown && APP_STATE.releaseNotesSeen < RELEASE_NOTES_REVISION &&
+      pendingAction == PendingAction::None && currentActivity && currentActivity->isHomeActivity()) {
+    if (auto notes =
+            makeUniqueNoThrow<ReleaseNotesActivity>(renderer, mappedInput, ReleaseNotesActivity::Mode::FirstRun)) {
+      pushActivity(std::move(notes));
+    } else {
+      releaseNotesShown = true;  // Don't retry every loop; it shows again next boot.
+      LOG_ERR("ACT", "OOM: What's New activity; showing it next boot");
+    }
   }
 
   if (requestedUpdate.exchange(false)) {
@@ -888,6 +966,13 @@ void ActivityManager::exitActivity(const RenderLock& lock) {
   }
 }
 
+void ActivityManager::enterCurrentActivity() {
+  currentActivity->onEnter();
+  RenderLock lock;
+  enteringActivity = false;
+  entryRenderRequested = false;
+}
+
 void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
   // Note: no lock here, this is usually called by loop() and we may run into deadlock
   if (currentActivity) {
@@ -899,8 +984,12 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
   } else {
     // No current activity, safe to launch immediately
     TouchRegistry::getInstance().clear();
-    currentActivity = std::move(newActivity);
-    currentActivity->onEnter();
+    {
+      RenderLock lock;
+      currentActivity = std::move(newActivity);
+      enteringActivity = true;
+    }
+    enterCurrentActivity();
   }
 }
 
@@ -992,7 +1081,7 @@ void ActivityManager::goToNearbyStatsSync() {
   replaceActivity(std::make_unique<NearbyStatsSyncActivity>(renderer, mappedInput));
 }
 
-void ActivityManager::goToSettings(const bool dismissOnUpSwipe) {
+void ActivityManager::goToSettings(const bool dismissOnUpSwipe, const bool openLanguageDownloads) {
   preferredHomeBookPath.clear();
   returningHomeThroughSettings = false;
   if (currentActivity && currentActivity->isHomeActivity()) {
@@ -1002,7 +1091,9 @@ void ActivityManager::goToSettings(const bool dismissOnUpSwipe) {
     preferredHomeBookPath = stackActivities.back()->getCurrentBookPath();
     returningHomeThroughSettings = true;
   }
-  replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput, dismissOnUpSwipe));
+  auto settings = std::make_unique<SettingsActivity>(renderer, mappedInput, dismissOnUpSwipe);
+  if (openLanguageDownloads) settings->openLanguageDownloadsOnEnter();
+  replaceActivity(std::move(settings));
 }
 
 void ActivityManager::goToFileBrowser(std::string path) {
@@ -1150,6 +1241,13 @@ void ActivityManager::pushActivity(std::unique_ptr<Activity>&& activity) {
   pendingAction = PendingAction::Push;
 }
 
+void ActivityManager::replaceAfterReturn(std::unique_ptr<Activity>&& activity) {
+  // Main-loop only, like replaceActivity(): no lock.
+  afterReturnActivity = std::move(activity);
+  afterReturnOwner = currentActivity.get();
+  afterReturnOwnerExited = false;
+}
+
 void ActivityManager::popActivity() {
   if (pendingActivity) {
     // Should never happen in practice
@@ -1222,7 +1320,63 @@ bool ActivityManager::requestManualReaderRefresh() {
   return true;
 }
 
+bool ActivityManager::handleHomeReaderShortcut() {
+  // Consume repeated presses while a pop or replacement is already queued.
+  if (pendingAction != PendingAction::None || pendingHomeReaderTarget) return true;
+  if (!currentActivity || currentActivity->isHomeActivity()) return true;
+
+  if (currentActivity->isBookReaderActivity()) {
+    goHome();
+    return true;
+  }
+
+  const auto reader = std::find_if(stackActivities.rbegin(), stackActivities.rend(),
+                                   [](const auto& activity) { return activity && activity->isBookReaderActivity(); });
+  if (reader == stackActivities.rend()) {
+    goHome();
+    return true;
+  }
+
+  pendingHomeReaderTarget = reader->get();
+  ActivityResult result;
+  result.isCancelled = true;
+  currentActivity->setResult(std::move(result));
+  popActivity();
+  return true;
+}
+
+bool ActivityManager::continueHomeReaderUnwind() {
+  if (!pendingHomeReaderTarget) return false;
+  if (!currentActivity) {
+    pendingHomeReaderTarget = nullptr;
+    return false;
+  }
+  if (currentActivity.get() == pendingHomeReaderTarget) {
+    pendingHomeReaderTarget = nullptr;
+    return false;
+  }
+  if (pendingAction != PendingAction::None) return false;
+
+  const auto target = std::find_if(stackActivities.begin(), stackActivities.end(),
+                                   [this](const auto& activity) { return activity.get() == pendingHomeReaderTarget; });
+  if (target == stackActivities.end()) {
+    pendingHomeReaderTarget = nullptr;
+    return false;
+  }
+
+  ActivityResult result;
+  result.isCancelled = true;
+  currentActivity->setResult(std::move(result));
+  popActivity();
+  return true;
+}
+
 bool ActivityManager::handleShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
+  if (action == CrossPointSettings::SHORT_PWRBTN::BACK_HOME) {
+    handleHomeButtonBackOrHome();
+    return true;
+  }
+  if (action == CrossPointSettings::SHORT_PWRBTN::HOME_READER) return handleHomeReaderShortcut();
   return currentActivity && (currentActivity->isReaderActivity() || currentActivity->isHomeActivity()) &&
          currentActivity->handleShortcutAction(action);
 }
@@ -1345,6 +1499,11 @@ RequestUpdateResult ActivityManager::requestUpdateAndWait() {
     return RequestUpdateResult::Rejected;
   }
 
+  {
+    RenderLock lock;
+    // onEnter explicitly promises that its state is ready for this one render.
+    entryRenderRequested = enteringActivity;
+  }
   xTaskNotify(renderTaskHandle, 1, eIncrement);
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   return RequestUpdateResult::Rendered;

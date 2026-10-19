@@ -5,12 +5,14 @@
 // implements these accessors. A global define would change every compile
 // command and force a full rebuild after each commit.
 namespace AppVersion {
-const char* version();       // e.g. "1.6.0-x4-pro"
-const char* versionLabel();  // "CrossInk <version>"
-const char* userAgent();     // "CrossInk-ESP32-<version>"
-const char* gitSha();        // short commit hash, or "unknown"
-bool gitDirty();             // tracked files were modified when built
-const char* gitDirtyFlag();  // "1", "0" or "unknown"
+const char* version();         // e.g. "1.6.0-x4-pro"
+const char* versionLabel();    // "CrossInk <version>"
+const char* userAgent();       // "CrossInk-ESP32-<version>"
+const char* gitSha();          // short commit hash, or "unknown"
+bool gitDirty();               // tracked files were modified when built
+const char* gitDirtyFlag();    // "1", "0" or "unknown"
+const char* supportVersion();  // release version for support exports, or "unknown"
+const char* sdkSha();          // full freeink-sdk commit, or "unknown"
 }  // namespace AppVersion
 
 // PlatformIO normally supplies these through build_flags/extra_scripts. Keep

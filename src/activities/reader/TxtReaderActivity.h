@@ -2,8 +2,10 @@
 
 #include <Txt.h>
 
+#include <optional>
 #include <vector>
 
+#include "BookLoadingFeedback.h"
 #include "CrossPointSettings.h"
 #include "ReaderProgressSaveDebouncer.h"
 #include "SideButtonShortcuts.h"
@@ -14,6 +16,10 @@
 #endif
 
 class TxtReaderActivity final : public Activity {
+#ifdef SIMULATOR
+  friend struct StatusBarFeatureSmokeTest;
+  friend struct ScreenCalibrationSmokeTest;
+#endif
   OptionPopup quickActionsPopup;
   std::unique_ptr<Txt> txt;
 
@@ -41,22 +47,28 @@ class TxtReaderActivity final : public Activity {
   bool initialized = false;
 
   // Cached settings for cache validation (different fonts/margins require re-indexing)
+  int8_t cachedCharacterSpacing = 0;
   int cachedFontId = 0;
   uint8_t cachedVerticalMargin = 0;
   uint8_t cachedHorizontalMargin = 0;
   uint8_t cachedParagraphAlignment = CrossPointSettings::LEFT_ALIGN;
   int cachedTopStatusBarHeight = 0;
-  int cachedBottomStatusBarHeight = 0;
+  int cachedFooterReservedHeight = 0;
+  ScreenInsets cachedViewableInsets;
   int cachedOrientedMarginTop = 0;
   int cachedOrientedMarginRight = 0;
   int cachedOrientedMarginBottom = 0;
   int cachedOrientedMarginLeft = 0;
+  // Keep one content anchor through repeated bar edits until the reader turns a page.
+  std::optional<size_t> statusBarRelayoutOffset;
+  int statusBarRelayoutPage = -1;
 
   void renderPage();
   void renderStatusBar() const;
 
   void initializeReader();
-  bool loadPageAtOffset(size_t offset, std::vector<std::string>& outLines, size_t& nextOffset);
+  bool loadPageAtOffset(size_t offset, std::vector<std::string>& outLines, size_t& nextOffset,
+                        uint8_t* scratch = nullptr);
   void buildPageIndex();
   bool loadPageIndexCache();
   void savePageIndexCache() const;
@@ -64,6 +76,7 @@ class TxtReaderActivity final : public Activity {
   bool saveProgress(int page);
   bool queueProgressSave();
   bool flushQueuedProgress();
+  void saveProgressBeforeRestart();
   void loadProgress();
   void toggleDarkMode();
   void toggleHomeButtonInReader();
@@ -83,13 +96,22 @@ class TxtReaderActivity final : public Activity {
   void resetPinchFontGesture();
 #endif
 
+  BookLoadingFeedback openingFeedback;
+  bool showOpeningFeedback() {
+    if (!openingFeedback.showIfPending(renderer)) return false;
+    pagesUntilFullRefresh = 0;
+    return true;
+  }
+
  public:
   explicit TxtReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Txt> txt,
-                             int initialRefreshCountdown, bool skipRecentBookUpdateOnEntry = false)
+                             int initialRefreshCountdown, bool skipRecentBookUpdateOnEntry = false,
+                             BookLoadingFeedback openingFeedback = {})
       : Activity("TxtReader", renderer, mappedInput),
         txt(std::move(txt)),
         pagesUntilFullRefresh(initialRefreshCountdown),
-        skipRecentBookUpdateOnEntry(skipRecentBookUpdateOnEntry) {}
+        skipRecentBookUpdateOnEntry(skipRecentBookUpdateOnEntry),
+        openingFeedback(openingFeedback) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;
@@ -101,6 +123,7 @@ class TxtReaderActivity final : public Activity {
     return true;
   }
   bool isReaderActivity() const override { return true; }
+  bool isBookReaderActivity() const override { return true; }
   // cppcheck-suppress uselessOverride ; differs from the base only on some device builds
   bool usesFullScreenReaderVerticalSwipes() const override {
 #if defined(FREEINK_DEVICE_STICKY) && FREEINK_DEVICE_STICKY
@@ -117,8 +140,7 @@ class TxtReaderActivity final : public Activity {
   std::string getCurrentBookPath() const override { return txt ? txt->getPath() : std::string{}; }
   std::string getCurrentBookTitle() const override { return txt ? txt->getTitle() : std::string{}; }
   bool getFrontlightPanelBookDetails(FrontlightPanelBookDetails& details) override;
-  // The panel leads to Settings, whose update and font downloads restart the device.
-  void onFrontlightPanelOpened() override { flushQueuedProgress(); }
+  void onFrontlightPanelOpened() override { saveProgressBeforeRestart(); }
   bool handleFrontlightPanelResult(const FrontlightPanelResult& result) override;
 
   // Renders the last saved page to the frame buffer without flushing to display.

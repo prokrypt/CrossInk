@@ -62,8 +62,13 @@ class Section {
     // the EMA is stepped once per build advance (not per redraw) to damp that wobble.
     float smoothedEstimate = 0;
     uint32_t smoothedAtConsumed = 0;
+    // Staging buffer for page serialization (see onPageComplete()).
+    std::unique_ptr<uint8_t[]> pageWriteBuffer;
   };
   std::unique_ptr<BuildContext> build_;
+  // createSectionFile()'s staging buffer while that full build runs; it owns the
+  // allocation. Incremental builds use BuildContext::pageWriteBuffer instead.
+  uint8_t* fullBuildPageWriteBuffer_ = nullptr;
   bool buildComplete_ = false;
   bool lastImagesWereSuppressed_ = false;
   bool lastLayoutAbortedForLowMemory_ = false;
@@ -80,6 +85,12 @@ class Section {
   uint32_t partialTotalBytes_ = 0;
   std::string activeBuildTmpSectionPath_;
 
+  uint32_t baseLayoutSignature_ = 0;
+  bool publisherFontsEnabled_ = false;
+  uint32_t publisherFontFaces_ = 0;
+  uint32_t publisherFaceSignature_ = 0;
+  uint32_t publisherLoadedFaces_ = 0;
+  bool writePublisherFontState();
   bool writeSectionFileHeader(const ReaderRenderSpec& spec);
   uint32_t onPageComplete(std::unique_ptr<Page> page);
   bool ensureBuildFileOpen();
@@ -96,6 +107,9 @@ class Section {
   std::unique_ptr<Page> loadPageDuringBuild(int page);
 
  public:
+  uint32_t layoutSignature() const {
+    return publisherFontFaces_ ? (baseLayoutSignature_ ^ publisherFaceSignature_) * 16777619U : baseLayoutSignature_;
+  }
   uint16_t pageCount = 0;
   int currentPage = 0;
 
@@ -182,6 +196,13 @@ class Section {
 
   // Look up the synthetic paragraph index for the given rendered page.
   std::optional<uint16_t> getParagraphIndexForPage(uint16_t page) const;
+  struct ParagraphPosition {
+    uint16_t index;
+    uint16_t offset;
+    uint16_t span;
+  };
+  // Capture the contiguous paragraph run using one cache-file session.
+  std::optional<ParagraphPosition> getParagraphPositionForPage(uint16_t page) const;
 
   // Look up the running list-item index for the given rendered page.
   std::optional<uint16_t> getListItemIndexForPage(uint16_t page) const;

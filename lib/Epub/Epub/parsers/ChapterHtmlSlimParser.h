@@ -1,5 +1,4 @@
 #pragma once
-
 #include <Arena.h>
 #include <HalStorage.h>
 #include <ZipFile.h>
@@ -17,6 +16,8 @@
 #include "Epub/FootnoteEntry.h"
 #include "Epub/Page.h"
 #include "Epub/ParsedText.h"
+#include "Epub/ReaderRenderSpec.h"
+#include "Epub/WordSpacing.h"
 #include "Epub/blocks/ImageBlock.h"
 #include "Epub/blocks/TextBlock.h"
 #include "Epub/css/CssParser.h"
@@ -70,6 +71,7 @@ class ChapterHtmlSlimParser {
   uint16_t currentTextRunBytes = 0;
   bool nextWordContinues = false;  // true when next flushed word attaches to previous (inline element boundary)
   std::unique_ptr<ParsedText> currentTextBlock = nullptr;
+  bool emptyTextBlockAfterImage = false;  // Container insets must not leak into following text.
   // Ruby text state
   bool inRuby = false;
   int rubyStartWordIndex = -1;
@@ -81,6 +83,10 @@ class ChapterHtmlSlimParser {
   uint32_t currentPageReferenceOffset = 0;
   bool currentPageVisibleOffsetSet = false;
   int fontId;
+  uint16_t rootFontScale = 256;
+  std::array<int, MAX_BLOCK_STYLE_DEPTH> blockStyleDepths_{};
+  int currentTextFontId() const;
+  void applyBlockFontSize(const CssStyle& cssStyle, const char* tag, BlockStyle& style);
   float lineCompression;
   bool extraParagraphSpacing;
   bool forceParagraphIndents;
@@ -91,8 +97,13 @@ class ChapterHtmlSlimParser {
   bool focusReadingEnabled;
   bool guideReadingEnabled;
   uint8_t wordSpacing;
+  int8_t characterSpacing;
   CssParser* cssParser;
   bool embeddedStyle;
+  PublisherFonts publisherFonts = PublisherFonts::Off;
+  uint32_t effectiveFontFamily = 0;
+  uint32_t bodyFontFamily = 0;
+  bool detectBodyFont();
   uint8_t imageRendering;
   std::string contentBase;
   std::string imageBasePath;
@@ -143,6 +154,10 @@ class ChapterHtmlSlimParser {
     bool hasSup = false, sup = false;
     bool hasSub = false, sub = false;
     bool hasSmallCaps = false, smallCaps = false;
+    bool hasWhiteSpace = false, preserveWhitespace = false;
+    uint8_t fontSize = 0;
+    bool hasFontFamily = false;
+    uint32_t fontFamily = 0;
   };
   // Arena-backed style stacks. Initialized in parseAndBuildPages(); pointers are
   // null before and after each parse. StyleStackEntry and BlockStyle are trivially
@@ -163,6 +178,38 @@ class ChapterHtmlSlimParser {
   bool effectiveSup = false;
   bool effectiveSub = false;
   bool effectiveSmallCaps = false;
+  bool effectivePreserveWhitespace = false;
+  uint8_t effectiveInlineFontSize = 0;
+  void applyInlineFontSize(StyleStackEntry& entry, const CssStyle& css, const char* tag);
+
+  struct BoxScope {
+    int depth = 0;
+    int16_t left = 0, right = 0, padTop = 0, padBottom = 0;
+    CssBorderSide sides[4];
+    bool shaded = false, continued = false;
+    int16_t top = -1, bottom = -1;
+  };
+  static constexpr size_t MAX_BOX_SCOPES = 8;
+  // Bounded parser-owned state; no extra allocation per open container.
+  std::array<BoxScope, MAX_BOX_SCOPES> boxScopes{};
+  size_t boxScopeCount = 0;
+  void noteContent(int top, int bottom);
+  void openBoxScope(BlockStyle& style, const CssStyle& css);
+  void closeBoxScope();
+  void emitBoxSegment(const BoxScope& box, bool closing);
+  static constexpr size_t MAX_DROP_CAP_BYTES = 12;
+  struct DropCapState {
+    char text[MAX_DROP_CAP_BYTES + 1] = {};
+    uint8_t length = 0, codepoints = 0, lines = 0;
+    bool bold = false, firstLetterPending = false;
+    int spanDepth = -1;
+    uint32_t visibleOffset = 0, referenceOffset = 0;
+    uint32_t fontFamily = 0;
+  } dropCap;
+  static uint8_t dropCapLines(const CssStyle& style);
+  bool captureDropCapCodepoint(const char* bytes, int length);
+  void cancelDropCapToWord();
+  bool layoutText(bool includeLastLine);
 
   struct BufferedTableCell {
     std::unique_ptr<ParsedText> text;
@@ -254,6 +301,7 @@ class ChapterHtmlSlimParser {
   std::vector<PendingPublisherPageMarker> pendingPublisherPageMarkers;
 
   void updateEffectiveInlineStyle();
+  uint32_t publisherFamily(uint32_t family) const;
   void skipCurrentElement();
   void skipDescendantsOfCurrentElement();
   bool shouldAbortForLowMemory(const char* stage);
@@ -271,7 +319,7 @@ class ChapterHtmlSlimParser {
   void markCurrentPageFromCurrentElement();
   void setCurrentPageVisibleOffset(uint32_t offset, uint32_t referenceOffset = UINT32_MAX);
   void completeCurrentPage();
-  void makePages();
+  void makePages(bool completeBlock = true);
   int effectiveLineHeight() const;
   bool isPreviewBuild() const { return !previewAnchor.empty() && previewMaxPages > 0; }
   bool isScanningForPreviewAnchor() const { return isPreviewBuild() && !previewAnchorFound; }
@@ -283,11 +331,12 @@ class ChapterHtmlSlimParser {
   bool flattensTables() const { return renderMode != EpubRenderMode::CrossInkDefault; }
   bool isLightMode() const { return renderMode == EpubRenderMode::Light; }
   bool honorsPublisherDecorations() const { return renderMode != EpubRenderMode::Light; }
-  void pushCssAncestor(int depth, const char* tag, std::string_view classAttr);
+  void pushCssAncestor(int depth, const char* tag, std::string_view classAttr, std::string_view idAttr = {});
+  void pushBlockFontStyle(const CssStyle& cssStyle);
   static void applyDirectionToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applySmallCapsToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applyVerticalAlignToEntry(StyleStackEntry& entry, const CssStyle& css);
-  void emitHorizontalRule(const BlockStyle& blockStyle);
+  void emitHorizontalRule(const BlockStyle& blockStyle, bool visible);
   void finalizeCurrentTableCell();
   void emitBufferedTableAsParagraphs(BufferedTable& table);
   void emitBufferedTableAsFragments(BufferedTable& table);
@@ -323,7 +372,8 @@ class ChapterHtmlSlimParser {
       const uint8_t imageRendering = 0, std::vector<std::string> tocAnchors = {},
       const std::function<void()>& popupFn = nullptr, CssParser* cssParser = nullptr,
       const EpubRenderMode renderMode = EpubRenderMode::CrossInkDefault, std::string previewAnchor = {},
-      const uint16_t previewMaxPages = 0, const bool trackReferenceCharacters = false)
+      const uint16_t previewMaxPages = 0, const bool trackReferenceCharacters = false,
+      const int8_t characterSpacing = 0)
 
       : epub(&epub),
         filepath(filepath),
@@ -341,7 +391,8 @@ class ChapterHtmlSlimParser {
         hyphenationEnabled(hyphenationEnabled),
         focusReadingEnabled(focusReadingEnabled),
         guideReadingEnabled(guideReadingEnabled),
-        wordSpacing(wordSpacing > 4 ? 4 : wordSpacing),
+        wordSpacing(std::min<uint8_t>(wordSpacing, WordSpacing::MAX_VALUE)),
+        characterSpacing(characterSpacing),
         cssParser(cssParser),
         embeddedStyle(embeddedStyle),
         imageRendering(imageRendering),
@@ -355,6 +406,7 @@ class ChapterHtmlSlimParser {
   ~ChapterHtmlSlimParser();
   uint32_t getVisibleTextLength() const { return visibleTextOffset; }
   bool parseAndBuildPages();
+  void setPublisherFonts(PublisherFonts mode) { publisherFonts = mode; }
   bool beginParse();
   ParseStatus parseStep();
   bool finishParse();  // flush the trailing page and tear down; returns true

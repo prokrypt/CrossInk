@@ -18,6 +18,7 @@
 #include "WifiSelectionActivity.h"
 #include "activities/ActivityManager.h"
 #include "activities/network/CalibreConnectActivity.h"
+#include "activities/network/StatsUploadActivity.h"
 #include "components/CompactHeader.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -153,14 +154,46 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
   } else if (mode == NetworkMode::CREATE_HOTSPOT) {
     modeName = "Create Hotspot";
   } else if (mode == NetworkMode::NEARBY_STATS_SYNC) {
-    modeName = "Sync Stats";
+    modeName = "Nearby Stats Sync";
   } else if (mode == NetworkMode::NEARBY_BOOK_RECEIVE) {
     modeName = "Receive File";
+  } else if (mode == NetworkMode::SYNC_BOOKS) {
+    modeName = "Sync Books";
+  } else if (mode == NetworkMode::SYNC_READING_STATS) {
+    modeName = "Sync Reading Stats";
+  } else if (mode == NetworkMode::SYNC_CLIPPINGS) {
+    modeName = "Sync Clippings";
   }
   LOG_DBG("WEBACT", "Network mode selected: %s", modeName);
 
   if (mode == NetworkMode::USB_DRIVE) {
     activityManager.goToUsbDrive();
+    return;
+  }
+
+  if (mode == NetworkMode::SYNC_BOOKS || mode == NetworkMode::SYNC_READING_STATS ||
+      mode == NetworkMode::SYNC_CLIPPINGS) {
+    // Sync Books asks first; the targeted uploads start straight away. Each
+    // brings up Wi-Fi itself, like Sync Folder.
+    const auto scope = mode == NetworkMode::SYNC_BOOKS           ? StatsUploadActivity::Scope::Library
+                       : mode == NetworkMode::SYNC_READING_STATS ? StatsUploadActivity::Scope::ReadingStats
+                                                                 : StatsUploadActivity::Scope::Clippings;
+    auto sync = makeUniqueNoThrow<StatsUploadActivity>(renderer, mappedInput, std::string{}, scope,
+                                                       scope != StatsUploadActivity::Scope::Library);
+    if (!sync) {
+      LOG_ERR("WEBACT", "Cannot allocate sync activity");
+      exitToOrigin();
+      return;
+    }
+    sync->setReturnToFileTransfer(returnBookPath, networkBootReady);
+    // Back here after a cancelled Join Network, the radio can still be on; drop
+    // it so leaving this screen does not reboot before the sync runs. The sync
+    // reboots on leave itself when this is the minimal network boot.
+    if (WiFi.getMode() != WIFI_MODE_NULL) {
+      WiFi.disconnect(false);
+      WiFi.mode(WIFI_OFF);
+    }
+    activityManager.replaceActivity(std::move(sync));
     return;
   }
 
@@ -192,6 +225,9 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
         break;
       case NetworkMode::NEARBY_STATS_SYNC:
       case NetworkMode::NEARBY_BOOK_RECEIVE:
+      case NetworkMode::SYNC_BOOKS:
+      case NetworkMode::SYNC_READING_STATS:
+      case NetworkMode::SYNC_CLIPPINGS:
         break;
     }
     return;
@@ -324,6 +360,10 @@ void CrossPointWebServerActivity::startAccessPoint() {
 void CrossPointWebServerActivity::startWebServer() {
   // Create the web server instance
   webServer.reset(new CrossPointWebServer());
+  leaveRequested = false;
+  webServer->setUploadCancelCheck(
+      [](void* context) { return static_cast<CrossPointWebServerActivity*>(context)->checkUploadCancellation(); },
+      this);
   webServer->begin();
 
   if (webServer->isRunning()) {
@@ -339,6 +379,15 @@ void CrossPointWebServerActivity::startWebServer() {
     // Go back on error
     exitToOrigin();
   }
+}
+
+bool CrossPointWebServerActivity::checkUploadCancellation() {
+  if (leaveRequested) return true;
+  // Only poll here while a multipart body blocks the main loop. HalGPIO::update
+  // already re-samples pending physical-button debounce; no extra delay needed.
+  mappedInput.update();
+  leaveRequested = exitRequested() || mappedInput.isPressed(MappedInputManager::Button::Back);
+  return leaveRequested;
 }
 
 void CrossPointWebServerActivity::exitToOrigin() {
@@ -459,6 +508,11 @@ void CrossPointWebServerActivity::loop() {
       constexpr int MAX_ITERATIONS = 64;
       for (int i = 0; i < MAX_ITERATIONS && webServer->isRunning(); i++) {
         webServer->handleClient();
+        if (leaveRequested) {
+          // The callback only cancels I/O. Navigate after the server unwinds.
+          exitToOrigin();
+          return;
+        }
       }
       lastHandleClientTime = millis();
     }
@@ -504,7 +558,7 @@ void CrossPointWebServerActivity::renderServerRunning() const {
   const auto pageWidth = renderer.getScreenWidth();
 
   renderHeader();
-  const int subHeaderTop = CompactHeader::contentTop(metrics);
+  const int subHeaderTop = CompactHeader::contentTop(renderer);
   GUI.drawSubHeader(renderer, Rect{0, subHeaderTop, pageWidth, metrics.tabBarHeight}, connectedSSID.c_str());
 
   if (!isApMode) {

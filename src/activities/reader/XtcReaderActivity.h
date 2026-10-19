@@ -13,15 +13,21 @@
 #include <string>
 #include <utility>
 
+#include "BookLoadingFeedback.h"
 #include "BookReadingStats.h"
+#include "DailyReadingStats.h"
 #include "EndOfBookOptions.h"
 #include "GlobalReadingStats.h"
 #include "ReaderProgressSaveDebouncer.h"
 #include "SideButtonShortcuts.h"
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
+#include "sync/SyncPending.h"
 
 class XtcReaderActivity final : public Activity {
+#ifdef SIMULATOR
+  friend struct StatusBarFeatureSmokeTest;
+#endif
   OptionPopup quickActionsPopup;
   std::shared_ptr<Xtc> xtc;
 
@@ -30,6 +36,8 @@ class XtcReaderActivity final : public Activity {
   unsigned long lastPageTurnTime = 0UL;
   unsigned long pageShownAtMs = 0UL;
   uint32_t sessionReadingSeconds = 0;
+  DailyReadingStats::Session dailyReadingSession;
+  void startDailyReadingInterval();
   BookReadingStats stats;
   GlobalReadingStats globalStats;
   ReadingStatsDateTime sessionStartLocalDateTime;
@@ -53,6 +61,8 @@ class XtcReaderActivity final : public Activity {
   bool longPressBackHandled = false;
   bool skipRecentBookUpdateOnEntry = false;
   ReaderProgressSaveDebouncer progressSaveDebouncer;
+  // Records this book's stats on the sync pending-push list once per session.
+  SyncPending::SessionMarker pendingSync;
   // The end screen owns these UI resources only while it is visible.
   std::unique_ptr<EndOfBookOptions> endOfBookOptions;
   // First menu press made while the end-of-book menu was still loading (main loop only).
@@ -71,6 +81,7 @@ class XtcReaderActivity final : public Activity {
   bool saveProgress(uint32_t page);
   bool queueProgressSave(uint32_t pageToRender);
   bool flushQueuedProgress();
+  void saveProgressBeforeRestart();
   void loadProgress();
   void pauseReadingStatsTimer(const char* source = "unknown");
   void syncStatsTrackingState();
@@ -81,6 +92,9 @@ class XtcReaderActivity final : public Activity {
   void recordForwardPageTurn(uint32_t seconds, bool recordPace);
   bool formatTimeLeftLabel(char* buf, size_t len, uint32_t pageToRender, bool bookEstimate) const;
   void commitReadingStats();
+  void finalizeReadingStatsOnExit();
+  uint32_t globalStatsResetRevisionAtPanelOpen = 0;
+  void applyBookStatsEditsFromDisk();
   void resetCurrentBookStatsAfterDelete();
   void setBookCompleted(bool isCompleted);
   float getCurrentBookProgressPercent() const;
@@ -95,13 +109,22 @@ class XtcReaderActivity final : public Activity {
   bool executeReaderShortcutAction(CrossPointSettings::SHORT_PWRBTN action);
   bool executeLongPressBackAction();
 
+  BookLoadingFeedback openingFeedback;
+  bool showOpeningFeedback() {
+    if (!openingFeedback.showIfPending(renderer)) return false;
+    pagesUntilFullRefresh = 0;
+    return true;
+  }
+
  public:
   explicit XtcReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Xtc> xtc,
-                             int initialRefreshCountdown, bool skipRecentBookUpdateOnEntry = false)
+                             int initialRefreshCountdown, bool skipRecentBookUpdateOnEntry = false,
+                             BookLoadingFeedback openingFeedback = {})
       : Activity("XtcReader", renderer, mappedInput),
         xtc(std::move(xtc)),
         pagesUntilFullRefresh(initialRefreshCountdown),
-        skipRecentBookUpdateOnEntry(skipRecentBookUpdateOnEntry) {}
+        skipRecentBookUpdateOnEntry(skipRecentBookUpdateOnEntry),
+        openingFeedback(openingFeedback) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;
@@ -112,6 +135,7 @@ class XtcReaderActivity final : public Activity {
     return true;
   }
   bool isReaderActivity() const override { return true; }
+  bool isBookReaderActivity() const override { return true; }
   // cppcheck-suppress uselessOverride ; differs from the base only on some device builds
   bool usesFullScreenReaderVerticalSwipes() const override {
 #if defined(FREEINK_DEVICE_STICKY) && FREEINK_DEVICE_STICKY
@@ -139,8 +163,8 @@ class XtcReaderActivity final : public Activity {
   std::unique_ptr<Activity> createFrontlightReadingStatsActivity() override;
   void onFrontlightPanelOpened() override {
     pauseReadingStatsTimer("frontlight_panel");
-    // The panel leads to Settings, whose update and font downloads restart the device.
-    flushQueuedProgress();
+    saveProgressBeforeRestart();
+    globalStatsResetRevisionAtPanelOpen = GlobalReadingStats::localResetRevision();
   }
   void onFrontlightPanelClosed() override;
   bool handleFrontlightPanelResult(const FrontlightPanelResult& result) override;

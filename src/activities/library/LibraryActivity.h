@@ -2,13 +2,16 @@
 
 #include <FreeInkApp.h>
 #include <FreeInkUIGfxRenderer.h>
+#include <LibraryBuilder.h>
 #include <LibraryIndexFile.h>
 
 #include <memory>
 #include <string>
 
+#include "LibraryInputBuffer.h"
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
+#include "activities/home/FinishedBookCache.h"
 #include "components/OptionPopup.h"
 #include "util/ButtonNavigator.h"
 
@@ -19,7 +22,32 @@ class LibraryActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  void onFrontlightPanelClosed() override;
   bool blocksGlobalInput() const override { return actionPopup.isActive(); }
+
+#ifdef SIMULATOR
+  size_t simulatorPendingInputs() const { return pendingInput.size(); }
+  int simulatorSelection() const { return selection; }
+  int simulatorRowCount() const { return rowCount(); }
+  int simulatorTopIndex() const { return topIndex; }
+  const std::string& simulatorQuery() const { return query; }
+  uint8_t simulatorSort() const { return static_cast<uint8_t>(sort); }
+  bool simulatorDescending() const { return descending; }
+  void simulatorSelectRow(int row) {
+    selection = CONTROL_COUNT + row;
+    reloadAfterBookAction();
+  }
+  void simulatorOpenContextMenu() { showBookActionMenu(selection - CONTROL_COUNT); }
+  bool simulatorReadBook(int row, RecentBook& book) { return readBook(row, book); }
+  void simulatorSetView(uint8_t method, bool reverse, const std::string& search = "") {
+    sort = static_cast<Sort>(method);
+    descending = reverse;
+    query = search;
+    refreshIndexIfNeeded();
+    resetViewport();
+  }
+  void simulatorRefresh() { refreshLibrary(); }
+#endif
 
  private:
   enum class Sort : uint8_t { DateAdded, Title, AuthorLast, AuthorFirst, RecentlyRead, Series, Genre };
@@ -31,7 +59,7 @@ class LibraryActivity final : public Activity {
   ButtonNavigator buttonNavigator;
   freeink::ui::ListNav listNav;
   OptionPopup actionPopup;
-  library::LibraryIndexFile index;
+  library::LibraryIndexFile index{true};  // Reuse one decoded display row across its labels, icon and group.
   Sort sort = Sort::RecentlyRead;
   bool descending = true;
   int selection = CONTROL_COUNT;
@@ -40,21 +68,47 @@ class LibraryActivity final : public Activity {
   int gridPageStart = 0;
   int loadedGridPageStart = -1;
   int nextGridCoverRow = -1;
+  bool gridCoverAdded = false;
   int16_t gridCoverWidth = 0;
   int16_t gridCoverHeight = 0;
   int gridProgressRow = -1;
   float gridProgress = -1.0f;
   bool uiReady = false;
-  bool longPressFired = false;
+  bool initialScanPending = false;
+  bool confirmLongPressCaptured = false;
   bool ignoreConfirmRelease = false;
+  // Set when the Back press that cancelled a scan is still held.
+  bool ignoreBackRelease = false;
+  // Back held when a scan starts belongs to whatever opened Library (a reader
+  // long-press shortcut, say); only a fresh press after its release cancels.
+  bool scanBackHeldAtStart = false;
+  // A cancelled scan stays cancelled for this visit: sort changes and book
+  // actions show the previous index instead of starting the scan again.
+  bool scanCancelledThisVisit = false;
+  // These fields belong only to the input task, including during rendering.
+  LibraryInputBuffer pendingInput;
+  bool inputOverflow = false;
+  bool touchTracking = false;
+  int touchStartX = 0;
+  int touchStartY = 0;
+  int touchLastX = 0;
+  int touchLastY = 0;
   bool scanFailed = false;
+  StrId scanFailureText = StrId::STR_LIBRARY_SCAN_FAILED;
   bool filterFailed = false;
   bool pendingCacheDeletedFeedback = false;
   unsigned long cacheDeletedFeedbackShowTime = 0;
   std::string query;
-  // Searches and file-type filters allocate one u16 per visible source book, fallibly.
-  std::unique_ptr<uint16_t[]> filtered;
+  // Searches and filters keep one bit per indexed book plus a running count per
+  // 256-book block: about 4 KiB at the format ceiling, where a u16 per match
+  // would need 64 KiB of contiguous C3 heap. Bits are positions in filterOrder.
+  static constexpr uint16_t FILTER_BLOCK_ROWS = 256;
+  std::unique_ptr<uint8_t[]> filterBits;
+  std::unique_ptr<uint16_t[]> filterRanks;
+  library::SortOrder filterOrder = library::SortOrder::TitleAsc;
+  uint16_t filterSourceCount = 0;
   uint16_t filteredCount = 0;
+  // Indices into the bounded recent-books history, independent of the Library index.
   uint16_t recentRows[RecentBooksStore::MAX_RECENT_BOOKS]{};
   size_t recentCount = 0;
   // SDK rowProvider consumes the strings before asking for the next row.
@@ -67,57 +121,17 @@ class LibraryActivity final : public Activity {
   std::string seriesScratch;
   std::string genreScratch;
   std::string subtitleScratch;
-  // Display text of recently drawn rows, direct-mapped by row. Moving the
-  // selection or re-running layout passes then redraws without re-reading the
-  // index from the card. Dropped whenever the row order or contents change.
-  struct CachedRow {
-    int32_t row = -1;
-    bool ok = false;
-    bool hasHeading = false;
-    uint8_t icon = 0;
-    std::string title;
-    std::string subtitle;
-    std::string heading;
-  };
-  static constexpr int ROW_CACHE_SIZE = 16;
-  std::unique_ptr<CachedRow[]> rowCache;
-  // Used when the cache could not be allocated.
-  CachedRow uncachedRow;
-  // Input seen since the last processed frame. Rendering holds the render lock
-  // through the panel refresh, and waiting on it here would stall the main
-  // loop's touch polling: a swipe made during a refresh then loses its start
-  // point and can land as a tap on a row. Input is latched every loop and
-  // applied once the frame is out.
-  struct PendingInput {
-    bool touchPress = false;
-    bool touchRelease = false;
-    bool longPress = false;
-    bool headerBack = false;
-    bool confirmReleased = false;
-    bool backReleased = false;
-    bool leftReleased = false;   // button-only: sort picker
-    bool rightReleased = false;  // button-only: menu
-    int16_t pressX = 0;
-    int16_t pressY = 0;
-    int16_t releaseX = 0;
-    int16_t releaseY = 0;
-    int8_t scrollPages = 0;  // positive moves down the list
-    int8_t steps = 0;
-    int8_t pageSteps = 0;
-  };
-  PendingInput pending;
-  // Travel of the current contact, so a drag is not taken as a tap.
-  bool touchTracking = false;
-  int touchStartX = 0;
-  int touchStartY = 0;
-  int touchLastX = 0;
-  int touchLastY = 0;
+  // Finished state for recently drawn rows, keyed by a path hash so sort,
+  // filter and search changes cannot mislabel a row. Index rows use the stored
+  // path hash, so cache hits do not read the full path. Any dialog or the
+  // frontlight panel clears it because they can change a book's status.
+  FinishedBookCache finishedCache;
+  bool isFinishedRow(int row);
 
   static void listScreen(UiApp::ScreenType& screen, void* user);
   static void onRowEvent(const freeink::ui::ActionEvent& event, void* user);
   static void onControlEvent(const freeink::ui::ActionEvent& event, void* user);
   static void provideRow(void* user, uint16_t row, freeink::ui::ListItem& item);
-  void latchInput();
   void buildListScreen(UiApp::ScreenType& screen);
   void buildGrid(UiApp::ScreenType& screen);
   void loadGridPageCovers();
@@ -129,17 +143,22 @@ class LibraryActivity final : public Activity {
   library::SortOrder indexOrder() const;
   int rowCount() const;
   uint16_t ordinalForRow(int row);
+  uint16_t filteredSourceRow(uint16_t row) const;
   bool readBook(int row, RecentBook& book, bool fullPath = true);
   uint32_t groupForRow(int row);
   uint16_t dateGroupForRow(int row);
   bool metadataGroupForRow(int row, std::string& out);
   bool hasActiveFilter() const;
-  // Rescans the card only when storage reports a Library-visible change since
-  // the last successful scan (or `force`); otherwise reopens the saved index.
-  bool rebuildIndex(bool showScanning, bool force = false);
-  CachedRow& rowFor(int row);
-  void fillRow(int row, CachedRow& out);
-  void invalidateRowCache();
+  void latchInput();
+  void queueInput(LibraryInputBuffer::Type type, int x = -1, int y = -1);
+  void handleInput(const LibraryInputBuffer::Event& input);
+  void refreshIndexIfNeeded(bool showScanning = false);
+  bool rebuildIndex(bool showScanning);
+  void drawScanScreen(const char* message) const;
+  bool scanTouchEnabled() const;
+  static bool scanCancelRequested(void* context);
+  static void onScanProgress(void* context, const library::BuildProgress& progress);
+  void readRecentBook(size_t historyRow, RecentBook& book) const;
   void resolveRecents();
   void applyFilter();
   void resetViewport();

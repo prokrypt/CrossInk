@@ -47,6 +47,9 @@ class HalDisplay {
   // Persistently invert panel output while leaving framebuffer drawing in its
   // normal logical colors.
   void setInverted(bool inverted);
+  // Restore the controller's old-image plane from the saved Quick Resume frame.
+  // Returns false when the SDK or panel cannot support a differential first paint.
+  bool restoreVisibleFrame();
   // Non-blocking refresh (shadow-free): starts the panel waveform and returns
   // while the panel refreshes on its own. The framebuffer must stay untouched
   // until waitRefreshComplete(), and the caller must rebuild the differential

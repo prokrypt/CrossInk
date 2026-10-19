@@ -85,9 +85,20 @@ class ActivityManager {
   std::unique_ptr<Activity> pendingActivity;
   enum class PendingAction { None, Push, Pop, Replace };
   PendingAction pendingAction = PendingAction::None;
+  // Set once What's New has entered this boot, so a dismissal whose save failed doesn't re-show it.
+  bool releaseNotesShown = false;
   // Set when an overlay is closed specifically to hand control back to the
   // reader's menu. It must wait until the reader is current again.
   int16_t pendingReaderMenuAction = -1;
+  // Launched by replaceAfterReturn() after the requesting activity has popped.
+  std::unique_ptr<Activity> afterReturnActivity;
+  // Compared only while the owner is still alive; once it is destroyed the
+  // flag below decides, so a reused address can never stand in for it.
+  const Activity* afterReturnOwner = nullptr;
+  bool afterReturnOwnerExited = false;
+  // Target reader retained underneath nested screens while Home/Reader cancels
+  // each child through the ordinary activity-result path.
+  Activity* pendingHomeReaderTarget = nullptr;
 
   // A one-shot Home selection to restore after Settings replaces Home. This
   // is intentionally not persisted as recent-book order.
@@ -96,6 +107,11 @@ class ActivityManager {
 
   // Task to render and display the activity
   TaskHandle_t renderTaskHandle = nullptr;
+  // Guarded by RenderLock. Entry may explicitly render a ready loading screen
+  // with requestUpdateAndWait(), but stale/asynchronous notifications must wait.
+  bool enteringActivity = false;
+  bool entryRenderRequested = false;
+  void enterCurrentActivity();
   static void renderTaskTrampoline(void* param);
   [[noreturn]] virtual void renderTaskLoop();
   // Whether a FAST refresh in this activity's render may return before the waveform ends.
@@ -120,6 +136,8 @@ class ActivityManager {
   std::atomic<bool> restoredActivityNeedsRender{false};
 
   Activity* findEpubReader() const;
+  bool handleHomeReaderShortcut();
+  bool continueHomeReaderUnwind();
   bool handleGlobalHomeGesture();
   bool restoreBackdropBehindCurrentOverlay();
 
@@ -147,7 +165,8 @@ class ActivityManager {
   void goToNearbyStatsSync();
   bool goToNearbyBookSend(std::string path, bool returnToReader);
   void goToNearbyBookReceive();
-  void goToSettings(bool dismissOnUpSwipe = false);
+  void goToSettings(bool dismissOnUpSwipe = false, bool openLanguageDownloads = false);
+  void markReleaseNotesShown() { releaseNotesShown = true; }
   void goToFileBrowser(std::string path = {});
   // False when the Library could not be allocated and nothing changed.
   bool goToLibrary();
@@ -165,6 +184,14 @@ class ActivityManager {
 
   // This will move current activity to stack instead of deleting it
   void pushActivity(std::unique_ptr<Activity>&& activity);
+
+  // Replace the whole stack with `activity` once the current activity has
+  // finished and its parent's result handler has run. Lets a nested screen
+  // start a full-stack flow without skipping the parent's own cleanup.
+  void replaceAfterReturn(std::unique_ptr<Activity>&& activity);
+  // A parent's result handler can skip reopening its own UI when the whole
+  // stack is about to be replaced anyway.
+  bool hasDeferredReplace() const { return afterReturnActivity != nullptr; }
 
   // Remove the currentActivity, returning the last one on stack
   // Note: if popActivity() on last activity on the stack, we will goHome()
@@ -186,6 +213,7 @@ class ActivityManager {
   bool isCurrentActivityNamed(const char* activityName) const;
   Activity* simulatorCurrentActivity() const { return currentActivity.get(); }
 #endif
+  bool isCurrentActivity(const Activity* activity) const { return currentActivity.get() == activity; }
   bool canSnapshotForSleepOverlay() const;
   bool requestManualReaderRefresh();
   bool handleShortcutAction(CrossPointSettings::SHORT_PWRBTN action);
