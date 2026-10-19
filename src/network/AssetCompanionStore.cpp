@@ -414,6 +414,11 @@ bool verifyAll(Workspace& w) {
 }
 bool complete(Workspace& w) {
   if (!verifySpool(w)) return false;
+  // GCC 13 at -O3 flags the hash arguments as overlapping w.buffer; they are separate members.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wrestrict"
+#endif
   const int size = std::snprintf(
       reinterpret_cast<char*>(w.buffer), sizeof(w.buffer),
       "CrossInk recipient companions "
@@ -422,6 +427,9 @@ bool complete(Workspace& w) {
       w.entry->code, w.entry->sha256, static_cast<unsigned long>(w.entry->bytes),
       static_cast<unsigned long>(w.indexBytes[0]), w.hashes[0], static_cast<unsigned long>(w.indexBytes[1]),
       w.hashes[1], unsigned(w.count), w.digest);
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
   if (size <= 0 || size_t(size) >= sizeof(w.buffer) || stopped(w) || !stagePath(w, "complete.txt")) return false;
   auto file = Storage.open(w.path, O_WRONLY | O_CREAT | O_TRUNC);
   bool ok = file && file.write(w.buffer, size_t(size)) == size_t(size) && file.sync();

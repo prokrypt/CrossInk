@@ -239,7 +239,8 @@ Result scan(AssetCatalog::Kind kind, const AssetCatalog::Entry& entry, Source& s
   const char* path = source.path;
   // Derive this from the selected logical path, including manual filenames.
   // Discovery remains read-only even when the published bytes are current.
-  std::snprintf(work.candidate, sizeof(work.candidate), "%s.old", path);
+  if (std::snprintf(work.candidate, sizeof(work.candidate), "%s.old", path) >= static_cast<int>(sizeof(work.candidate)))
+    return failure(Result::Invalid);
   source.recoveryPending = Storage.exists(work.candidate);
   const bool recoveryNeeded = !Storage.exists(path);
   if (recoveryNeeded) {
